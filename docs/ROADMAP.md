@@ -95,7 +95,7 @@ binds nothing. M3 is where that has to be settled.
 
 Slices: shader toolchain hardening for resource bindings; `atlas::math`; orthographic
 camera; texture and sampler upload; quad batching then instancing; the ImGui docking shell
-with log and timing panels; an allocation check; the benchmark harness and first baseline.
+with a timing panel; an allocation check; the benchmark harness and first baseline.
 
 **Exit criteria — all met**
 - Orthographic camera, texture, sampler, quad batching or instancing, and a debug overlay.
@@ -125,8 +125,7 @@ scene size reported the same 8.3 milliseconds.
 
 Slices: canonical hashing in core; an assets-internal I/O pool; virtual filesystem and
 path normalization; asset IDs and the load state machine; texture and shader importers;
-async load with main-thread GPU upload; fallbacks and failure paths; the dependency graph
-and hot reload; the asset status panel.
+async load with main-thread GPU upload; fallbacks and failure paths; hot reload.
 
 **Exit criteria — all met**
 - Virtual paths, asset identifiers, texture import, asynchronous loading, GPU upload,
@@ -150,7 +149,10 @@ because a symbolic link can point anywhere. Each of those has a test.
 
 The asset workers run under ThreadSanitizer as part of the sanitizer job.
 
-Deferred with reasons rather than silently: shader loading still goes through the generated
+Deferred with reasons rather than silently: there is no asset status panel, because the
+overlay's only consumer so far is the sandbox, which reports asset counts in its exit
+summary, and a panel would be a second place for the same three numbers to be wrong; shader
+loading still goes through the generated
 manifest from M3 rather than the registry, because the registry has nothing to add to a
 shader whose resource counts are already compile-time constants; cooked-artifact caching is
 not implemented, because nothing yet takes long enough to import to justify a cache; and the
