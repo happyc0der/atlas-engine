@@ -50,6 +50,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # Full history, for the submodule as well as this repository. vcpkg resolves a
+          # pinned port version by checking out a tree from its own git history, and the
+          # shallow clone the action makes by default does not contain those objects: the
+          # failure is "failed to unpack tree object", several steps later, and reads like
+          # repository corruption rather than a checkout option.
+          fetch-depth: 0
 
       - name: Install Linux prerequisites
         if: runner.os == 'Linux'
@@ -64,6 +70,13 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+
+      # Ninja is the generator every preset names, and Windows runners do not have it on
+      # PATH. The Visual Studio installation bundles a copy, but where it lives moves between
+      # versions, so this installs a known one rather than hunting for it.
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress --yes
 
       # The binary cache is what keeps this from rebuilding every dependency from source on
       # every push. Keyed on the manifest and the pinned vcpkg commit, so a dependency

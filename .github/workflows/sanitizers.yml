@@ -39,6 +39,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # Full history, for the submodule as well as this repository. vcpkg resolves a
+          # pinned port version by checking out a tree from its own git history, and the
+          # shallow clone the action makes by default does not contain those objects: the
+          # failure is "failed to unpack tree object", several steps later, and reads like
+          # repository corruption rather than a checkout option.
+          fetch-depth: 0
 
       - name: Install Linux prerequisites
         if: runner.os == 'Linux'
