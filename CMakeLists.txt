@@ -65,6 +65,28 @@ endif()
 
 add_subdirectory(engine)
 
+# The boundary and licence checks run as tests as well as in continuous integration, so
+# that a local `ctest` catches a violation at the moment it is introduced rather than after
+# a push. Labelled "lint" so they can be excluded from a sanitizer run, where they would
+# only be repeating themselves.
+if(ATLAS_BUILD_TESTS)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME module_boundaries
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/tools/check_module_deps.py")
+        set_tests_properties(module_boundaries PROPERTIES LABELS "lint")
+
+        add_test(NAME licence_headers
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/tools/check_spdx.py")
+        set_tests_properties(licence_headers PROPERTIES LABELS "lint")
+    else()
+        message(STATUS "Atlas: Python not found; the boundary and licence checks will not "
+                       "run as tests (CI runs them separately)")
+    endif()
+endif()
+
 if(ATLAS_BUILD_APPS)
     add_subdirectory(apps)
 endif()

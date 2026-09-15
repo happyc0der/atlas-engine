@@ -43,4 +43,4 @@ ctest --preset "${PRESET}"
 
 echo "=== run (${PRESET}) ==="
 "./build/${PRESET}/bin/atlas_sandbox" --version
-"./build/${PRESET}/bin/atlas_sandbox" --headless --iterations 100
+"./build/${PRESET}/bin/atlas_sandbox" --headless --ticks 120

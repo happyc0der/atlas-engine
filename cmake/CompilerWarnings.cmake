@@ -4,6 +4,19 @@
 # Warnings are errors for Atlas code. Third-party code is built separately by vcpkg and is
 # consumed through SYSTEM includes, so none of this reaches it.
 
+include(CheckCXXCompilerFlag)
+
+# Warnings that are deliberately off, tested for support because they do not exist in every
+# compiler Atlas builds with.
+#
+#   -Wmissing-designated-field-initializers (Clang 19+, part of -Wextra there but not in
+#   Apple clang 21) fires on `{.video = false}` when the aggregate has other members. In C
+#   that silence would matter, because omitted fields are silently zeroed. In Atlas every
+#   such aggregate has default member initialisers, and setting only the field that differs
+#   is the intended style; the alternative is restating defaults at every call site.
+check_cxx_compiler_flag(-Wno-missing-designated-field-initializers
+                        ATLAS_HAS_NO_MISSING_DESIGNATED_FIELD_INIT)
+
 function(atlas_set_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE
@@ -43,6 +56,10 @@ function(atlas_set_warnings target)
             -Wimplicit-fallthrough
             -Wextra-semi
         )
+        if(ATLAS_HAS_NO_MISSING_DESIGNATED_FIELD_INIT)
+            target_compile_options(${target} PRIVATE
+                                   -Wno-missing-designated-field-initializers)
+        endif()
         if(ATLAS_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE -Werror)
         endif()

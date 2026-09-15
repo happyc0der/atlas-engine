@@ -16,13 +16,29 @@
 #include <source_location>
 #include <string_view>
 
-namespace atlas::detail {
+namespace atlas {
+
+/// Record the calling thread as the main thread.
+///
+/// The first call wins; later calls are ignored. Called by whichever subsystem first needs
+/// the distinction, which in practice is the platform layer, so an application does not
+/// have to remember to do it.
+void mark_main_thread() noexcept;
+
+/// Whether the calling thread is the one that was marked.
+///
+/// Returns false when no thread has been marked, so an affinity assertion fails loudly
+/// rather than passing by accident in a process that never established a main thread.
+[[nodiscard]] bool is_main_thread() noexcept;
+
+namespace detail {
 
 /// Reports a failed assertion and aborts. Never returns.
 [[noreturn]] void assertion_failed(std::string_view expression, std::string_view message,
                                    std::source_location where);
 
-}  // namespace atlas::detail
+}  // namespace detail
+}  // namespace atlas
 
 /// Check a programmer invariant. Compiled out when NDEBUG is defined.
 ///
@@ -50,6 +66,15 @@ namespace atlas::detail {
 #else
 #define ATLAS_VERIFY(expr) ATLAS_ASSERT(expr)
 #endif
+
+/// Assert that the caller is on the main thread.
+///
+/// Window systems and graphics APIs require this, and a violation is the kind of bug that
+/// appears once a week on one machine. Compiled out in release along with other assertions:
+/// it catches a programming error during development, it is not a runtime guard.
+#define ATLAS_ASSERT_MAIN_THREAD()                                                                 \
+    ATLAS_ASSERT_MSG(::atlas::is_main_thread(),                                                    \
+                     "must be called on the main thread; see docs/ARCHITECTURE.md")
 
 /// Mark a branch the programmer believes cannot be taken.
 #define ATLAS_UNREACHABLE()                                                                        \

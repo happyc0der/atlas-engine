@@ -30,7 +30,10 @@ Checks: >
   -cppcoreguidelines-pro-type-vararg,
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,
   -cppcoreguidelines-owning-memory,
-  -performance-enum-size
+  -performance-enum-size,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -readability-trailing-comma
 
 # Rationale for the exclusions above:
 #   modernize-use-trailing-return-type  — a style preference, and not Atlas's.
@@ -55,6 +58,14 @@ Checks: >
 #                                         point of that wrapper.
 #   performance-enum-size               — error code widths are deliberate: they are
 #                                         serialized, so the width is part of the contract.
+#   *-bounds-constant-array-index        — the suggested fix is .at(), which throws, and
+#   *-avoid-unchecked-container-access     ADR-0005 forbids exceptions in engine code. Every
+#                                          runtime index in Atlas is preceded by an explicit
+#                                          range check; see engine/platform/src/input.cpp.
+#   readability-trailing-comma          — disagrees with clang-format about where a braced
+#                                         initialiser should break. Formatting is settled by
+#                                         the formatter; two tools arguing about it is worse
+#                                         than either answer.
 
 WarningsAsErrors: '*'
 HeaderFilterRegex: 'engine/.*/include/atlas/.*\.hpp$'

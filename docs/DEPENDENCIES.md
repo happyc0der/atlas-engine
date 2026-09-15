@@ -23,7 +23,7 @@ distribution. All current dependencies are permissive and therefore compatible.
 |---|---|---|---|---|---|---|
 | Catch2 | Unit and integration test framework | 3.15.3 | BSL-1.0 | Yes | Test targets only | M0 |
 | Tracy | Frame profiler client | 0.13.1 | BSD-3-Clause | Yes | `atlas/core/profile.hpp` macros, behind `ATLAS_PROFILE`; vcpkg feature `profile` | M0 |
-| SDL3 | Window, events, input, timing, GPU | 3.4.16 | zlib | Yes | Private to `platform` and `rhi` | M1 |
+| SDL3 | Window, events, input, GPU | 3.4.12 | zlib | Yes | Private to `platform` and `rhi` | M1 |
 | SDL_shadercross | Offline HLSL to SPIR-V, DXIL, MSL, and reflection | commit pin; no upstream release exists | zlib | Yes | Build-time tool only; never linked into engine targets | M2 |
 | stb | Image decoding (`stb_image`) | 2024-07-29 | MIT / Unlicense | Yes | Private to the assets importer | M3 |
 | Dear ImGui | Editor and debug UI | 1.92.9, docking | MIT | Yes | Private to `tools` | M3 |
@@ -44,6 +44,15 @@ needs it), and Git. On macOS, `brew install ninja pkgconf`.
 protocol changes between releases. The pinned client is 0.13.1, which matches the Homebrew
 `tracy` formula. Upstream 0.14.x uses a different protocol version and must not be mixed.
 Upgrade both together or neither.
+
+**SDL3 version.** 3.4.12 is what the pinned baseline provides; 3.4.16 exists upstream and
+is not used, for the same reason Catch2 is 3.15.3. The `vulkan` feature is deliberately off
+until M2, which is when the GPU backend that needs it arrives.
+
+**SDL3 build prerequisites on Linux.** Building SDL3 from source needs the X11, Wayland,
+xkbcommon, EGL, ALSA, PulseAudio, udev, D-Bus and ibus development packages, even for a
+headless build, because the library still compiles those backends. `tools/ci/linux_deps.sh`
+installs them.
 
 **SDL3 on macOS.** SDL_GPU uses Metal natively. MoltenVK and the Vulkan SDK are not
 required. The Vulkan feature of the SDL3 port is enabled on Linux only.

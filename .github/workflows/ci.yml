@@ -97,7 +97,8 @@ jobs:
         shell: bash
         run: |
           ./build/${{ matrix.preset }}/bin/atlas_sandbox --version
-          ./build/${{ matrix.preset }}/bin/atlas_sandbox --headless --iterations 100
+          ./build/${{ matrix.preset }}/bin/atlas_sandbox --headless --ticks 120
+          ./build/${{ matrix.preset }}/bin/atlas_sandbox --video-driver dummy --frames 30
 
       - name: Upload logs on failure
         if: failure()

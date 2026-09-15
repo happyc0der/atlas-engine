@@ -2,11 +2,53 @@
 #include <atlas/core/assert.hpp>
 #include <atlas/core/log.hpp>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <string_view>
+#include <thread>
 
-namespace atlas::detail {
+namespace atlas {
+namespace {
+
+/// Which thread was marked as main, and whether one was.
+///
+/// Atomics rather than a mutex because reading sits on paths that run every frame in a
+/// debug build. Held in a function-local static rather than at namespace scope so that
+/// there is no mutable global and no dependence on initialisation order between
+/// translation units.
+struct MainThread {
+    std::atomic<bool> marked{false};
+    std::atomic<std::thread::id> id;
+};
+
+[[nodiscard]] MainThread& main_thread() noexcept {
+    static MainThread instance;
+    return instance;
+}
+
+}  // namespace
+
+void mark_main_thread() noexcept {
+    auto& state = main_thread();
+
+    // compare_exchange takes the expected value by reference and writes to it, so it cannot
+    // be const however much a linter would like it to be.
+    bool expected = false;
+    if (state.marked.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        state.id.store(std::this_thread::get_id(), std::memory_order_release);
+    }
+}
+
+bool is_main_thread() noexcept {
+    const auto& state = main_thread();
+    if (!state.marked.load(std::memory_order_acquire)) {
+        return false;
+    }
+    return state.id.load(std::memory_order_acquire) == std::this_thread::get_id();
+}
+
+namespace detail {
 
 void assertion_failed(std::string_view expression, std::string_view message,
                       std::source_location where) {
@@ -36,4 +78,5 @@ void assertion_failed(std::string_view expression, std::string_view message,
     std::abort();
 }
 
-}  // namespace atlas::detail
+}  // namespace detail
+}  // namespace atlas

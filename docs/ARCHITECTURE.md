@@ -77,7 +77,7 @@ Three distinct notions of time:
 
 | Notion | Representation | Drives |
 |---|---|---|
-| Real time | `SteadyClock`, nanoseconds | UI responsiveness, frame pacing, the accumulator input |
+| Real time | `SteadyClock` in core, nanoseconds | UI responsiveness, frame pacing, the accumulator input |
 | Render time | seconds since start, plus `alpha` in [0,1) | Interpolation and visual effects |
 | Simulation time | `Tick`, a 64-bit integer counter | Authoritative state, commands, hashes |
 
@@ -110,7 +110,26 @@ spiral. Unbounded mode ignores wall time and skips rendering to maximise through
 
 The accumulator is integer-only. It is kept in units of nanoseconds multiplied by the tick
 rate, so a tick is exactly one billion units at any rate and 60 Hz has no fractional
-period. It takes no clock of its own, which is what makes it directly unit-testable.
+period. It takes no clock of its own, which is what makes it directly unit-testable, and it
+is the reason the steady clock lives in core rather than in platform: nothing in the time
+model needs a window system.
+
+### Headless, and why there is no null platform
+
+Headless is a configuration, not a second implementation. `PlatformConfig::video = false`
+initialises no video subsystem, and window creation then fails with an error that says so.
+A null platform returning stub windows would turn a configuration mistake into a mystery
+somewhere else, and would be a second code path to keep working for no user.
+
+Window code is still exercised where there is no display, through SDL's `dummy` video
+driver: a real window and a real event pipeline with nothing behind them. That is how
+continuous integration covers window creation, resizing and destruction. What it cannot
+cover is anything a real window server decides, such as minimise and restore; those are
+covered by injecting the events, which tests the translation Atlas is responsible for.
+
+Window state such as minimised or focused is queried from the window system rather than
+tracked from events. Tracked state drifts out of sync when an event is missed; a query
+cannot.
 
 Snapshots carry presentation-relevant, plainly-copyable, stably-ordered data only. They are
 published as `shared_ptr<const Snapshot>` with latest-wins semantics; a renderer pins one

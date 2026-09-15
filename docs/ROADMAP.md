@@ -9,8 +9,8 @@ Status legend: **done**, *in progress*, planned.
 | # | Milestone | Size | Status |
 |---|---|---|---|
 | M0 | Architecture and reproducible skeleton | M | **done** |
-| M1 | Platform loop | M | next |
-| M2 | Minimal GPU renderer | L | planned |
+| M1 | Platform loop | M | **done** |
+| M2 | Minimal GPU renderer | L | next |
 | M3 | 2D camera and batching | M | planned |
 | M4 | Asset pipeline | L | planned |
 | M5 | Scene and serialization | M | planned |
@@ -48,11 +48,24 @@ Slices: SDL3 dependency and the `platform` and `simulation` modules; time types 
 tick accumulator; platform lifetime and headless mode; window, events, input; resize,
 minimize, focus; counters and documentation.
 
-**Exit criteria**
-- SDL initialization, window, events, input state, clocks, resize and minimize handling,
+**Exit criteria — all met**
+- SDL initialisation, window, events, input state, clocks, resize and minimise handling,
   and clean shutdown.
 - A fixed-step accumulator with unit tests, independent of the renderer and of any clock.
 - The sandbox runs headless, and window code is exercised in CI under SDL's dummy driver.
+
+Verified on macOS with a real Cocoa window, which reported a logical size of 1280x720 and a
+backing store of 2560x1440 at scale 2: the high-DPI distinction the API insists on is real
+and correct on this hardware. A Linux container run covers the same code paths headlessly.
+
+Two claims were weaker than they looked when the loop was first run, and were fixed rather
+than reworded. The frame counters were documented as rolling and implemented as unbounded,
+which grew to millions of samples in seconds. A headless realtime run spun the processor
+flat out, producing 4.4 million empty frames to deliver 120 ticks; it now waits until the
+next tick is due and uses no measurable processor time.
+
+Minimise and restore are covered by injecting the events, which tests the translation. Only
+a real window server produces them, so that part is exercised by hand rather than in CI.
 
 ## M2 — Minimal GPU renderer
 

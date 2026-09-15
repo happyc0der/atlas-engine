@@ -38,8 +38,13 @@ ${SUDO} apt-get install -y --no-install-recommends \
     unzip \
     zip
 
-# Needed from M1 onwards, when SDL3 enters the manifest. Installed now so that the Linux
-# environment does not change shape halfway through a milestone.
+# SDL3 build prerequisites. vcpkg builds SDL3 from source, and the port enables the X11,
+# Wayland, D-Bus and ibus backends on Linux, so their development headers must be present
+# even for a build that will only ever run headless.
+#
+# Not tolerant of failure: a missing package here surfaces much later as an opaque
+# "SDL_missing_dependency" from inside SDL's own configure, which is a miserable thing to
+# diagnose. libxtst-dev is the one that is easy to forget and was, once.
 ${SUDO} apt-get install -y --no-install-recommends \
     libasound2-dev \
     libdbus-1-dev \
@@ -57,7 +62,7 @@ ${SUDO} apt-get install -y --no-install-recommends \
     libxkbcommon-dev \
     libxrandr-dev \
     libxss-dev \
-    wayland-protocols \
-    || echo "warning: some SDL3 prerequisites are unavailable; M1 may need them"
+    libxtst-dev \
+    wayland-protocols
 
 echo "Linux prerequisites installed"

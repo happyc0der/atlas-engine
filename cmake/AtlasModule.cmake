@@ -104,8 +104,12 @@ endfunction()
 #
 # LABELS map to CTest labels and are how the presets select what to run: hosted CI excludes
 # "gpu", and sanitizer presets include only "unit" and "determinism".
+# PRIVATE_DEPS and INCLUDE_DIRS exist for one legitimate case: a test of the code that sits
+# directly on a third-party boundary, such as the SDL scancode mapping. That test genuinely
+# needs the third-party header, and it is a test rather than a public header, so the rule
+# it would otherwise break does not apply to it.
 function(atlas_add_test name)
-    cmake_parse_arguments(ARG "" "" "SOURCES;DEPENDS;LABELS" ${ARGN})
+    cmake_parse_arguments(ARG "" "" "SOURCES;DEPENDS;PRIVATE_DEPS;INCLUDE_DIRS;LABELS" ${ARGN})
 
     if(NOT ATLAS_BUILD_TESTS)
         return()
@@ -117,6 +121,12 @@ function(atlas_add_test name)
     target_link_libraries(${target} PRIVATE Catch2::Catch2WithMain)
     foreach(dep IN LISTS ARG_DEPENDS)
         target_link_libraries(${target} PRIVATE ${dep})
+    endforeach()
+    foreach(dep IN LISTS ARG_PRIVATE_DEPS)
+        target_link_libraries(${target} PRIVATE ${dep})
+    endforeach()
+    foreach(dir IN LISTS ARG_INCLUDE_DIRS)
+        target_include_directories(${target} PRIVATE ${dir})
     endforeach()
 
     set_target_properties(${target} PROPERTIES

@@ -27,6 +27,15 @@ tools/ci/docker_linux.sh              # Linux build in a container, before pushi
 Profiling build: preset `macos-profile` (Tracy on). A default build contains no Tracy
 symbol at all.
 
+Running the sandbox:
+
+```sh
+./build/macos-debug/bin/atlas_sandbox                             # a window; Escape quits
+./build/macos-debug/bin/atlas_sandbox --headless --ticks 600      # no window at all
+./build/macos-debug/bin/atlas_sandbox --video-driver dummy --frames 30   # window, no display
+./build/macos-debug/bin/atlas_sandbox --headless --unbounded --ticks 1000000
+```
+
 Sanitizers: presets `macos-asan`, `macos-tsan`, `linux-clang-asan`, `linux-clang-tsan`.
 Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled tests.
 
@@ -62,6 +71,12 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   Use `std::format` plus the logger.
 - Never iterate `std::unordered_*` where the order is observable in output, a hash, or a
   reduction. Lookups are fine.
+- Destructors must not log: formatting allocates, and a throwing destructor ends the
+  process. Log around the lifetime instead.
+- Platform and window calls are main-thread only. Assert it with `ATLAS_ASSERT_MAIN_THREAD`
+  at every entry point.
+- Query window state such as minimised or focused; do not track it from events, which
+  drifts when an event is missed.
 - No per-frame allocation in measured hot loops after warm-up.
 - Assertions are for violated programmer invariants. Recoverable user or data errors
   return an `Error` with context.
