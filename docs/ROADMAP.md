@@ -216,6 +216,42 @@ Deferred with reasons rather than silently:
   through one validated path; adding widgets first would create a second way into the scene
   that bypasses the checks `Scene` performs.
 
+## Closing two gaps found by auditing M0 to M4
+
+Audited against the plan's slice lists rather than the milestone reports, which found work
+that had been listed as done and was not.
+
+**Integration tests now exist.** M0 and M1 both called for them and neither delivered any.
+Nothing ran the sandbox binary under the test runner, so subsystem construction order,
+shutdown order, exit codes and lifecycle logging were verified only by hand. Eleven checks
+under the `integration` label now run the binary end to end: build identity, help, the
+ordered lifecycle, exact tick counts, unbounded throughput, refusal of an unbounded headless
+run, rejection of unknown options and out-of-range values, the log file, severity filtering,
+and a real window under the dummy video driver. Continuous integration used to do a little of
+this by hand in a separate step; that step is gone, because the tests cover it and a developer
+now gets the same coverage locally.
+
+The first thing they caught was a real defect: `--ticks N` meant exactly N when pacing against
+the clock and N rounded up to the batch size under `--unbounded`, so asking for twenty
+thousand ticks ran twenty thousand and thirty-two. A benchmark dividing by N would have been
+quietly wrong. The count is now clamped and the flag means one thing.
+
+**Device loss is detected.** `ErrorCode::DeviceLost` had existed since M2 and nothing could
+ever return it, which is a worse state than not having it: an error code nothing produces
+looks like handled behaviour. The first failure that says the device is gone now latches, and
+every later call fails immediately with the original reason instead of attempting work and
+failing differently. Recovery stays out of scope, as the charter says.
+
+What can be detected is bounded by what the graphics library reports, and the limits are
+recorded rather than papered over: reliable on Vulkan, best effort on Direct3D 12, and
+unavailable on Metal, which is the backend this project develops on. The classifier is a pure
+function over the library's message and is tested in both directions, because a false positive
+latches and takes the rest of the run down with it.
+
+Still open from that audit, in rough order of value: a software-rasteriser smoke job, so the
+renderer is verified somewhere other than this one machine; the Stop hook that was specified
+and never written; and the Windows formatting script.
+
 ## M6 — Simulation kernel
 
 Scope is single-threaded. Slices: structure-of-arrays tables and read/write sets; the

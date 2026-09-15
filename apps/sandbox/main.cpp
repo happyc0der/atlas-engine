@@ -569,20 +569,34 @@ void step_simulation(atlas::Tick tick) {
 
         const auto tick_start = std::chrono::steady_clock::now();
         const auto plan = accumulator->advance(frame_ns);
-        for (std::uint32_t i = 0; i < plan.ticks_to_run; ++i) {
+
+        // Clamped to the requested bound so that --ticks N means exactly N in every mode.
+        // Without this, unbounded mode runs whole batches and overshoots by up to the batch
+        // size, so the same flag would mean "exactly N" when pacing against the clock and
+        // "N rounded up" when not. A benchmark dividing by N would then be quietly wrong.
+        std::uint32_t ticks_to_run = plan.ticks_to_run;
+        if (options->max_ticks != 0) {
+            const std::uint64_t done = accumulator->current_tick();
+            const std::uint64_t remaining =
+                done >= options->max_ticks ? 0 : options->max_ticks - done;
+            ticks_to_run =
+                static_cast<std::uint32_t>(std::min<std::uint64_t>(ticks_to_run, remaining));
+        }
+
+        for (std::uint32_t i = 0; i < ticks_to_run; ++i) {
             const atlas::Tick tick = accumulator->current_tick() + i;
             step_simulation(tick);
             if (scene_demo.has_value()) {
                 scene_demo->tick(tick, options->ticks_per_second);
             }
         }
-        accumulator->commit(plan.ticks_to_run);
+        accumulator->commit(ticks_to_run);
         const auto tick_ns =
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                            std::chrono::steady_clock::now() - tick_start)
                                            .count());
 
-        counters.record(frame_ns, tick_ns, plan.ticks_to_run, plan.dropped_ticks);
+        counters.record(frame_ns, tick_ns, ticks_to_run, plan.dropped_ticks);
 
         // A minimised window has no image to draw into. The simulation carries on; only
         // presentation is skipped.
@@ -686,7 +700,7 @@ void step_simulation(atlas::Tick tick) {
         // deliver sixty ticks. Waiting until the next tick is due costs nothing and is what
         // a headless server would do. Unbounded mode deliberately does not wait: throughput
         // is the entire point there.
-        if (options->headless && !options->unbounded && plan.ticks_to_run == 0) {
+        if (options->headless && !options->unbounded && ticks_to_run == 0) {
             const auto remaining =
                 accumulator->tick_length_ns() -
                 static_cast<std::uint64_t>(static_cast<double>(accumulator->tick_length_ns()) *

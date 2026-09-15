@@ -98,6 +98,9 @@ if(ATLAS_BUILD_APPS)
     add_subdirectory(apps)
 endif()
 
+# After apps, because the integration tests run the sandbox binary and need its target.
+add_subdirectory(tests)
+
 add_subdirectory(benchmarks)
 
 atlas_report_configuration()

@@ -13,6 +13,7 @@ Replace `macos-debug` with `linux-clang-debug` or `windows-msvc-debug` as approp
 cmake --preset macos-debug            # configure
 cmake --build --preset macos-debug    # build
 ctest --preset macos-debug            # test (excludes label "gpu")
+ctest --preset macos-debug -L integration  # only the end-to-end sandbox checks
 ctest --preset macos-debug-gpu        # test including GPU tests (M2+, real GPU only)
 cmake --workflow --preset ci-macos-debug   # configure + build + test
 
@@ -102,6 +103,13 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   states.
 - A missing or broken asset must resolve to a fallback and be recorded, never stop the
   engine.
+- Device loss is detected and reported, never recovered from. Once lost, every `rhi` entry
+  point fails immediately with `DeviceLost` rather than attempting work and failing
+  differently. Detection is reliable on Vulkan, best effort on Direct3D 12, and unavailable
+  on Metal.
+- Behaviour that only exists when the whole program runs — construction order, shutdown
+  order, exit codes, lifecycle logging — belongs in `tests/integration`, because no unit
+  test can reach it.
 - No per-frame allocation in measured hot loops after warm-up.
 - Assertions are for violated programmer invariants. Recoverable user or data errors
   return an `Error` with context.

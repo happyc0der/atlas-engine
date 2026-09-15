@@ -11,6 +11,7 @@ find_package(SDL3 CONFIG REQUIRED)
 atlas_add_module(rhi
     SOURCES
         src/device.cpp
+        src/device_loss.cpp
         src/resources.cpp
         src/textures.cpp
         src/types.cpp

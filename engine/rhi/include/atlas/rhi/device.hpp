@@ -181,6 +181,27 @@ class Device {
     /// Name the backend reports for itself, for logs and bug reports.
     [[nodiscard]] std::string_view backend_name() const noexcept;
 
+    /// Whether the graphics device has been lost.
+    ///
+    /// A device can stop working underneath a running process: a driver resets, a display is
+    /// unplugged, a graphics processor hangs or is removed. Once that happens every call
+    /// fails, so the first failure to say so latches here and every later call returns
+    /// `ErrorCode::DeviceLost` immediately rather than attempting work and failing
+    /// differently.
+    ///
+    /// **Atlas does not recover.** Recovery means recreating the device and every resource on
+    /// it, which is out of scope for v0.1 (see docs/PROJECT_CHARTER.md). An application that
+    /// sees this should report it and exit, not retry.
+    ///
+    /// **Detection is backend-dependent.** Reliable on Vulkan, best effort on Direct3D 12,
+    /// and unavailable on Metal, which has no device-lost notion that reaches the graphics
+    /// library. On Metal this always returns false, even for a device that has in fact gone.
+    /// Treat it as a way to fail clearly when the backend tells us, never as a health check.
+    [[nodiscard]] bool is_lost() const noexcept;
+
+    /// Why the device was lost, as the graphics library described it. Empty while healthy.
+    [[nodiscard]] std::string_view loss_reason() const noexcept;
+
     /// Shader formats this device accepts. A caller picks the one it has.
     [[nodiscard]] bool supports_shader_format(ShaderFormat format) const noexcept;
 

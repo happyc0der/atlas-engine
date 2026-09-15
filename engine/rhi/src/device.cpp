@@ -52,6 +52,37 @@ constexpr std::uint32_t kFramesInFlight = 2;
 
 }  // namespace
 
+Error Device::Impl::fail(ErrorCode fallback, std::string_view what) {
+    const char* message = SDL_GetError();
+    const std::string_view detail =
+        (message != nullptr) ? std::string_view{message} : std::string_view{};
+
+    const ErrorCode code = health.record_failure(fallback, detail);
+
+    // Logged once, at the moment the device goes, because every later failure returns the
+    // same code and would otherwise repeat this for every call in the frame.
+    if (code == ErrorCode::DeviceLost && fallback != ErrorCode::DeviceLost) {
+        ATLAS_LOG_ERROR(kRhi,
+                        "the graphics device was lost while {}: {}. Atlas does not recover "
+                        "from this; the application must be restarted.",
+                        what, detail);
+    }
+
+    SDL_ClearError();
+
+    if (detail.empty()) {
+        return {code, std::string{what}};
+    }
+    return {code, std::format("{}: {}", what, detail)};
+}
+
+Error Device::Impl::already_lost(std::string_view what) const {
+    return {ErrorCode::DeviceLost,
+            std::format("cannot {}: the graphics device was lost earlier ({}). Atlas does not "
+                        "recover from device loss; the application must be restarted.",
+                        what, health.reason())};
+}
+
 // ---------------------------------------------------------------------------------------
 // RenderPass
 // ---------------------------------------------------------------------------------------
@@ -354,7 +385,7 @@ Result<RenderPass> Frame::begin_render_pass(const RenderPassDesc& desc) {
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(m_impl->commands, &target, 1, nullptr);
     if (pass == nullptr) {
         return std::unexpected(
-            detail::gpu_error(ErrorCode::Internal, "beginning a render pass failed"));
+            m_impl->device->fail(ErrorCode::Internal, "beginning a render pass"));
     }
 
     if (!desc.debug_name.empty()) {
@@ -542,6 +573,14 @@ bool Device::supports_shader_format(ShaderFormat format) const noexcept {
     return (m_impl->shader_formats & detail::to_sdl(format)) != 0;
 }
 
+bool Device::is_lost() const noexcept {
+    return m_impl != nullptr && m_impl->health.lost();
+}
+
+std::string_view Device::loss_reason() const noexcept {
+    return m_impl != nullptr ? m_impl->health.reason() : std::string_view{};
+}
+
 TextureFormat Device::swapchain_format() const noexcept {
     return m_impl != nullptr ? m_impl->swapchain_format : TextureFormat::Unknown;
 }
@@ -572,11 +611,15 @@ Result<Frame> Device::begin_frame() {
             Error(ErrorCode::InvalidArgument,
                   "a frame is already open; submit or drop it before beginning another"));
     }
+    // Checked before doing anything, so that one lost device produces one report rather than
+    // a differently worded failure from every call for the rest of the run.
+    if (m_impl->health.lost()) {
+        return std::unexpected(m_impl->already_lost("begin a frame"));
+    }
 
     SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(m_impl->device);
     if (commands == nullptr) {
-        return std::unexpected(
-            detail::gpu_error(ErrorCode::Internal, "acquiring a command buffer failed"));
+        return std::unexpected(m_impl->fail(ErrorCode::Internal, "acquiring a command buffer"));
     }
 
     auto impl = std::make_unique<Frame::Impl>();
@@ -660,8 +703,7 @@ Status Device::end_frame(Frame&& frame) {
     m_impl->frame_open = false;
 
     if (!submitted) {
-        return std::unexpected(
-            detail::gpu_error(ErrorCode::Internal, "submitting the frame failed"));
+        return std::unexpected(m_impl->fail(ErrorCode::Internal, "submitting the frame"));
     }
     return ok();
 }
@@ -671,9 +713,11 @@ Status Device::wait_idle() {
     if (m_impl == nullptr) {
         return std::unexpected(Error(ErrorCode::InvalidArgument, "wait_idle on an invalid device"));
     }
+    if (m_impl->health.lost()) {
+        return std::unexpected(m_impl->already_lost("wait for the device"));
+    }
     if (!SDL_WaitForGPUIdle(m_impl->device)) {
-        return std::unexpected(
-            detail::gpu_error(ErrorCode::Internal, "waiting for the device failed"));
+        return std::unexpected(m_impl->fail(ErrorCode::Internal, "waiting for the device"));
     }
     return ok();
 }

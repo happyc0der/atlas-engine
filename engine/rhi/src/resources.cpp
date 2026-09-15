@@ -24,8 +24,6 @@ namespace {
 
 constexpr log::Category kRhi{"rhi"};
 
-using detail::gpu_error;
-
 }  // namespace
 
 Result<BufferHandle> Device::create_buffer(const BufferDesc& desc) {
@@ -34,6 +32,9 @@ Result<BufferHandle> Device::create_buffer(const BufferDesc& desc) {
     if (m_impl == nullptr) {
         return std::unexpected(
             Error(ErrorCode::InvalidArgument, "create_buffer on an invalid device"));
+    }
+    if (m_impl->health.lost()) {
+        return std::unexpected(m_impl->already_lost("create a buffer"));
     }
     if (desc.size == 0) {
         return std::unexpected(
@@ -46,7 +47,7 @@ Result<BufferHandle> Device::create_buffer(const BufferDesc& desc) {
 
     SDL_GPUBuffer* buffer = SDL_CreateGPUBuffer(m_impl->device, &info);
     if (buffer == nullptr) {
-        return std::unexpected(gpu_error(
+        return std::unexpected(m_impl->fail(
             ErrorCode::ResourceCreationFailed,
             std::format("creating buffer '{}' of {} bytes failed", desc.debug_name, desc.size)));
     }
@@ -77,6 +78,9 @@ Status Device::upload_buffer(BufferHandle buffer, std::span<const std::byte> dat
         return std::unexpected(
             Error(ErrorCode::InvalidArgument, "upload_buffer on an invalid device"));
     }
+    if (m_impl->health.lost()) {
+        return std::unexpected(m_impl->already_lost("upload to a buffer"));
+    }
 
     const auto* resource = m_impl->buffers.get(buffer);
     if (resource == nullptr) {
@@ -102,12 +106,12 @@ Status Device::upload_buffer(BufferHandle buffer, std::span<const std::byte> dat
     SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(m_impl->device, &transfer_info);
     if (transfer == nullptr) {
         return std::unexpected(
-            gpu_error(ErrorCode::ResourceCreationFailed, "creating a transfer buffer failed"));
+            m_impl->fail(ErrorCode::ResourceCreationFailed, "creating a transfer buffer failed"));
     }
 
     void* mapped = SDL_MapGPUTransferBuffer(m_impl->device, transfer, false);
     if (mapped == nullptr) {
-        auto error = gpu_error(ErrorCode::Internal, "mapping the transfer buffer failed");
+        auto error = m_impl->fail(ErrorCode::Internal, "mapping the transfer buffer failed");
         SDL_ReleaseGPUTransferBuffer(m_impl->device, transfer);
         return std::unexpected(std::move(error));
     }
@@ -116,7 +120,8 @@ Status Device::upload_buffer(BufferHandle buffer, std::span<const std::byte> dat
 
     SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(m_impl->device);
     if (commands == nullptr) {
-        auto error = gpu_error(ErrorCode::Internal, "acquiring a command buffer for upload failed");
+        auto error =
+            m_impl->fail(ErrorCode::Internal, "acquiring a command buffer for upload failed");
         SDL_ReleaseGPUTransferBuffer(m_impl->device, transfer);
         return std::unexpected(std::move(error));
     }
@@ -139,7 +144,7 @@ Status Device::upload_buffer(BufferHandle buffer, std::span<const std::byte> dat
     // exist yet.
     SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
     if (fence == nullptr) {
-        auto error = gpu_error(ErrorCode::Internal, "submitting the upload failed");
+        auto error = m_impl->fail(ErrorCode::Internal, "submitting the upload failed");
         SDL_ReleaseGPUTransferBuffer(m_impl->device, transfer);
         return std::unexpected(std::move(error));
     }
@@ -149,7 +154,7 @@ Status Device::upload_buffer(BufferHandle buffer, std::span<const std::byte> dat
     SDL_ReleaseGPUTransferBuffer(m_impl->device, transfer);
 
     if (!waited) {
-        return std::unexpected(gpu_error(ErrorCode::Internal, "waiting for the upload failed"));
+        return std::unexpected(m_impl->fail(ErrorCode::Internal, "waiting for the upload failed"));
     }
     return ok();
 }
@@ -178,6 +183,9 @@ Result<ShaderHandle> Device::create_shader(const ShaderDesc& desc) {
     if (m_impl == nullptr) {
         return std::unexpected(
             Error(ErrorCode::InvalidArgument, "create_shader on an invalid device"));
+    }
+    if (m_impl->health.lost()) {
+        return std::unexpected(m_impl->already_lost("create a shader"));
     }
     if (desc.code.empty()) {
         return std::unexpected(Error(ErrorCode::InvalidArgument,
@@ -213,7 +221,7 @@ Result<ShaderHandle> Device::create_shader(const ShaderDesc& desc) {
 
     SDL_GPUShader* shader = SDL_CreateGPUShader(m_impl->device, &info);
     if (shader == nullptr) {
-        return std::unexpected(gpu_error(
+        return std::unexpected(m_impl->fail(
             ErrorCode::ShaderCompilationFailed,
             std::format("creating {} shader '{}' ({}, entry point '{}') failed",
                         to_string(desc.stage), desc.debug_name, to_string(desc.format), entry)));
@@ -250,6 +258,9 @@ Result<GraphicsPipelineHandle> Device::create_graphics_pipeline(const GraphicsPi
     if (m_impl == nullptr) {
         return std::unexpected(
             Error(ErrorCode::InvalidArgument, "create_graphics_pipeline on an invalid device"));
+    }
+    if (m_impl->health.lost()) {
+        return std::unexpected(m_impl->already_lost("create a graphics pipeline"));
     }
 
     const auto* vertex = m_impl->shaders.get(desc.vertex_shader);
@@ -352,8 +363,8 @@ Result<GraphicsPipelineHandle> Device::create_graphics_pipeline(const GraphicsPi
     SDL_GPUGraphicsPipeline* pipeline = SDL_CreateGPUGraphicsPipeline(m_impl->device, &info);
     if (pipeline == nullptr) {
         return std::unexpected(
-            gpu_error(ErrorCode::PipelineCreationFailed,
-                      std::format("creating pipeline '{}' failed", desc.debug_name)));
+            m_impl->fail(ErrorCode::PipelineCreationFailed,
+                         std::format("creating pipeline '{}' failed", desc.debug_name)));
     }
 
     auto handle = m_impl->pipelines.insert(PipelineResource{
@@ -415,7 +426,7 @@ Status capture_texture(Device::Impl& device, SDL_GPUCommandBuffer* commands, SDL
     SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device.device, &info);
     if (transfer == nullptr) {
         return std::unexpected(
-            gpu_error(ErrorCode::ResourceCreationFailed, "creating a download buffer failed"));
+            device.fail(ErrorCode::ResourceCreationFailed, "creating a download buffer failed"));
     }
 
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
@@ -439,7 +450,7 @@ Status capture_texture(Device::Impl& device, SDL_GPUCommandBuffer* commands, SDL
     // to be waited on before the transfer buffer can be read.
     SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
     if (fence == nullptr) {
-        auto error = gpu_error(ErrorCode::Internal, "submitting the capture failed");
+        auto error = device.fail(ErrorCode::Internal, "submitting the capture failed");
         SDL_ReleaseGPUTransferBuffer(device.device, transfer);
         return std::unexpected(std::move(error));
     }
@@ -448,14 +459,14 @@ Status capture_texture(Device::Impl& device, SDL_GPUCommandBuffer* commands, SDL
     SDL_ReleaseGPUFence(device.device, fence);
 
     if (!waited) {
-        auto error = gpu_error(ErrorCode::Internal, "waiting for the capture failed");
+        auto error = device.fail(ErrorCode::Internal, "waiting for the capture failed");
         SDL_ReleaseGPUTransferBuffer(device.device, transfer);
         return std::unexpected(std::move(error));
     }
 
     const void* mapped = SDL_MapGPUTransferBuffer(device.device, transfer, false);
     if (mapped == nullptr) {
-        auto error = gpu_error(ErrorCode::Internal, "mapping the captured pixels failed");
+        auto error = device.fail(ErrorCode::Internal, "mapping the captured pixels failed");
         SDL_ReleaseGPUTransferBuffer(device.device, transfer);
         return std::unexpected(std::move(error));
     }

@@ -234,6 +234,26 @@ A missing or broken asset is recorded and resolves to a fallback rather than sto
 engine. An engine that halts because one texture is corrupt is much harder to work on than
 one that draws a magenta square and says why.
 
+### Device loss
+
+A graphics device can stop working underneath a running process: a driver resets, a display
+is unplugged, a processor hangs or is removed. Everything afterwards fails, so without
+handling it the log fills with unrelated-looking errors and the cause is buried.
+
+Atlas detects it and stops. The first failure that says the device is gone latches, and every
+later `rhi` call returns `DeviceLost` immediately with the original reason rather than trying
+work that cannot succeed. `Device::is_lost()` reports it.
+
+Atlas does not recover. Recovery means recreating the device and every resource on it, which
+the charter puts out of scope for v0.1.
+
+Detection is backend-dependent and the limits are real rather than temporary. The graphics
+library exposes no device-lost query at all, so this works by reading the message it leaves
+behind. Vulkan is reliable, because the library formats the driver's result code in verbatim.
+Direct3D 12 is best effort, because the message is system prose whose wording depends on the
+reason and the language. Metal has no device-lost notion that reaches the library, so on
+Metal a lost device presents as ordinary failures and nothing latches.
+
 ## Scene
 
 The scene is a tree of presentation entities: names, transforms, parentage, sprites, and

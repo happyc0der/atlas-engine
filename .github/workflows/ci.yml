@@ -89,16 +89,11 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
-      # Excludes the "gpu" label: hosted runners have no GPU.
+      # Excludes the "gpu" label: hosted runners have no GPU. The "integration" tests run
+      # the sandbox binary end to end, which this step used to do by hand; they are part of
+      # the ordinary test run now, so a developer gets the same coverage locally.
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
-
-      - name: Run the sandbox
-        shell: bash
-        run: |
-          ./build/${{ matrix.preset }}/bin/atlas_sandbox --version
-          ./build/${{ matrix.preset }}/bin/atlas_sandbox --headless --ticks 120
-          ./build/${{ matrix.preset }}/bin/atlas_sandbox --video-driver dummy --frames 30
 
       - name: Upload logs on failure
         if: failure()

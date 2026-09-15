@@ -17,8 +17,11 @@ atlas_add_test(rhi
 atlas_add_test(rhi_headless
     SOURCES
         test_device_headless.cpp
+        test_device_loss.cpp
     DEPENDS
         atlas::rhi
+    INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
     LABELS
         "display"
 )

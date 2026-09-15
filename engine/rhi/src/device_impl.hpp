@@ -13,6 +13,7 @@
 #include <atlas/rhi/handles.hpp>
 #include <atlas/rhi/types.hpp>
 
+#include "device_loss.hpp"
 #include <SDL3/SDL_gpu.h>
 
 #include <cstdint>
@@ -73,6 +74,21 @@ struct Device::Impl {
     /// A capture was asked for and has not been taken yet.
     bool capture_requested = false;
     std::optional<Capture> capture;
+
+    /// Whether the graphics device is still there. See device_loss.hpp.
+    detail::DeviceHealth health;
+
+    /// Build an error for a failed graphics call, classifying it as device loss if it is.
+    ///
+    /// Takes the message from the graphics library, so it must be called while that message
+    /// is still the one belonging to the failure being reported.
+    [[nodiscard]] Error fail(ErrorCode fallback, std::string_view what);
+
+    /// The error to return when the device is already known to be gone.
+    ///
+    /// Every entry point checks this first, so that one dead device produces one report
+    /// rather than a different-looking failure from every call that follows.
+    [[nodiscard]] Error already_lost(std::string_view what) const;
 };
 
 struct Frame::Impl {
