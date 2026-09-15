@@ -7,8 +7,20 @@
 atlas_add_module(simulation
     SOURCES
         src/tick_accumulator.cpp
+        src/save_stream.cpp
+        src/command.cpp
+        src/kernel.cpp
+        src/schedule.cpp
+        src/world.cpp
     HEADERS
         include/atlas/simulation/tick_accumulator.hpp
+        include/atlas/simulation/save_stream.hpp
+        include/atlas/simulation/command.hpp
+        include/atlas/simulation/kernel.hpp
+        include/atlas/simulation/rng.hpp
+        include/atlas/simulation/schedule.hpp
+        include/atlas/simulation/table.hpp
+        include/atlas/simulation/world.hpp
     DEPENDS
         core
 )
