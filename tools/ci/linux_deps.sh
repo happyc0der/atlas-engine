@@ -17,6 +17,10 @@ export DEBIAN_FRONTEND=noninteractive
 
 ${SUDO} apt-get update -qq
 
+# libclang-rt-19-dev supplies the sanitizer runtimes. Ubuntu packages them separately from
+# the compiler, so clang accepts -fsanitize=address and then fails at link time with a missing
+# libclang_rt.asan.a, which reads as a broken toolchain rather than a missing package.
+#
 # clang-19 and libstdc++-14 specifically, not whatever "clang" happens to be.
 # Clang 18 reports __cpp_concepts=201907, and libstdc++ gates <expected> on >=202002L, so
 # clang 18 can never see std::expected no matter which libstdc++ is installed. Clang 19
@@ -39,6 +43,7 @@ ${SUDO} apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     clang-19 \
+    libclang-rt-19-dev \
     g++-14 \
     libstdc++-14-dev \
     cmake \
