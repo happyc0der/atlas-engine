@@ -6,6 +6,7 @@ atlas_add_test(core
         test_args.cpp
         test_build_info.cpp
         test_handle.cpp
+        test_hash.cpp
         test_time.cpp
     DEPENDS
         atlas::core

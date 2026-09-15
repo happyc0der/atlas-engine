@@ -35,6 +35,7 @@ Running the sandbox:
 ./build/macos-debug/bin/atlas_sandbox --video-driver dummy --frames 30   # window, no display
 ./build/macos-debug/bin/atlas_sandbox --headless --unbounded --ticks 1000000
 ./build/macos-debug/bin/atlas_sandbox --frames 20 --screenshot /tmp/frame.ppm
+./build/macos-debug/bin/atlas_sandbox --hot-reload      # re-read changed asset files
 ```
 
 Sanitizers: presets `macos-asan`, `macos-tsan`, `linux-clang-asan`, `linux-clang-tsan`.
@@ -85,6 +86,14 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 - A matrix goes to a uniform through `uniform_elements()`, not `elements()`: shaders read
   column-major and Atlas stores row-major.
 - Benchmarks must exclude presentation, or they measure the display rather than the engine.
+- Asset paths are validated by `VirtualPath`, never assembled by hand. Upward traversal,
+  absolute paths, backslashes and null bytes are refused, and a resolved path is checked to
+  lie inside its mounted root.
+- Asset workers touch bytes only: never the window, the device, or engine state. Creating a
+  graphics resource is main-thread work, which is why `Decoded` and `Ready` are different
+  states.
+- A missing or broken asset must resolve to a fallback and be recorded, never stop the
+  engine.
 - No per-frame allocation in measured hot loops after warm-up.
 - Assertions are for violated programmer invariants. Recoverable user or data errors
   return an `Error` with context.

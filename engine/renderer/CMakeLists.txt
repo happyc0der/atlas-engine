@@ -10,10 +10,13 @@
 atlas_add_module(renderer
     SOURCES
         src/quad_batch.cpp
+        src/texture_cache.cpp
         src/shader_loader.cpp
     HEADERS
         include/atlas/renderer/quad_batch.hpp
+        include/atlas/renderer/texture_cache.hpp
     DEPENDS
+        assets
         core
         math
         rhi

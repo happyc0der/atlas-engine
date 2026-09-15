@@ -195,6 +195,31 @@ vertex data begins a copy pass, and a copy pass cannot nest inside a render pass
 preparing and drawing are separate calls and the second requires a token produced by the
 first.
 
+### Assets
+
+Nothing above `atlas::assets` names a directory. An asset lives at a virtual path, roots are
+mounted with priorities, and a path resolves against the highest-priority root that has it,
+which is how a modification directory shadows base content without either knowing about the
+other.
+
+Normalisation is a security boundary, because asset packs and modifications are untrusted
+input. Upward traversal is refused rather than resolved: resolving it correctly is possible
+and resolving it subtly wrongly is a directory escape, and no legitimate asset path needs it.
+A resolved path is then checked to lie inside its root, because a symbolic link can point
+anywhere and what matters is where a path ends up.
+
+Loading is asynchronous through a small pool owned by the assets module, deliberately not the
+general task system, which does not exist yet and which the specification wants kept separate
+from deterministic simulation scheduling. A worker sees only bytes: never the window, the
+graphics device, or engine state. It produces decoded data and stops, and the main thread
+turns that into a graphics resource, because only the main thread may. That split is the
+whole reason loading can be asynchronous at all, and it is why an asset has a `Decoded` state
+distinct from `Ready`.
+
+A missing or broken asset is recorded and resolves to a fallback rather than stopping the
+engine. An engine that halts because one texture is corrupt is much harder to work on than
+one that draws a magenta square and says why.
+
 ## Simulation contract
 
 Designed now, implemented in M6, parallelised in M8:

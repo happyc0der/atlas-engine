@@ -51,12 +51,14 @@ atlas_add_module(core
         src/assert.cpp
         src/log.cpp
         src/args.cpp
+        src/hash.cpp
         "${CMAKE_CURRENT_BINARY_DIR}/generated/build_info.cpp"
     HEADERS
         include/atlas/core/args.hpp
         include/atlas/core/assert.hpp
         include/atlas/core/build_info.hpp
         include/atlas/core/error.hpp
+        include/atlas/core/hash.hpp
         include/atlas/core/log.hpp
         include/atlas/core/profile.hpp
         include/atlas/core/result.hpp

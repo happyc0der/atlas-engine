@@ -5,6 +5,7 @@
 add_subdirectory(core)
 add_subdirectory(math)
 add_subdirectory(platform)
+add_subdirectory(assets)
 add_subdirectory(rhi)
 add_subdirectory(renderer)
 add_subdirectory(simulation)

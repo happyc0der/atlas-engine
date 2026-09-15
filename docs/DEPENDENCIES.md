@@ -26,7 +26,7 @@ distribution. All current dependencies are permissive and therefore compatible.
 | SDL3 | Window, events, input, GPU | 3.4.12 | zlib | Yes | Private to `platform` and `rhi` | M1 |
 | glslang | Compiles HLSL to SPIR-V | 16.4.0 (vcpkg) / 16.6.0 (Homebrew) | BSD-3-Clause and Apache-2.0 | Yes | Build-time tool only; never linked into engine targets | M2 |
 | SPIRV-Cross | Translates SPIR-V to Metal Shading Language | 1.4.350.1 (vcpkg) / 1.4.357.0 (Homebrew) | Apache-2.0 | Yes | Build-time tool only | M2 |
-| stb | Image decoding (`stb_image`) | 2024-07-29 | MIT / Unlicense | Yes | Private to the assets importer | M3 |
+| stb | Image decoding (`stb_image`) | 2024-07-29, port-version 1 | MIT / Unlicense | Yes | Private to the assets importer | M4 |
 | Dear ImGui | Debug overlay | 1.92.8, features `docking-experimental`, `sdl3-binding`, `sdlgpu3-binding` | MIT | Yes | Private to `tools` | M3 |
 | EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004 | M5 |
 
@@ -76,6 +76,13 @@ SDL_GPU compiles at device creation. Precompiled `.metallib` is not produced.
 **EnTT version.** Upstream 4.0.0 requires C++20 and changes the API. vcpkg ships 3.16.0.
 Atlas pins 3.16.0 and confines all EnTT usage to the `scene` wrapper, so a later move is
 contained.
+
+**stb_image.** Compiled once, inside the assets module, and its include directory is marked
+SYSTEM so that its warnings are not held to Atlas's first-party standard: it is C from
+another project and will not stop using old-style casts because this build asked it to. The
+decoder does not bound its own allocations, so image dimensions are checked against explicit
+limits before anything is decoded; an image header is untrusted input and a header claiming
+enormous dimensions is the standard way to turn a decode into an allocation failure.
 
 **Dear ImGui.** Version 1.92.8 is what the pinned baseline provides. Only the SDL_GPU
 renderer backend is used; the SDL3 platform backend is not, because it would require raw

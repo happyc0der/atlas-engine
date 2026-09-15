@@ -8,6 +8,7 @@
 // makes startup and shutdown ordering visible rather than implicit. A runtime module takes
 // over this role in M5, when a second application needs the same composition.
 
+#include <atlas/assets/registry.hpp>
 #include <atlas/core/args.hpp>
 #include <atlas/core/build_info.hpp>
 #include <atlas/core/log.hpp>
@@ -48,6 +49,9 @@ constexpr atlas::log::Category kApp = atlas::log::category::kApp;
 /// stop conditions promptly.
 constexpr std::uint64_t kMaxHeadlessSleepNs = 5'000'000;  // 5 ms
 
+/// How often to look for changed asset files when hot reload is on.
+constexpr std::uint64_t kReloadIntervalNs = 1'000'000'000;  // 1 s
+
 /// Graphics validation layers are worth their cost while the renderer is being written, and
 /// are not worth it in a build meant to be fast.
 #ifdef NDEBUG
@@ -69,7 +73,9 @@ struct Options {
     std::string_view screenshot;
     bool no_render = false;
     bool no_overlay = false;
+    bool hot_reload = false;
     std::uint32_t grid = 100;
+    std::string_view assets_dir = "assets/source";
 };
 
 [[nodiscard]] atlas::Result<atlas::log::Severity> parse_severity(std::string_view name) {
@@ -120,6 +126,8 @@ Options:
   --no-render            Open a window but create no graphics device.
   --grid N               Draw an N by N field of quads. Default: 100, so ten thousand.
   --no-overlay           Do not create the debug overlay.
+  --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
+  --hot-reload           Re-read assets whose files change while running.
   --version              Print build identity and exit.
   --help                 Print this message and exit.
 
@@ -167,6 +175,8 @@ class LogSession {
     options.screenshot = args.value_or("screenshot", std::string_view{});
     options.no_render = args.has("no-render");
     options.no_overlay = args.has("no-overlay");
+    options.hot_reload = args.has("hot-reload");
+    options.assets_dir = args.value_or("assets-dir", std::string_view{"assets/source"});
 
     const auto grid = args.value_or("grid", std::uint64_t{100});
     if (!grid) {
@@ -372,6 +382,17 @@ void step_simulation(atlas::Tick tick) {
     ATLAS_THREAD_NAME("main");
     ATLAS_LOG_INFO(kApp, "startup: {}", atlas::build_info::summary());
 
+    atlas::assets::FileSystem filesystem;
+    if (auto status = filesystem.mount("assets", std::filesystem::path{options->assets_dir});
+        !status) {
+        return std::unexpected(std::move(status).error().context("mounting the asset root"));
+    }
+
+    auto registry = atlas::assets::Registry::create(filesystem, {});
+    if (!registry) {
+        return std::unexpected(std::move(registry).error().context("starting the asset registry"));
+    }
+
     // Subsystems are constructed in dependency order and destroyed in reverse, by scope.
     auto platform = atlas::platform::Platform::create({
         .video = !options->headless,
@@ -405,10 +426,10 @@ void step_simulation(atlas::Tick tick) {
         }
         device = std::move(*created);
 
-        auto demo =
-            atlas::sandbox::DemoScene::create(*device, {.grid_width = options->grid,
-                                                        .grid_height = options->grid,
-                                                        .shader_directory = options->shader_dir});
+        auto demo = atlas::sandbox::DemoScene::create(*device, *registry,
+                                                      {.grid_width = options->grid,
+                                                       .grid_height = options->grid,
+                                                       .shader_directory = options->shader_dir});
         if (!demo) {
             return std::unexpected(std::move(demo).error().context("building the demo scene"));
         }
@@ -448,6 +469,7 @@ void step_simulation(atlas::Tick tick) {
     bool quit = false;
     bool captured = false;
     atlas::renderer::BatchStats last_batch;
+    std::uint64_t reload_timer = 0;
 
     while (!quit) {
         ATLAS_ZONE_NAMED("frame");
@@ -483,6 +505,30 @@ void step_simulation(atlas::Tick tick) {
         // The scene is not updated while the overlay has the pointer, for the same reason.
         if (scene.has_value() && !(overlay.has_value() && overlay->wants_mouse())) {
             scene->update(platform->input(), events);
+        }
+
+        // Bring finished asset work in, then turn anything decoded into graphics resources.
+        // Both are main-thread steps: workers produce bytes and stop there.
+        registry->pump();
+        if (scene.has_value()) {
+            const std::size_t finalised = scene->finalise_assets(*registry);
+            if (finalised > 0) {
+                ATLAS_LOG_INFO(kApp, "finalised {} asset(s)", finalised);
+            }
+        }
+
+        // Polling rather than watching the filesystem: three platforms have three different
+        // notification interfaces, and this is a development convenience. Once a second is
+        // often enough to feel immediate and rare enough not to matter.
+        if (options->hot_reload && frame_ns > 0) {
+            reload_timer += frame_ns;
+            if (reload_timer >= kReloadIntervalNs) {
+                reload_timer = 0;
+                const auto reloaded = registry->reload_changed();
+                if (!reloaded.empty()) {
+                    ATLAS_LOG_INFO(kApp, "{} asset(s) changed on disk", reloaded.size());
+                }
+            }
         }
 
         const auto tick_start = std::chrono::steady_clock::now();
@@ -523,7 +569,7 @@ void step_simulation(atlas::Tick tick) {
                     // Uploading its vertex data begins a copy pass, and the graphics library
                     // refuses to nest one inside a render pass.
                     atlas::tools::DebugUi::PreparedFrame prepared_overlay{};
-                    std::array<std::string, 6> overlay_values;
+                    std::array<std::string, 8> overlay_values;
                     if (overlay.has_value()) {
                         const auto extent = frame->swapchain_extent();
                         overlay->begin_frame(static_cast<float>(frame_ns) / 1'000'000'000.0F,
@@ -613,6 +659,17 @@ void step_simulation(atlas::Tick tick) {
             }
         } else {
             ATLAS_LOG_WARN(kApp, "a screenshot was asked for but no frame was captured");
+        }
+    }
+
+    {
+        const auto asset_stats = registry->stats();
+        ATLAS_LOG_INFO(kApp, "assets: {} total, {} ready, {} failed", asset_stats.total,
+                       asset_stats.ready, asset_stats.failed);
+        for (const auto& info : registry->all()) {
+            if (info.state == atlas::assets::AssetState::Failed) {
+                ATLAS_LOG_WARN(kApp, "  '{}' failed: {}", info.path.text(), info.error);
+            }
         }
     }
 

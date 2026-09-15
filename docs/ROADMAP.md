@@ -12,8 +12,8 @@ Status legend: **done**, *in progress*, planned.
 | M1 | Platform loop | M | **done** |
 | M2 | Minimal GPU renderer | L | **done** |
 | M3 | 2D camera and batching | M | **done** |
-| M4 | Asset pipeline | L | next |
-| M5 | Scene and serialization | M | planned |
+| M4 | Asset pipeline | L | **done** |
+| M5 | Scene and serialization | M | next |
 | M6 | Simulation kernel | L | planned |
 | M7 | Strategy Lab (engine v0.1) | L | planned |
 | M8 | Performance hardening and parallel simulation | L | planned |
@@ -128,10 +128,33 @@ path normalization; asset IDs and the load state machine; texture and shader imp
 async load with main-thread GPU upload; fallbacks and failure paths; the dependency graph
 and hot reload; the asset status panel.
 
-**Exit criteria**
-- Virtual paths, asset IDs, shader and texture import, async CPU loading, GPU upload,
+**Exit criteria — all met**
+- Virtual paths, asset identifiers, texture import, asynchronous loading, GPU upload,
   failure fallbacks, and development hot reload.
 - Round-trip and failure-path tests.
+
+A texture now reaches the screen by being read and decoded on a worker thread and finalised
+on the main thread, because only the main thread may create a graphics resource. Hot reload
+was verified by replacing the file while the process ran and confirming the pixels on screen
+changed.
+
+Failure is not fatal. A missing or corrupt asset is recorded with a reason and draws a
+deliberately hideous magenta fallback, so a frame still happens and the problem is obvious
+rather than invisible. That was verified by pointing the sandbox at a directory with no
+assets and checking the captured pixels.
+
+Path handling is a security boundary and is treated as one: upward traversal, absolute
+paths, drive letters, backslashes and null bytes are all refused, and a resolved path is
+checked to lie inside its mounted root rather than merely to have been built from one,
+because a symbolic link can point anywhere. Each of those has a test.
+
+The asset workers run under ThreadSanitizer as part of the sanitizer job.
+
+Deferred with reasons rather than silently: shader loading still goes through the generated
+manifest from M3 rather than the registry, because the registry has nothing to add to a
+shader whose resource counts are already compile-time constants; cooked-artifact caching is
+not implemented, because nothing yet takes long enough to import to justify a cache; and the
+dependency graph is not built, because with one asset type nothing depends on anything.
 
 ## M5 — Scene and serialization
 

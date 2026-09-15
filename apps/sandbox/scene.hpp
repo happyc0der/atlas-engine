@@ -8,10 +8,12 @@
 /// orthographic camera, a texture, and thousands of rectangles in one draw call. It is not
 /// a map and it is not a game; the quads carry no meaning beyond being many.
 
+#include <atlas/assets/registry.hpp>
 #include <atlas/core/result.hpp>
 #include <atlas/math/camera.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/renderer/quad_batch.hpp>
+#include <atlas/renderer/texture_cache.hpp>
 #include <atlas/rhi/device.hpp>
 
 #include <cstdint>
@@ -28,9 +30,14 @@ class DemoScene {
         std::uint32_t grid_width = 100;
         std::uint32_t grid_height = 100;
         std::string_view shader_directory = "assets/cooked/shaders";
+        /// The texture to draw the field with, as a virtual path.
+        std::string_view texture_path = "textures/tile.png";
     };
 
-    [[nodiscard]] static Result<DemoScene> create(rhi::Device& device, const Config& config);
+    /// The registry must outlive the scene: the scene keeps an identifier and asks for the
+    /// texture each frame rather than holding one, so that a reload is picked up.
+    [[nodiscard]] static Result<DemoScene> create(rhi::Device& device, assets::Registry& registry,
+                                                  const Config& config);
 
     ~DemoScene();
 
@@ -44,8 +51,16 @@ class DemoScene {
 
     void resize(std::uint32_t pixel_width, std::uint32_t pixel_height);
 
+    /// Create graphics resources for anything the registry has finished decoding.
+    ///
+    /// Main thread only, once per frame, before drawing.
+    std::size_t finalise_assets(assets::Registry& registry);
+
     /// Draw the visible quads, and return what that cost.
     [[nodiscard]] renderer::BatchStats draw(rhi::RenderPass& pass);
+
+    /// Whether the field is currently drawn with the fallback rather than its real texture.
+    [[nodiscard]] bool using_fallback() const noexcept;
 
     [[nodiscard]] math::OrthoCamera& camera() noexcept { return m_camera; }
 
@@ -59,9 +74,9 @@ class DemoScene {
     void release() noexcept;
 
     rhi::Device* m_device = nullptr;
-    rhi::TextureHandle m_texture;
-    rhi::SamplerHandle m_sampler;
+    renderer::TextureCache m_textures;
     renderer::QuadBatch m_batch;
+    assets::AssetId m_texture_id;
 
     math::OrthoCamera m_camera;
     std::vector<renderer::Quad> m_quads;
