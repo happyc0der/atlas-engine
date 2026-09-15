@@ -83,6 +83,15 @@ function(atlas_set_common_compile_options target)
             $<$<CONFIG:Debug,RelWithDebInfo>:-fno-omit-frame-pointer>)
     endif()
 
+    # Both platform and rhi link SDL3 privately, and both genuinely need it. For static
+    # libraries a private dependency propagates as $<LINK_ONLY:>, so SDL3 legitimately
+    # appears twice on the link line of anything that uses both. Apple's linker warns about
+    # that while explicitly ignoring it; every other linker is silent. Suppressing the
+    # warning is honest here, because there is nothing to fix in the dependency graph.
+    if(APPLE)
+        target_link_options(${target} PRIVATE -Wl,-no_warn_duplicate_libraries)
+    endif()
+
     if(WIN32)
         target_compile_definitions(${target} PRIVATE
             NOMINMAX              # <Windows.h> min/max macros break std::min/std::max.

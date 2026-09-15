@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Inherits the project configuration and relaxes one check for this directory only.
+#
+# bugprone-signed-bitwise fires on SDL's own flag macros, which are spelled (1u << 0): the
+# shift amount is a signed literal, so the check sees a signed operand. The macros expand at
+# the call site, so the diagnostic lands on Atlas code that cannot fix it. Scoped off here,
+# where the graphics library's headers are used, rather than project-wide, where the check
+# still earns its place.
+InheritParentConfig: true
+Checks: >
+  -bugprone-signed-bitwise

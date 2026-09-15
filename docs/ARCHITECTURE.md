@@ -150,6 +150,30 @@ affinity.
 A render thread is not planned for v0.1 and requires trace evidence plus documented
 affinity rules before it could be considered.
 
+## Renderer
+
+`atlas::rhi` is the whole of Atlas's contact with the graphics library. Its public headers
+name handles, descriptors and enumerations of Atlas's own; every SDL type stays in
+`engine/rhi/src`. The native window handle reaches it through `atlas::platform_internal`, a
+target whose only permitted consumer is the renderer, so the one place the boundary has to
+open is named in the build system rather than in a comment.
+
+Resources are generation-counted handles from a pool. Destroying a resource bumps its slot's
+generation, so an outstanding handle stops resolving rather than dangling, and the device's
+destructor reports by name anything still live. SDL_GPU already defers destruction until the
+graphics processor has finished with a resource, so there is no deletion queue; ADR-0002
+records that reliance.
+
+A frame is a scope. `begin_frame` acquires a command buffer and waits for a swapchain image;
+a frame that is dropped without being submitted releases it. Which release is legal depends
+on whether an image was acquired: SDL refuses to cancel a command buffer holding one, so
+such a frame is submitted instead. A minimised window yields a frame with no image, which is
+not an error, and the caller skips drawing.
+
+GPU-side timing is not available: SDL_GPU exposes fences but no timestamp queries. Profiling
+zones therefore measure acquire, record and submit on the processor side, and anything
+reported as GPU cost says which it is.
+
 ## Simulation contract
 
 Designed now, implemented in M6, parallelised in M8:

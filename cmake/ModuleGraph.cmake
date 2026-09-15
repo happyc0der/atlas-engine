@@ -46,6 +46,9 @@ set(ATLAS_MODULE_DEPS_tools             "core;math;platform;rhi;renderer;assets;
 #   - Tracy in core/profile.hpp: the zone macros are the API, and they compile to nothing
 #     unless ATLAS_PROFILE is on. ADR pending; see docs/PERFORMANCE.md.
 #   - EnTT in scene: ADR-0004.
+# platform_internal is an interface target, not a module with sources: it exposes the
+# native window handle to the renderer and to nothing else. Listed here so that the
+# boundary script treats a use of it outside rhi as the violation it would be.
 set(ATLAS_PUBLIC_THIRDPARTY_core  "tracy" CACHE INTERNAL "")
 set(ATLAS_PUBLIC_THIRDPARTY_scene "entt"  CACHE INTERNAL "")
 

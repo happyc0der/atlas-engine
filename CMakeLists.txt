@@ -81,6 +81,13 @@ if(ATLAS_BUILD_TESTS)
                  COMMAND "${Python3_EXECUTABLE}"
                          "${PROJECT_SOURCE_DIR}/tools/check_spdx.py")
         set_tests_properties(licence_headers PROPERTIES LABELS "lint")
+
+        # Skips itself, rather than failing, on a machine without the shader toolchain: a
+        # machine that cannot compile shaders is a machine that cannot have changed them.
+        add_test(NAME shaders_current
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/tools/cook_shaders.py" --check)
+        set_tests_properties(shaders_current PROPERTIES LABELS "lint")
     else()
         message(STATUS "Atlas: Python not found; the boundary and licence checks will not "
                        "run as tests (CI runs them separately)")

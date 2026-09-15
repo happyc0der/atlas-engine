@@ -4,4 +4,5 @@
 # needs it, never in advance: an empty module is an abstraction without a call site.
 add_subdirectory(core)
 add_subdirectory(platform)
+add_subdirectory(rhi)
 add_subdirectory(simulation)

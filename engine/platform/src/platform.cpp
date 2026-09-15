@@ -63,6 +63,14 @@ Result<Platform> Platform::create(const PlatformConfig& config) {
         }
     }
 
+    // SDL's default response to a failed internal assertion is a modal dialog with Retry,
+    // Break, Abort and Ignore. In an automated run there is nobody to click it, so the
+    // process hangs until something times out, which is a far worse failure than a crash:
+    // it hides what went wrong behind a stall. Aborting fails loudly and leaves a core
+    // dump. SDL_SetHint respects an existing environment override, so a developer who
+    // wants the dialog can still ask for it.
+    SDL_SetHint(SDL_HINT_ASSERT, "abort");
+
     if (!config.app_name.empty()) {
         const std::string name{config.app_name};
         SDL_SetHint(SDL_HINT_APP_NAME, name.c_str());

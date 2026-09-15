@@ -34,6 +34,7 @@ Running the sandbox:
 ./build/macos-debug/bin/atlas_sandbox --headless --ticks 600      # no window at all
 ./build/macos-debug/bin/atlas_sandbox --video-driver dummy --frames 30   # window, no display
 ./build/macos-debug/bin/atlas_sandbox --headless --unbounded --ticks 1000000
+./build/macos-debug/bin/atlas_sandbox --frames 20 --screenshot /tmp/frame.ppm
 ```
 
 Sanitizers: presets `macos-asan`, `macos-tsan`, `linux-clang-asan`, `linux-clang-tsan`.
@@ -77,6 +78,9 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   at every entry point.
 - Query window state such as minimised or focused; do not track it from events, which
   drifts when an event is missed.
+- SDL types stay in `engine/platform/src` and `engine/rhi/src`. The native window handle
+  reaches the renderer only through `atlas::platform_internal`.
+- Shaders are authored in HLSL and cooked to SPIR-V and MSL. Commit the cooked outputs.
 - No per-frame allocation in measured hot loops after warm-up.
 - Assertions are for violated programmer invariants. Recoverable user or data errors
   return an `Error` with context.

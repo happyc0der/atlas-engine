@@ -1,0 +1,42 @@
+{
+  "cooker_version": 1,
+  "tools": {
+    "glslang": "Glslang Version: 11:16.6.0",
+    "spirv-cross": "Git commit:  Timestamp: 2026-07-06T12:43:32",
+    "cooker": "1"
+  },
+  "shaders": [
+    {
+      "name": "triangle",
+      "stage": "fragment",
+      "source": "triangle.frag.hlsl",
+      "source_hash": "e3c11c8c0d12ad5b",
+      "outputs": {
+        "spirv": {
+          "file": "triangle.frag.spv",
+          "entry_point": "main"
+        },
+        "msl": {
+          "file": "triangle.frag.msl",
+          "entry_point": "main0"
+        }
+      }
+    },
+    {
+      "name": "triangle",
+      "stage": "vertex",
+      "source": "triangle.vert.hlsl",
+      "source_hash": "5676504b5125f058",
+      "outputs": {
+        "spirv": {
+          "file": "triangle.vert.spv",
+          "entry_point": "main"
+        },
+        "msl": {
+          "file": "triangle.vert.msl",
+          "entry_point": "main0"
+        }
+      }
+    }
+  ]
+}

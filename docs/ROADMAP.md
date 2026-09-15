@@ -10,8 +10,8 @@ Status legend: **done**, *in progress*, planned.
 |---|---|---|---|
 | M0 | Architecture and reproducible skeleton | M | **done** |
 | M1 | Platform loop | M | **done** |
-| M2 | Minimal GPU renderer | L | next |
-| M3 | 2D camera and batching | M | planned |
+| M2 | Minimal GPU renderer | L | **done** |
+| M3 | 2D camera and batching | M | next |
 | M4 | Asset pipeline | L | planned |
 | M5 | Scene and serialization | M | planned |
 | M6 | Simulation kernel | L | planned |
@@ -73,12 +73,23 @@ Slices: `Handle`/`HandlePool` in core; the `rhi` module and device creation; fra
 clear; shader toolchain spike then the shader pipeline; triangle and buffers; profiling
 zones and validation; lifetime, shutdown, and the shader ADR.
 
-**Exit criteria**
+**Exit criteria — all met**
 - Clear and triangle through the Atlas RHI boundary.
 - Debug validation enabled in debug builds.
 - Resize and resource shutdown tested; the leak report is empty.
 - CPU profiling zones around acquire, record, and submit. SDL_GPU exposes no timestamp
   queries, so GPU-side timing is a documented limitation rather than a claim.
+
+The triangle is verified by reading the swapchain back and checking pixels, not by looking
+at a screenshot: the apex must be red-dominant, the lower corners green and blue, and the
+background the clear colour. The same readback carries integer-ID picking in M7.
+
+Direct3D 12 is not supported. The shader toolchain produces SPIR-V and Metal Shading
+Language but not DXIL, because the compiler that produces DXIL has no macOS build; Windows
+therefore uses the Vulkan backend. ADR-0006 records the reasoning and what would change it.
+
+Resource binding conventions are untouched, because a triangle built from the vertex index
+binds nothing. M3 is where that has to be settled.
 
 ## M3 — 2D camera and batching
 

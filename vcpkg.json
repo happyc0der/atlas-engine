@@ -10,7 +10,16 @@
     "catch2",
     {
       "name": "sdl3",
-      "default-features": true
+      "default-features": true,
+      "features": [
+        "vulkan"
+      ],
+      "platform": "linux"
+    },
+    {
+      "name": "sdl3",
+      "default-features": true,
+      "platform": "!linux"
     }
   ],
   "features": {

@@ -24,7 +24,8 @@ distribution. All current dependencies are permissive and therefore compatible.
 | Catch2 | Unit and integration test framework | 3.15.3 | BSL-1.0 | Yes | Test targets only | M0 |
 | Tracy | Frame profiler client | 0.13.1 | BSD-3-Clause | Yes | `atlas/core/profile.hpp` macros, behind `ATLAS_PROFILE`; vcpkg feature `profile` | M0 |
 | SDL3 | Window, events, input, GPU | 3.4.12 | zlib | Yes | Private to `platform` and `rhi` | M1 |
-| SDL_shadercross | Offline HLSL to SPIR-V, DXIL, MSL, and reflection | commit pin; no upstream release exists | zlib | Yes | Build-time tool only; never linked into engine targets | M2 |
+| glslang | Compiles HLSL to SPIR-V | 16.4.0 (vcpkg) / 16.6.0 (Homebrew) | BSD-3-Clause and Apache-2.0 | Yes | Build-time tool only; never linked into engine targets | M2 |
+| SPIRV-Cross | Translates SPIR-V to Metal Shading Language | 1.4.350.1 (vcpkg) / 1.4.357.0 (Homebrew) | Apache-2.0 | Yes | Build-time tool only | M2 |
 | stb | Image decoding (`stb_image`) | 2024-07-29 | MIT / Unlicense | Yes | Private to the assets importer | M3 |
 | Dear ImGui | Editor and debug UI | 1.92.9, docking | MIT | Yes | Private to `tools` | M3 |
 | EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004 | M5 |
@@ -61,11 +62,12 @@ required. The Vulkan feature of the SDL3 port is enabled on Linux only.
 `cmake/Dependencies.cmake` asserts that the resolved SDL3 lives under `vcpkg_installed`, so
 a stale system copy cannot be picked up silently.
 
-**SDL_shadercross has no releases.** It is pinned by commit. The vcpkg port depends on
-`directx-dxc`, which does not support `arm64-osx`, so the macOS build is from source with
-vendored dependencies, following the project's own macOS CI recipe. Slang is the documented
-fallback front end. Cooked shader outputs are tracked in the repository, so no contributor
-or CI job needs the toolchain to build and run Atlas.
+**SDL_shadercross is not used.** Its vcpkg port depends on `directx-dxc`, which supports
+Windows and Linux x86_64 only, so it cannot be installed on the development machine. glslang
+and SPIRV-Cross replace it and are in the pinned baseline for every platform. The cost is
+DXIL, and with it the Direct3D 12 backend; see ADR-0006. Cooked shader outputs are committed,
+so no contributor or continuous-integration job needs the toolchain to build and run Atlas.
+Changing a shader needs it: `brew install glslang spirv-cross`, or the apt equivalents.
 
 **No Metal shader compiler.** The development machine has Command Line Tools but not full
 Xcode, so there is no `metal` compiler. Atlas ships Metal shaders as MSL source text, which

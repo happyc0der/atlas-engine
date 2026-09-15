@@ -15,13 +15,20 @@
 #include <atlas/core/result.hpp>
 #include <atlas/core/time.hpp>
 #include <atlas/platform/platform.hpp>
+#include <atlas/rhi/device.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
+
+#include "renderer.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -37,6 +44,14 @@ constexpr atlas::log::Category kApp = atlas::log::category::kApp;
 /// stop conditions promptly.
 constexpr std::uint64_t kMaxHeadlessSleepNs = 5'000'000;  // 5 ms
 
+/// Graphics validation layers are worth their cost while the renderer is being written, and
+/// are not worth it in a build meant to be fast.
+#ifdef NDEBUG
+constexpr bool kDebugBuild = false;
+#else
+constexpr bool kDebugBuild = true;
+#endif
+
 struct Options {
     bool headless = false;
     std::uint64_t max_frames = 0;  ///< 0 means run until asked to quit.
@@ -46,6 +61,9 @@ struct Options {
     std::string_view video_driver;
     std::string_view log_level = "info";
     std::string_view log_file;
+    std::string_view shader_dir = "assets/cooked/shaders";
+    std::string_view screenshot;
+    bool no_render = false;
 };
 
 [[nodiscard]] atlas::Result<atlas::log::Severity> parse_severity(std::string_view name) {
@@ -91,6 +109,9 @@ Options:
   --unbounded            Run the simulation as fast as it will go, ignoring real time.
   --log-level LEVEL      trace, debug, info, warning, error, or fatal. Default: info.
   --log-file PATH        Also append log records to PATH.
+  --shader-dir PATH      Where the cooked shaders live. Default: assets/cooked/shaders.
+  --screenshot PATH      Write the last rendered frame to PATH as a PPM image, then exit.
+  --no-render            Open a window but create no graphics device.
   --version              Print build identity and exit.
   --help                 Print this message and exit.
 
@@ -134,6 +155,9 @@ class LogSession {
     options.video_driver = args.value_or("video-driver", std::string_view{});
     options.log_level = args.value_or("log-level", std::string_view{"info"});
     options.log_file = args.value_or("log-file", std::string_view{});
+    options.shader_dir = args.value_or("shader-dir", std::string_view{"assets/cooked/shaders"});
+    options.screenshot = args.value_or("screenshot", std::string_view{});
+    options.no_render = args.has("no-render");
 
     const auto frames = args.value_or("frames", std::uint64_t{0});
     if (!frames) {
@@ -244,6 +268,53 @@ class FrameCounters {
     std::uint64_t m_dropped_ticks = 0;
 };
 
+/// Write a captured frame to a Portable Pixmap.
+///
+/// PPM because it needs no library and every image viewer reads it. The capture is whatever
+/// the swapchain format is, which is usually blue-green-red-alpha rather than the
+/// red-green-blue PPM wants, so the channels are reordered here.
+[[nodiscard]] atlas::Status write_ppm(const std::filesystem::path& path,
+                                      const atlas::rhi::Device::Capture& capture) {
+    if (capture.pixels.empty() || capture.extent.width == 0 || capture.extent.height == 0) {
+        return std::unexpected(
+            atlas::Error(atlas::ErrorCode::InvalidArgument, "nothing was captured"));
+    }
+
+    const bool bgra = capture.format == atlas::rhi::TextureFormat::Bgra8Unorm ||
+                      capture.format == atlas::rhi::TextureFormat::Bgra8UnormSrgb;
+
+    std::ofstream stream(path, std::ios::binary);
+    if (!stream) {
+        return std::unexpected(
+            atlas::Error(atlas::ErrorCode::PermissionDenied,
+                         std::format("cannot open '{}' for writing", path.string())));
+    }
+
+    stream << "P6\n" << capture.extent.width << ' ' << capture.extent.height << "\n255\n";
+
+    const std::size_t pixel_count =
+        static_cast<std::size_t>(capture.extent.width) * capture.extent.height;
+    std::string rows;
+    rows.resize(pixel_count * 3);
+
+    for (std::size_t i = 0; i < pixel_count; ++i) {
+        const auto* pixel = &capture.pixels[i * 4];
+        const auto r = static_cast<unsigned char>(pixel[bgra ? 2 : 0]);
+        const auto g = static_cast<unsigned char>(pixel[1]);
+        const auto b = static_cast<unsigned char>(pixel[bgra ? 0 : 2]);
+        rows[(i * 3) + 0] = static_cast<char>(r);
+        rows[(i * 3) + 1] = static_cast<char>(g);
+        rows[(i * 3) + 2] = static_cast<char>(b);
+    }
+
+    stream.write(rows.data(), static_cast<std::streamsize>(rows.size()));
+    if (!stream) {
+        return std::unexpected(atlas::Error(atlas::ErrorCode::Internal,
+                                            std::format("writing '{}' failed", path.string())));
+    }
+    return atlas::ok();
+}
+
 /// One simulation tick.
 ///
 /// Empty on purpose: M1 delivers the time model, not a simulation. The zone marker is here
@@ -300,6 +371,27 @@ void step_simulation(atlas::Tick tick) {
         window = std::move(*created);
     }
 
+    // The device and the renderer are optional: a headless run has neither, and a run with
+    // --no-render deliberately skips them to exercise the window path on its own.
+    std::optional<atlas::rhi::Device> device;
+    std::optional<atlas::sandbox::TriangleRenderer> renderer;
+
+    if (!options->headless && !options->no_render && window.valid()) {
+        auto created = atlas::rhi::Device::create({.debug = kDebugBuild}, window);
+        if (!created) {
+            return std::unexpected(
+                std::move(created).error().context("creating the graphics device"));
+        }
+        device = std::move(*created);
+
+        auto triangle = atlas::sandbox::TriangleRenderer::create(*device, options->shader_dir);
+        if (!triangle) {
+            return std::unexpected(
+                std::move(triangle).error().context("preparing the triangle renderer"));
+        }
+        renderer = std::move(*triangle);
+    }
+
     auto accumulator = atlas::sim::TickAccumulator::create({
         .ticks_per_second = options->ticks_per_second,
     });
@@ -317,13 +409,14 @@ void step_simulation(atlas::Tick tick) {
 
     atlas::SteadyClock clock;
     FrameCounters counters;
-    std::uint64_t frame = 0;
+    std::uint64_t frame_index = 0;
     bool quit = false;
+    bool captured = false;
 
     while (!quit) {
         ATLAS_ZONE_NAMED("frame");
         const std::uint64_t frame_ns = atlas::to_unsigned_ns(clock.tick());
-        ++frame;
+        ++frame_index;
 
         for (const auto& event : platform->pump()) {
             if (std::holds_alternative<atlas::platform::QuitRequested>(event) ||
@@ -357,10 +450,44 @@ void step_simulation(atlas::Tick tick) {
 
         counters.record(frame_ns, tick_ns, plan.ticks_to_run, plan.dropped_ticks);
 
-        // There is no renderer yet. When there is, this is where a minimised window skips
-        // presentation while the simulation carries on.
-        if (!options->headless && window.valid() && !window.is_minimized()) {
+        // A minimised window has no image to draw into. The simulation carries on; only
+        // presentation is skipped.
+        if (device.has_value() && window.valid() && !window.is_minimized()) {
             ATLAS_ZONE_NAMED("present");
+
+            auto frame = device->begin_frame();
+            if (!frame) {
+                ATLAS_LOG_ERROR(kApp, "begin_frame failed: {}", frame.error());
+                quit = true;
+            } else {
+                if (frame->has_swapchain_target()) {
+                    // The last frame before exiting is the one worth capturing, so the
+                    // request is made only once the loop is about to end.
+                    const bool capture_now =
+                        !options->screenshot.empty() && !captured &&
+                        ((options->max_frames != 0 && frame_index >= options->max_frames) || quit);
+                    if (capture_now) {
+                        device->request_capture();
+                        captured = true;
+                    }
+
+                    auto pass = frame->begin_render_pass({
+                        .colour = {.load = atlas::rhi::LoadOp::Clear,
+                                   .clear_colour = {.r = 0.06F, .g = 0.07F, .b = 0.10F}},
+                        .debug_name = "sandbox main pass",
+                    });
+                    if (!pass) {
+                        ATLAS_LOG_ERROR(kApp, "begin_render_pass failed: {}", pass.error());
+                    } else if (renderer.has_value()) {
+                        renderer->draw(*pass);
+                    }
+                }
+
+                if (const auto status = device->end_frame(std::move(*frame)); !status) {
+                    ATLAS_LOG_ERROR(kApp, "end_frame failed: {}", status.error());
+                    quit = true;
+                }
+            }
         }
 
         ATLAS_FRAME_MARK();
@@ -379,13 +506,32 @@ void step_simulation(atlas::Tick tick) {
                 std::chrono::nanoseconds{std::min<std::uint64_t>(remaining, kMaxHeadlessSleepNs)});
         }
 
-        if (options->max_frames != 0 && frame >= options->max_frames) {
+        if (options->max_frames != 0 && frame_index >= options->max_frames) {
             quit = true;
         }
         if (options->max_ticks != 0 && accumulator->current_tick() >= options->max_ticks) {
             quit = true;
         }
     }
+
+    if (!options->screenshot.empty() && device.has_value()) {
+        if (auto capture = device->take_capture()) {
+            const std::filesystem::path path{options->screenshot};
+            if (const auto status = write_ppm(path, *capture); !status) {
+                ATLAS_LOG_ERROR(kApp, "writing the screenshot failed: {}", status.error());
+            } else {
+                ATLAS_LOG_INFO(kApp, "screenshot written to '{}' ({}x{})", path.string(),
+                               capture->extent.width, capture->extent.height);
+            }
+        } else {
+            ATLAS_LOG_WARN(kApp, "a screenshot was asked for but no frame was captured");
+        }
+    }
+
+    // The renderer holds resources the device owns, so it must go first. Destroying them in
+    // the wrong order is the kind of mistake that only shows up in the leak report.
+    renderer.reset();
+    device.reset();
 
     ATLAS_LOG_INFO(kApp, "loop finished at tick {}", accumulator->current_tick());
     counters.report();

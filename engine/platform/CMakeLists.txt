@@ -18,6 +18,7 @@ atlas_add_module(platform
         src/key.cpp
         src/sdl_keymap.cpp
         src/sdl_error.cpp
+        src/sdl_access.cpp
     HEADERS
         include/atlas/platform/event.hpp
         include/atlas/platform/input.hpp
@@ -30,6 +31,17 @@ atlas_add_module(platform
     PRIVATE_DEPS
         SDL3::SDL3-static
 )
+
+target_include_directories(atlas_platform PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/internal/include)
+
+# The native window handle, for the renderer and for nothing else. A separate target rather
+# than a public header, so that the one consumer is named in the build system and any other
+# use fails to configure.
+add_library(atlas_platform_internal INTERFACE)
+add_library(atlas::platform_internal ALIAS atlas_platform_internal)
+target_include_directories(atlas_platform_internal
+    INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/internal/include>)
+target_link_libraries(atlas_platform_internal INTERFACE atlas::platform)
 
 if(ATLAS_BUILD_TESTS)
     add_subdirectory(tests)

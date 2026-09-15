@@ -19,7 +19,18 @@
 #include <string>
 #include <string_view>
 
+struct SDL_Window;
+
 namespace atlas::platform {
+
+class Window;
+
+namespace internal {
+// Declared here so that the friend declaration below can name it. The definition and the
+// documentation live in atlas/platform/internal/sdl_access.hpp.
+// NOLINTNEXTLINE(readability-redundant-declaration)
+[[nodiscard]] SDL_Window* native_handle(const Window& window) noexcept;
+}  // namespace internal
 
 struct WindowDesc {
     std::string_view title = "Atlas";
@@ -78,6 +89,10 @@ class Window {
 
   private:
     friend class Platform;
+
+    /// The renderer needs the native handle, and nothing else does. Granting it to one
+    /// named function in a separate internal target is narrower than a public accessor.
+    friend SDL_Window* internal::native_handle(const Window& window) noexcept;
 
     /// Opaque; the concrete window type never appears in a public header. The RHI reaches
     /// the underlying handle through a separate internal target in M2.

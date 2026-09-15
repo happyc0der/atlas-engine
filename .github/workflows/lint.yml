@@ -39,6 +39,14 @@ jobs:
           CLANG_FORMAT: /usr/local/bin/clang-format
         run: ./tools/format.sh --check
 
+      # Recompiles the shaders and compares against the committed outputs, so that a shader
+      # edited without re-cooking fails here rather than rendering something stale.
+      - name: Install the shader toolchain
+        run: sudo apt-get install -y --no-install-recommends glslang-tools spirv-cross
+
+      - name: Shaders are current
+        run: python3 tools/cook_shaders.py --check
+
   tidy:
     name: clang-tidy
     runs-on: ubuntu-24.04
