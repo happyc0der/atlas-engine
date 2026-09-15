@@ -46,10 +46,15 @@ case "${NORMALISED}" in
         deny "history rewriting" ;;
     *"git checkout ."*|*"git restore ."*)
         deny "discards every uncommitted change in the tree" ;;
-    *"rm -rf /"*|*"rm -rf ~"*|*"rm -fr /"*)
-        deny "recursive delete of a root or home path" ;;
     *"rm -rf external"*|*"rm -rf .git"*)
         deny "deletes the vcpkg submodule or the repository metadata" ;;
 esac
+
+# A recursive delete whose target is the filesystem root or a home directory.
+# Matching the bare prefix alone would reject every absolute path, which is most of them,
+# so the target itself has to be the dangerous thing.
+if [[ "${NORMALISED}" =~ rm[[:space:]]+-[a-zA-Z]*[rf][a-zA-Z]*[[:space:]]+(/|~|~/|\$HOME|\$\{HOME\})([[:space:]]|$) ]]; then
+    deny "recursive delete of the filesystem root or a home directory"
+fi
 
 exit 0
