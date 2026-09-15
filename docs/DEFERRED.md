@@ -29,12 +29,17 @@ substitution, recorded here because it was never recorded anywhere else.
 
 ## Never verified, as distinct from deferred
 
+Much of this section was closed on 2026-09-15, when a remote was created and continuous
+integration ran for the first time. What it found is recorded in
+[ROADMAP.md](ROADMAP.md#first-continuous-integration).
+
 | What | State |
 |---|---|
-| Continuous integration | Has never executed. There is no git remote, so the four workflow files have been reviewed and validated as YAML and never run. |
-| Windows | Has never been compiled, by anything. The build is configured for it and that configuration is untested. |
-| x86_64 | No machine. The golden-hash comparison covers two toolchains on arm64 only, which is a real result about compilers and says nothing about architectures. |
-| A decision the plan asked for | The plan said the owner would decide by M3 whether to acquire Windows hardware or a virtual machine. M3 passed without the question being put. |
+| Continuous integration | Runs, on every push. It found ten distinct problems in its first six attempts, across five corrective pushes. None could have been found locally: they are properties of the runner images, the checkout action, the triplets, and compilers this machine does not have. |
+| macOS and Linux x86_64 | Both build and pass, in Debug and Release. Linux x86_64 is verified for the first time; the local container is arm64. |
+| Windows | Compiles for the first time. It found two genuine portability bugs in code that had never been compiled by MSVC. |
+| x86_64 determinism | Still unmeasured. The golden-hash comparison covers two toolchains on arm64. Running it on the x86_64 runners is now possible and has not been done. |
+| A decision the plan asked for | The plan said the owner would decide by M3 whether to acquire Windows hardware or a virtual machine. M3 passed without the question being put. Continuous integration reduces the urgency; it does not answer the question, because the graphics path on Windows still has nothing verifying it. |
 
 ## Deferred with a reason, by milestone
 
