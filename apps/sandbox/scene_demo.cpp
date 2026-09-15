@@ -68,17 +68,20 @@ constexpr std::size_t kChildCount = 6;
 
         // One grandchild, so the demonstration covers composition more than one level deep.
         if (i == 0) {
-            const scene::StableId grandchild = built.create("grandchild");
-            built.set_local_transform(grandchild,
+            const scene::StableId descendant = built.create("grandchild");
+            built.set_local_transform(descendant,
                                       scene::LocalTransform{.position = {.x = 14.0F, .y = 0.0F},
                                                             .scale = {.x = 0.6F, .y = 0.6F}});
-            built.set_sprite(grandchild, scene::SpriteRenderData{
+            built.set_sprite(descendant, scene::SpriteRenderData{
                                              .texture = texture,
                                              .size = {.x = kChildSize, .y = kChildSize},
                                              .tint = {.r = 1.0F, .g = 0.45F, .b = 0.45F, .a = 1.0F},
                                              .layer = 2,
                                          });
-            if (auto status = built.set_parent(grandchild, child); !status) {
+            // Not swapped: the parameters are (child, parent), and a grandchild's parent is
+            // a child, so the names genuinely line up that way.
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
+            if (auto status = built.set_parent(descendant, child); !status) {
                 return std::unexpected(std::move(status).error().context("building the hierarchy"));
             }
         }

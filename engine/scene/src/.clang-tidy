@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Inherits the project configuration and relaxes one check for this directory only.
+#
+# misc-no-recursion fires on walking a tree. A scene is a tree, and composing transforms,
+# checking for a cycle before reparenting, and destroying a subtree are all naturally
+# expressed by recursing. The check's concern is unbounded depth, and depth here is bounded
+# explicitly: `compose` refuses to descend past kMaxDepth, and no hierarchy that would exceed
+# it can be built, because `set_parent` and the loader both reject one.
+#
+# Rewriting three tree walks around an explicit stack to satisfy a check whose concern is
+# already answered would make them harder to read for nothing. Scoped here rather than
+# project-wide, following engine/rhi/src.
+InheritParentConfig: true
+Checks: >
+  -misc-no-recursion

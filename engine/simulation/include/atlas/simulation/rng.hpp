@@ -35,7 +35,7 @@ enum class StreamId : std::uint32_t {};
 
 [[nodiscard]] constexpr StreamId stream_id(std::string_view name) noexcept {
     const std::uint64_t full = hash_string(name);
-    return StreamId{static_cast<std::uint32_t>((full >> 32) ^ (full & 0xFFFF'FFFFULL))};
+    return StreamId{static_cast<std::uint32_t>((full >> 32U) ^ (full & 0xFFFF'FFFFULL))};
 }
 
 /// One reproducible sequence.
@@ -54,7 +54,7 @@ class RngStream {
 
     [[nodiscard]] constexpr std::uint32_t next_u32() noexcept {
         // The high half, because the low bits of a multiply-based mixer are the weakest.
-        return static_cast<std::uint32_t>(next_u64() >> 32);
+        return static_cast<std::uint32_t>(next_u64() >> 32U);
     }
 
     /// A value in `[0, bound)`, or zero when `bound` is zero.
@@ -69,19 +69,19 @@ class RngStream {
             return 0;
         }
 
-        auto [high, low] = widening_multiply(next_u64(), bound);
+        Product product = widening_multiply(next_u64(), bound);
 
-        if (low < bound) {
+        if (product.low < bound) {
             // Rejection threshold. Values below it fall in the short window that would make
-            // some outcomes likelier than others.
+            // some outcomes likelier than others. The loop terminates because each iteration
+            // draws a fresh value, and the rejected window is a vanishing fraction of the
+            // range: the expected number of redraws is below one.
             const std::uint64_t threshold = (~bound + 1U) % bound;
-            while (low < threshold) {
-                const auto next = widening_multiply(next_u64(), bound);
-                high = next.high;
-                low = next.low;
+            while (product.low < threshold) {
+                product = widening_multiply(next_u64(), bound);
             }
         }
-        return high;
+        return product.high;
     }
 
     /// A value in `[low, high]`, or `low` when the range is empty or inverted.
@@ -119,9 +119,9 @@ class RngStream {
     [[nodiscard]] static constexpr Product widening_multiply(std::uint64_t a,
                                                              std::uint64_t b) noexcept {
         const std::uint64_t a_low = a & 0xFFFF'FFFFULL;
-        const std::uint64_t a_high = a >> 32;
+        const std::uint64_t a_high = a >> 32U;
         const std::uint64_t b_low = b & 0xFFFF'FFFFULL;
-        const std::uint64_t b_high = b >> 32;
+        const std::uint64_t b_high = b >> 32U;
 
         const std::uint64_t low_low = a_low * b_low;
         const std::uint64_t cross_one = a_high * b_low;
@@ -131,11 +131,11 @@ class RngStream {
         // The carry out of the low half has to be folded into the high half, which is the
         // part a naive two-multiply version gets wrong.
         const std::uint64_t carry =
-            ((low_low >> 32) + (cross_one & 0xFFFF'FFFFULL) + (cross_two & 0xFFFF'FFFFULL)) >> 32;
+            ((low_low >> 32U) + (cross_one & 0xFFFF'FFFFULL) + (cross_two & 0xFFFF'FFFFULL)) >> 32U;
 
         return Product{
-            .high = high_high + (cross_one >> 32) + (cross_two >> 32) + carry,
-            .low = low_low + (cross_one << 32) + (cross_two << 32),
+            .high = high_high + (cross_one >> 32U) + (cross_two >> 32U) + carry,
+            .low = low_low + (cross_one << 32U) + (cross_two << 32U),
         };
     }
 
@@ -152,9 +152,9 @@ class RngStream {
         z += counter * 0x94D0'49BB'1331'11EBULL;
 
         z += 0x9E37'79B9'7F4A'7C15ULL;
-        z = (z ^ (z >> 30)) * 0xBF58'476D'1CE4'E5B9ULL;
-        z = (z ^ (z >> 27)) * 0x94D0'49BB'1331'11EBULL;
-        return z ^ (z >> 31);
+        z = (z ^ (z >> 30U)) * 0xBF58'476D'1CE4'E5B9ULL;
+        z = (z ^ (z >> 27U)) * 0x94D0'49BB'1331'11EBULL;
+        return z ^ (z >> 31U);
     }
 
     std::uint64_t m_seed = 0;

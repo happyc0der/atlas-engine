@@ -545,10 +545,12 @@ void step_simulation(atlas::Tick tick) {
         // Bring finished asset work in, then turn anything decoded into graphics resources.
         // Both are main-thread steps: workers produce bytes and stop there.
         registry->pump();
-        const std::size_t finalised = scene.has_value() ? scene->finalise_assets(*registry)
-                                      : scene_demo.has_value()
-                                          ? scene_demo->finalise_assets(*registry)
-                                          : 0;
+        std::size_t finalised = 0;
+        if (scene.has_value()) {
+            finalised = scene->finalise_assets(*registry);
+        } else if (scene_demo.has_value()) {
+            finalised = scene_demo->finalise_assets(*registry);
+        }
         if (finalised > 0) {
             ATLAS_LOG_INFO(kApp, "finalised {} asset(s)", finalised);
         }
@@ -632,19 +634,24 @@ void step_simulation(atlas::Tick tick) {
                         overlay_values[0] =
                             std::format("{:.2f} ms", static_cast<double>(frame_ns) / 1e6);
                         overlay_values[1] = std::format("{}", accumulator->current_tick());
-                        overlay_values[2] =
-                            scene.has_value() ? std::format("{} of {}", scene->visible_last_frame(),
-                                                            scene->quad_count())
-                            : scene_demo.has_value() ? std::format("{} of {}", last_batch.quads,
-                                                                   scene_demo->scene().size())
-                                                     : std::string{"-"};
+                        if (scene.has_value()) {
+                            overlay_values[2] = std::format("{} of {}", scene->visible_last_frame(),
+                                                            scene->quad_count());
+                        } else if (scene_demo.has_value()) {
+                            overlay_values[2] = std::format("{} of {}", last_batch.quads,
+                                                            scene_demo->scene().size());
+                        } else {
+                            overlay_values[2] = "-";
+                        }
                         overlay_values[3] = std::format("{}", last_batch.draw_calls);
                         overlay_values[4] = std::format("{} KiB", last_batch.bytes_uploaded / 1024);
-                        overlay_values[5] = scene.has_value()
-                                                ? std::format("{:.2f}", scene->camera().zoom())
-                                            : scene_demo.has_value()
-                                                ? std::format("{:.2f}", scene_demo->camera().zoom())
-                                                : std::string{"-"};
+                        if (scene.has_value()) {
+                            overlay_values[5] = std::format("{:.2f}", scene->camera().zoom());
+                        } else if (scene_demo.has_value()) {
+                            overlay_values[5] = std::format("{:.2f}", scene_demo->camera().zoom());
+                        } else {
+                            overlay_values[5] = "-";
+                        }
 
                         const std::array<atlas::tools::Stat, 6> stats{{
                             {.label = "frame", .value = overlay_values[0]},

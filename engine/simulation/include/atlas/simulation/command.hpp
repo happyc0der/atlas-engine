@@ -48,7 +48,7 @@ enum class CommandType : std::uint32_t { Invalid = 0 };
 
 [[nodiscard]] constexpr CommandType command_type(std::string_view name) noexcept {
     const std::uint64_t full = hash_string(name);
-    const auto folded = static_cast<std::uint32_t>((full >> 32) ^ (full & 0xFFFF'FFFFULL));
+    const auto folded = static_cast<std::uint32_t>((full >> 32U) ^ (full & 0xFFFF'FFFFULL));
     return CommandType{folded == 0 ? 1U : folded};
 }
 
@@ -86,7 +86,7 @@ class CommandQueue {
     static constexpr std::size_t kMaxPending = 1'000'000;
 
     /// Largest payload accepted, since a queue is fed from untrusted places.
-    static constexpr std::size_t kMaxPayload = 64 * 1024;
+    static constexpr std::size_t kMaxPayload = std::size_t{64} * 1024;
 
     CommandQueue();
     ~CommandQueue();

@@ -15,24 +15,28 @@ namespace {
 /// little-endian machine and to a byte swap on a big-endian one, which is what should
 /// happen.
 template <typename T> void append_le(std::vector<std::byte>& out, T value) {
+    // Widened before shifting. A narrow unsigned type promotes to int first, which makes the
+    // operand signed and the shift a signed one; widening keeps every operand unsigned and
+    // is what the code means in any case.
+    const auto bits = static_cast<std::uint64_t>(value);
     for (std::size_t i = 0; i < sizeof(T); ++i) {
-        out.push_back(static_cast<std::byte>((value >> (i * 8)) & 0xFFU));
+        out.push_back(static_cast<std::byte>((bits >> (i * 8U)) & 0xFFULL));
     }
 }
 
 template <typename T> [[nodiscard]] T read_le(std::span<const std::byte> bytes) noexcept {
     T value = 0;
     for (std::size_t i = 0; i < sizeof(T); ++i) {
-        value |= static_cast<T>(static_cast<T>(std::to_integer<std::uint8_t>(bytes[i])) << (i * 8));
+        value |=
+            static_cast<T>(static_cast<T>(std::to_integer<std::uint8_t>(bytes[i])) << (i * 8U));
     }
     return value;
 }
 
 [[nodiscard]] Error truncated(std::size_t wanted, std::size_t available, std::size_t offset) {
-    return Error(ErrorCode::MalformedData,
-                 std::format("the save data ends early: wanted {} byte(s) at offset {}, {} "
-                             "remain",
-                             wanted, offset, available));
+    return {ErrorCode::MalformedData,
+            std::format("the save data ends early: wanted {} byte(s) at offset {}, {} remain",
+                        wanted, offset, available)};
 }
 
 }  // namespace

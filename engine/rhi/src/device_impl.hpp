@@ -126,7 +126,7 @@ namespace detail {
 /// Submits `commands` and waits for it, because the pixels cannot be read before the copy
 /// has finished. The caller must therefore not submit the command buffer itself.
 [[nodiscard]] Status capture_texture(Device::Impl& device, SDL_GPUCommandBuffer* commands,
-                                     SDL_GPUTexture* swapchain, Extent2D extent);
+                                     SDL_GPUTexture* source, Extent2D extent);
 
 }  // namespace detail
 }  // namespace atlas::rhi

@@ -4,6 +4,19 @@
 # the rules in CLAUDE.md or fire constantly on correct code, and a linter nobody can keep
 # green is a linter everybody ignores. Each exclusion below says why.
 ---
+# clang-analyzer-optin.core.EnumCastOutOfRange is disabled, and this is the one entry here
+# that is a disagreement with a check rather than a matter of taste.
+#
+# The check treats an enumeration's valid range as bounded by its enumerators. That is right
+# for an ordinary enumeration and wrong for one with a fixed underlying type, where the
+# standard says the range is the whole range of that type. Atlas uses exactly that form as a
+# strong integer alias throughout: TableId, SystemId, CommandType, StreamId, SourceId and
+# StableId are all `enum class X : std::uint32_t` or `: std::uint64_t` with one enumerator
+# for the null value, and every value of the underlying type is meaningful.
+#
+# Keeping the check would mean a suppression at every construction of every identifier in the
+# project, which would say nothing and hide the cases where a cast is genuinely suspect.
+
 Checks: >
   bugprone-*,
   clang-analyzer-*,
@@ -14,6 +27,7 @@ Checks: >
   performance-*,
   portability-*,
   readability-*,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
   -modernize-use-trailing-return-type,
   -readability-magic-numbers,
   -cppcoreguidelines-avoid-magic-numbers,

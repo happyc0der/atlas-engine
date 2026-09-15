@@ -252,10 +252,13 @@ void DebugUi::stats_panel(std::string_view title, std::span<const Stat> stats) {
     // Deliberately nested rather than merged. The library's pairing rules are asymmetric:
     // End must be called whether or not Begin returned true, while EndTable must be called
     // only when BeginTable did. Collapsing the two conditions hides that difference.
-    // NOLINTNEXTLINE(readability-redundant-nested-if)
     // Auto-resizing every frame, not just fitting once. A counter's text gets longer as the
     // numbers do, and a window sized on the first frame would clip the rows it was opened to
     // show as soon as they mattered.
+    //
+    // Deliberately nested rather than merged: the pairing rules are asymmetric, as the note
+    // on the inner table explains.
+    // NOLINTNEXTLINE(readability-redundant-nested-if)
     if (ImGui::Begin(window_title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         // Fixed-fit, not stretch-proportional. A stretched table takes whatever width the
         // window has and contributes none of its own, so an auto-sized window collapses to
@@ -372,10 +375,15 @@ void DebugUi::scene_panel(std::string_view title, const scene::Scene& scene) {
     }
     ImGui::SetCurrentContext(m_impl->context);
 
+    // Taken as a local copy, worked on, and written back once at the end. Reaching through
+    // the implementation pointer on every access means nothing can prove the value has not
+    // changed between a check and a use, which is both a warning and a fair point.
+    std::optional<scene::StableId> selected = m_impl->selected;
+
     // A selection can outlive what it pointed at, because the panel does not own the scene
     // and is not told when an entity goes away.
-    if (m_impl->selected.has_value() && !scene.contains(*m_impl->selected)) {
-        m_impl->selected.reset();
+    if (selected.has_value() && !scene.contains(*selected)) {
+        selected.reset();
     }
 
     // Placed once, then left to the user. Without this the panel opens exactly where the
@@ -390,20 +398,22 @@ void DebugUi::scene_panel(std::string_view title, const scene::Scene& scene) {
 
         if (ImGui::BeginChild("tree", ImVec2(0.0F, 180.0F), ImGuiChildFlags_Borders)) {
             for (const scene::StableId root : scene.roots()) {
-                draw_tree_node(scene, root, m_impl->selected);
+                draw_tree_node(scene, root, selected);
             }
         }
         ImGui::EndChild();
 
         ImGui::Separator();
 
-        if (m_impl->selected.has_value()) {
-            draw_inspector(scene, *m_impl->selected);
+        if (selected.has_value()) {
+            draw_inspector(scene, *selected);
         } else {
             ImGui::TextUnformatted("No entity selected.");
         }
     }
     ImGui::End();
+
+    m_impl->selected = selected;
 }
 
 void DebugUi::select_entity(scene::StableId id) noexcept {

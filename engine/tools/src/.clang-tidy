@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Inherits the project configuration and relaxes two checks for this directory only, for the
+# same reason in both cases: this is where the immediate-mode interface library is used, and
+# its API shape is not something Atlas can change.
+#
+# bugprone-signed-bitwise fires on combining the library's flag constants with `|`. They are
+# plain enumerators, so they are signed, and every combination of them is a signed bitwise
+# operation. The alternative is a cast at every call site that says nothing.
+#
+# misc-no-recursion fires on drawing a tree. The scene is a tree and the natural way to draw
+# one is to recurse; the depth is bounded by the scene's own limit, which is checked where
+# hierarchies are built rather than where they are drawn.
+#
+# Scoped here rather than project-wide, where both checks still earn their place. The same
+# pattern, and the same reasoning, as engine/rhi/src.
+InheritParentConfig: true
+Checks: >
+  -bugprone-signed-bitwise,
+  -misc-no-recursion

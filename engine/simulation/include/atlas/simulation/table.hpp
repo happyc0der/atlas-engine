@@ -45,7 +45,7 @@ enum class TableId : std::uint32_t { Invalid = 0 };
     // Folded from the 64-bit canonical hash rather than a separate 32-bit one, so there is
     // one hash algorithm in the project and one version number governing it.
     const std::uint64_t full = hash_string(name);
-    const auto hashed = static_cast<std::uint32_t>((full >> 32) ^ (full & 0xFFFF'FFFFULL));
+    const auto hashed = static_cast<std::uint32_t>((full >> 32U) ^ (full & 0xFFFF'FFFFULL));
     // Zero means "no table", so a name that happens to hash to it is nudged. Choosing the
     // next value rather than rejecting the name keeps the mapping total: no name is
     // unusable, and the collision this introduces is with 1, which is no more likely than

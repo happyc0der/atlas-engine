@@ -46,7 +46,7 @@ enum class SystemId : std::uint32_t { Invalid = 0 };
 
 [[nodiscard]] constexpr SystemId system_id(std::string_view name) noexcept {
     const std::uint64_t full = hash_string(name);
-    const auto folded = static_cast<std::uint32_t>((full >> 32) ^ (full & 0xFFFF'FFFFULL));
+    const auto folded = static_cast<std::uint32_t>((full >> 32U) ^ (full & 0xFFFF'FFFFULL));
     return SystemId{folded == 0 ? 1U : folded};
 }
 
@@ -59,8 +59,11 @@ enum class SystemId : std::uint32_t { Invalid = 0 };
 /// The world is const, which is the entire mechanism: a system cannot write shared state
 /// here even by mistake. Anything it produces goes into storage the system itself owns.
 struct ComputeContext {
+    // A reference is the point. This is a parameter aggregate built for one call and never
+    // stored, and the const is what stops a system writing shared state during compute.
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
     const World& world;
-    Tick tick;
+    Tick tick = 0;
     RngStreams rng;
 };
 
@@ -69,6 +72,8 @@ struct ComputeContext {
 /// Mutable, and run one system at a time in declared order, so two systems writing the same
 /// table produce the same result every run regardless of how compute was scheduled.
 struct CommitContext {
+    // As above: a parameter aggregate built for one call and never stored.
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
     World& world;
     Tick tick;
 };

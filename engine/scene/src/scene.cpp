@@ -77,12 +77,9 @@ struct Scene::Impl {
         if (hierarchy == nullptr) {
             return false;
         }
-        for (const StableId child : hierarchy->children) {
-            if (is_self_or_descendant(child, candidate)) {
-                return true;
-            }
-        }
-        return false;
+        return std::ranges::any_of(hierarchy->children, [this, candidate](const StableId child) {
+            return is_self_or_descendant(child, candidate);
+        });
     }
 
     void destroy_recursive(StableId id) {
@@ -424,12 +421,14 @@ std::optional<StableId> Scene::active_camera() const {
     std::optional<StableId> found;
     for (const auto& [id, handle] : m_impl->by_id) {
         const auto* camera = m_impl->registry.try_get<Camera>(handle);
-        if (camera != nullptr && camera->active) {
-            // Lowest identifier wins, so that two active cameras give a defined answer
-            // rather than whichever the map happened to visit first.
-            if (!found.has_value() || id < *found) {
-                found = id;
-            }
+        if (camera == nullptr || !camera->active) {
+            continue;
+        }
+
+        // Lowest identifier wins, so that two active cameras give a defined answer rather
+        // than whichever the map happened to visit first.
+        if (!found.has_value() || id < *found) {
+            found = id;
         }
     }
     return found;
