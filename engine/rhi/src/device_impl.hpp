@@ -29,6 +29,19 @@ struct BufferResource {
     std::string debug_name;
 };
 
+struct TextureResource {
+    SDL_GPUTexture* texture = nullptr;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    TextureFormat format = TextureFormat::Unknown;
+    std::string debug_name;
+};
+
+struct SamplerResource {
+    SDL_GPUSampler* sampler = nullptr;
+    std::string debug_name;
+};
+
 struct ShaderResource {
     SDL_GPUShader* shader = nullptr;
     std::string debug_name;
@@ -48,6 +61,8 @@ struct Device::Impl {
     TextureFormat swapchain_format = TextureFormat::Unknown;
 
     HandlePool<BufferResource, BufferTag> buffers;
+    HandlePool<TextureResource, TextureTag> textures;
+    HandlePool<SamplerResource, SamplerTag> samplers;
     HandlePool<ShaderResource, ShaderTag> shaders;
     HandlePool<PipelineResource, GraphicsPipelineTag> pipelines;
 

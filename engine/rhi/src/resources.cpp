@@ -203,12 +203,13 @@ Result<ShaderHandle> Device::create_shader(const ShaderDesc& desc) {
     info.entrypoint = entry.c_str();
     info.format = detail::to_sdl(desc.format);
     info.stage = detail::to_sdl(desc.stage);
-    // No resources yet: the first triangle reads nothing. Counts arrive with the first
-    // uniform buffer and texture, in M3, and must match the shader exactly.
-    info.num_samplers = 0;
-    info.num_storage_textures = 0;
-    info.num_storage_buffers = 0;
-    info.num_uniform_buffers = 0;
+    // These must match the compiled shader exactly. They are read out of it by reflection
+    // in tools/cook_shaders.py and reach here as generated constants, so a shader that gains
+    // a resource cannot leave a stale count behind.
+    info.num_samplers = desc.samplers;
+    info.num_storage_textures = desc.storage_textures;
+    info.num_storage_buffers = desc.storage_buffers;
+    info.num_uniform_buffers = desc.uniform_buffers;
 
     SDL_GPUShader* shader = SDL_CreateGPUShader(m_impl->device, &info);
     if (shader == nullptr) {
@@ -270,25 +271,65 @@ Result<GraphicsPipelineHandle> Device::create_graphics_pipeline(const GraphicsPi
                   std::format("pipeline '{}' has no colour target format", desc.debug_name)));
     }
 
+    // One SDL description per stream, and one attribute entry per attribute across all of
+    // them, each tagged with the slot it belongs to. Two streams is the batching case: a
+    // shared unit quad in slot zero and per-instance data in slot one.
+    std::vector<SDL_GPUVertexBufferDescription> stream_descriptions;
     std::vector<SDL_GPUVertexAttribute> attributes;
-    attributes.reserve(desc.vertex_layout.attributes.size());
-    for (const auto& attribute : desc.vertex_layout.attributes) {
-        attributes.push_back(SDL_GPUVertexAttribute{
-            .location = attribute.location,
-            .buffer_slot = 0,
-            .format = detail::to_sdl(attribute.format),
-            .offset = attribute.offset,
-        });
-    }
+    stream_descriptions.reserve(desc.vertex_layout.streams.size());
 
-    SDL_GPUVertexBufferDescription buffer_description{};
-    buffer_description.slot = 0;
-    buffer_description.pitch = desc.vertex_layout.stride;
-    buffer_description.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-    buffer_description.instance_step_rate = 0;
+    for (std::size_t slot = 0; slot < desc.vertex_layout.streams.size(); ++slot) {
+        const auto& stream = desc.vertex_layout.streams[slot];
+        if (stream.stride == 0) {
+            return std::unexpected(
+                Error(ErrorCode::InvalidArgument,
+                      std::format("pipeline '{}': vertex stream {} has a stride of zero",
+                                  desc.debug_name, slot)));
+        }
+
+        stream_descriptions.push_back(SDL_GPUVertexBufferDescription{
+            .slot = static_cast<std::uint32_t>(slot),
+            .pitch = stream.stride,
+            .input_rate = stream.per_instance ? SDL_GPU_VERTEXINPUTRATE_INSTANCE
+                                              : SDL_GPU_VERTEXINPUTRATE_VERTEX,
+            .instance_step_rate = 0,
+        });
+
+        for (const auto& attribute : stream.attributes) {
+            // An attribute that reads past the end of its element would sample whatever
+            // followed it in memory, which shows up as geometry that is wrong in a way that
+            // looks like a shader bug.
+            if (attribute.offset + byte_size(attribute.format) > stream.stride) {
+                return std::unexpected(Error(
+                    ErrorCode::InvalidArgument,
+                    std::format("pipeline '{}': attribute at location {} reads {} bytes at "
+                                "offset {}, past the end of a {}-byte vertex",
+                                desc.debug_name, attribute.location, byte_size(attribute.format),
+                                attribute.offset, stream.stride)));
+            }
+
+            attributes.push_back(SDL_GPUVertexAttribute{
+                .location = attribute.location,
+                .buffer_slot = static_cast<std::uint32_t>(slot),
+                .format = detail::to_sdl(attribute.format),
+                .offset = attribute.offset,
+            });
+        }
+    }
 
     SDL_GPUColorTargetDescription colour_target{};
     colour_target.format = detail::to_sdl(colour_format);
+
+    // Straight alpha blending, which is what a sprite with a transparent border needs. A
+    // pipeline-level blend setting is enough while there is one pipeline; it becomes part of
+    // the descriptor when something needs a different mode.
+    colour_target.blend_state.enable_blend = true;
+    colour_target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+    colour_target.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    colour_target.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+    colour_target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+    colour_target.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    colour_target.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
 
     SDL_GPUGraphicsPipelineCreateInfo info{};
     info.vertex_shader = vertex->shader;
@@ -297,11 +338,12 @@ Result<GraphicsPipelineHandle> Device::create_graphics_pipeline(const GraphicsPi
     info.target_info.num_color_targets = 1;
     info.target_info.color_target_descriptions = &colour_target;
 
-    // A stride of zero means the pipeline reads no vertex buffer, which is how the first
-    // triangle is drawn: entirely from the vertex index.
-    if (desc.vertex_layout.stride > 0 && !attributes.empty()) {
-        info.vertex_input_state.num_vertex_buffers = 1;
-        info.vertex_input_state.vertex_buffer_descriptions = &buffer_description;
+    // No streams means the pipeline reads no vertex buffer, which is how the first triangle
+    // is drawn: entirely from the vertex index.
+    if (!stream_descriptions.empty()) {
+        info.vertex_input_state.num_vertex_buffers =
+            static_cast<std::uint32_t>(stream_descriptions.size());
+        info.vertex_input_state.vertex_buffer_descriptions = stream_descriptions.data();
         info.vertex_input_state.num_vertex_attributes =
             static_cast<std::uint32_t>(attributes.size());
         info.vertex_input_state.vertex_attributes = attributes.data();

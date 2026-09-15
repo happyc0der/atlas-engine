@@ -12,8 +12,10 @@ atlas_add_module(rhi
     SOURCES
         src/device.cpp
         src/resources.cpp
+        src/textures.cpp
         src/types.cpp
         src/sdl_gpu_conv.cpp
+        src/sdl_gpu_access.cpp
     HEADERS
         include/atlas/rhi/descs.hpp
         include/atlas/rhi/device.hpp
@@ -26,6 +28,16 @@ atlas_add_module(rhi
     PRIVATE_DEPS
         SDL3::SDL3-static
 )
+
+target_include_directories(atlas_rhi PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/internal/include)
+
+# The native graphics handles, for the debug overlay and for nothing else. A separate target
+# rather than a public header, so the one consumer is named in the build system.
+add_library(atlas_rhi_internal INTERFACE)
+add_library(atlas::rhi_internal ALIAS atlas_rhi_internal)
+target_include_directories(atlas_rhi_internal
+    INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/internal/include>)
+target_link_libraries(atlas_rhi_internal INTERFACE atlas::rhi)
 
 if(ATLAS_BUILD_TESTS)
     add_subdirectory(tests)

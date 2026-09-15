@@ -146,8 +146,13 @@ function(atlas_add_test name)
     # PRE_TEST discovery rather than POST_BUILD: on Apple Silicon a freshly linked binary
     # may not be runnable at build time because of code signing, and POST_BUILD discovery
     # would fail. Catch2 documents this case.
+    #
+    # The working directory is the project root so that a relative asset path means the same
+    # thing under CTest as it does when the binary is run by hand. Depending on the caller's
+    # working directory is a stopgap; the asset system replaces it with virtual paths in M4.
     catch_discover_tests(${target}
         DISCOVERY_MODE PRE_TEST
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
         PROPERTIES LABELS "${ARG_LABELS}")
 endfunction()
 

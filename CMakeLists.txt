@@ -98,4 +98,6 @@ if(ATLAS_BUILD_APPS)
     add_subdirectory(apps)
 endif()
 
+add_subdirectory(benchmarks)
+
 atlas_report_configuration()

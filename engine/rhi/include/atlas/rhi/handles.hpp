@@ -9,18 +9,19 @@
 /// resolving instead of dangling. The tags keep the handle types apart: a shader handle
 /// cannot be passed where a buffer handle is expected.
 ///
-/// Texture and sampler handles arrive with the first texture, in M3. Adding them now would
-/// be a type with no user.
-
 #include <atlas/core/handle.hpp>
 
 namespace atlas::rhi {
 
 struct BufferTag;
+struct TextureTag;
+struct SamplerTag;
 struct ShaderTag;
 struct GraphicsPipelineTag;
 
 using BufferHandle = Handle<BufferTag>;
+using TextureHandle = Handle<TextureTag>;
+using SamplerHandle = Handle<SamplerTag>;
 using ShaderHandle = Handle<ShaderTag>;
 using GraphicsPipelineHandle = Handle<GraphicsPipelineTag>;
 

@@ -81,6 +81,10 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 - SDL types stay in `engine/platform/src` and `engine/rhi/src`. The native window handle
   reaches the renderer only through `atlas::platform_internal`.
 - Shaders are authored in HLSL and cooked to SPIR-V and MSL. Commit the cooked outputs.
+- Shader resource counts come from reflection, never from hand-written numbers.
+- A matrix goes to a uniform through `uniform_elements()`, not `elements()`: shaders read
+  column-major and Atlas stores row-major.
+- Benchmarks must exclude presentation, or they measure the display rather than the engine.
 - No per-frame allocation in measured hot loops after warm-up.
 - Assertions are for violated programmer invariants. Recoverable user or data errors
   return an `Error` with context.

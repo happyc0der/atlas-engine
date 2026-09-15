@@ -12,6 +12,19 @@ The cooked outputs are committed. Building and running Atlas therefore needs no 
 toolchain; only changing a shader does. `--check` verifies the committed outputs match the
 sources, which is what continuous integration runs.
 
+Binding conventions matter from the moment a shader reads anything. SDL_GPU requires
+resources in a particular order per stage, and the HLSL registers here are authored to
+produce it: vertex uniform buffers at `b[n] space1`, fragment textures and samplers at
+`t[n] s[n] space2`, fragment uniform buffers at `b[n] space3`. glslang maps an HLSL register
+space onto a SPIR-V descriptor set, and `--msl-decoration-binding` makes SPIRV-Cross use
+those same numbers for Metal's `[[buffer]]`, `[[texture]]` and `[[sampler]]` indices rather
+than allocating its own. Verified against SDL's documented order, not assumed.
+
+SDL also wants the resource counts declared when a shader is created, and a count that
+disagrees with the shader produces a driver-level failure with no useful message. They are
+therefore read out of the compiled shader by reflection and written into a generated header,
+so that they cannot drift from the code they describe.
+
 Metal note: SPIRV-Cross renames the entry point to "main0". The manifest records the entry
 point per format so the loader does not have to know that.
 """
@@ -32,7 +45,9 @@ COOKED_DIR = REPO_ROOT / "assets" / "cooked" / "shaders"
 MANIFEST = COOKED_DIR / "manifest.json"
 
 # Bumped by hand when the cooking rules change in a way that invalidates existing outputs.
-COOKER_VERSION = 1
+COOKER_VERSION = 2
+
+GENERATED_HEADER = COOKED_DIR / "shader_manifest.hpp"
 
 STAGE_FROM_SUFFIX = {"vert": "vertex", "frag": "fragment"}
 
@@ -76,6 +91,36 @@ def discover() -> list[tuple[Path, str, str]]:
     return found
 
 
+def reflect(spirv_cross: str, spv_path: Path) -> dict:
+    """Resource counts and vertex inputs, read out of the compiled shader."""
+    result = subprocess.run(
+        [spirv_cross, str(spv_path), "--reflect"],
+        check=True, capture_output=True, text=True,
+    )
+    data = json.loads(result.stdout)
+
+    # SDL counts a sampled texture and its sampler as one "sampler" slot, bound together by
+    # SDL_BindGPU*Samplers. Separate images and separate samplers therefore have to agree.
+    images = len(data.get("separate_images", []))
+    samplers = len(data.get("separate_samplers", []))
+    if images != samplers:
+        raise ValueError(
+            f"{spv_path.name}: {images} textures but {samplers} samplers. SDL binds them in "
+            f"pairs, so each sampled texture needs exactly one sampler."
+        )
+
+    return {
+        "samplers": images,
+        "storage_textures": len(data.get("images", [])),
+        "storage_buffers": len(data.get("ssbos", [])),
+        "uniform_buffers": len(data.get("ubos", [])),
+        "inputs": [
+            {"location": entry["location"], "type": entry["type"]}
+            for entry in sorted(data.get("inputs", []), key=lambda e: e["location"])
+        ],
+    }
+
+
 def cook_one(glslang: str, spirv_cross: str, path: Path, name: str, stage: str,
              out_dir: Path) -> dict:
     stage_flag = "vert" if stage == "vertex" else "frag"
@@ -83,7 +128,8 @@ def cook_one(glslang: str, spirv_cross: str, path: Path, name: str, stage: str,
     msl_path = out_dir / f"{name}.{stage_flag}.msl"
 
     # HLSL to SPIR-V. -D selects HLSL input; the Vulkan target is what SDL's Vulkan backend
-    # consumes, and it is also the input SPIRV-Cross expects.
+    # consumes, and it is also the input SPIRV-Cross expects. An HLSL register space becomes
+    # a SPIR-V descriptor set, which is how the authored registers reach SDL's convention.
     subprocess.run(
         [glslang, "-D", "-e", "main", "--target-env", "vulkan1.0", "-S", stage_flag,
          "-o", str(spv_path), str(path)],
@@ -92,22 +138,103 @@ def cook_one(glslang: str, spirv_cross: str, path: Path, name: str, stage: str,
 
     # SPIR-V to Metal Shading Language, shipped as source. SDL compiles it when the device
     # is created, which is what makes a Metal compiler unnecessary on this machine.
+    #
+    # --msl-decoration-binding is not optional: without it SPIRV-Cross allocates its own
+    # Metal indices, and they will not be the ones SDL binds against.
     subprocess.run(
-        [spirv_cross, "--msl", "--msl-version", "20100", str(spv_path), "--output", str(msl_path)],
+        [spirv_cross, "--msl", "--msl-version", "20100", "--msl-decoration-binding",
+         str(spv_path), "--output", str(msl_path)],
         check=True, capture_output=True, text=True,
     )
+
+    resources = reflect(spirv_cross, spv_path)
 
     return {
         "name": name,
         "stage": stage,
         "source": path.name,
         "source_hash": source_hash(path),
+        "resources": resources,
         "outputs": {
             "spirv": {"file": spv_path.name, "entry_point": "main"},
             # SPIRV-Cross always renames the entry point.
             "msl": {"file": msl_path.name, "entry_point": "main0"},
         },
     }
+
+
+def write_header(manifest: dict, path: Path) -> None:
+    """Emit the manifest as a header of compile-time constants.
+
+    Generated rather than parsed at runtime: Atlas has no JSON reader, adding one to load
+    four integers would be a dependency in search of a problem, and constants mean a shader
+    that gains a resource breaks the build rather than the frame. The asset system replaces
+    this with real asset loading in M4.
+    """
+    lines = [
+        "// SPDX-License-Identifier: GPL-3.0-or-later",
+        "//",
+        "// Generated by tools/cook_shaders.py. Do not edit.",
+        "//",
+        "// Resource counts are read out of the compiled shaders by reflection, so they",
+        "// cannot disagree with the shaders they describe.",
+        "#pragma once",
+        "",
+        "#include <cstdint>",
+        "#include <string_view>",
+        "",
+        "namespace atlas::shaders {",
+        "",
+        "struct ShaderInfo {",
+        "    std::string_view name;",
+        "    std::string_view stage;            ///< \"vertex\" or \"fragment\"",
+        "    std::string_view spirv_file;",
+        "    std::string_view spirv_entry_point;",
+        "    std::string_view msl_file;",
+        "    std::string_view msl_entry_point;",
+        "    std::uint32_t samplers = 0;        ///< Sampled textures, each with its sampler",
+        "    std::uint32_t storage_textures = 0;",
+        "    std::uint32_t storage_buffers = 0;",
+        "    std::uint32_t uniform_buffers = 0;",
+        "};",
+        "",
+    ]
+
+    for entry in manifest["shaders"]:
+        resources = entry["resources"]
+        identifier = f"k{entry['name'].title().replace('_', '')}{entry['stage'].title()}"
+        lines += [
+            f"inline constexpr ShaderInfo {identifier}{{",
+            f'    .name = "{entry["name"]}",',
+            f'    .stage = "{entry["stage"]}",',
+            f'    .spirv_file = "{entry["outputs"]["spirv"]["file"]}",',
+            f'    .spirv_entry_point = "{entry["outputs"]["spirv"]["entry_point"]}",',
+            f'    .msl_file = "{entry["outputs"]["msl"]["file"]}",',
+            f'    .msl_entry_point = "{entry["outputs"]["msl"]["entry_point"]}",',
+            f'    .samplers = {resources["samplers"]},',
+            f'    .storage_textures = {resources["storage_textures"]},',
+            f'    .storage_buffers = {resources["storage_buffers"]},',
+            f'    .uniform_buffers = {resources["uniform_buffers"]},',
+            "};",
+            "",
+        ]
+
+    identifiers = [
+        f"k{entry['name'].title().replace('_', '')}{entry['stage'].title()}"
+        for entry in manifest["shaders"]
+    ]
+    lines += [
+        "/// Every cooked shader, so that one can be found by name and stage.",
+        f"inline constexpr const ShaderInfo* kAll[] = {{",
+    ]
+    lines += [f"    &{identifier}," for identifier in identifiers]
+    lines += [
+        "};",
+        "",
+        "}  // namespace atlas::shaders",
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> int:
@@ -196,13 +323,29 @@ def main() -> int:
                           f"run tools/cook_shaders.py", file=sys.stderr)
                     return 1
 
-        print(f"shaders are current: {len(entries)} compiled, outputs match")
+        fresh_header = out_dir / "shader_manifest.hpp"
+        write_header(manifest, fresh_header)
+        if not GENERATED_HEADER.is_file():
+            print("no committed shader header; run tools/cook_shaders.py", file=sys.stderr)
+            return 1
+        if fresh_header.read_text(encoding="utf-8") != GENERATED_HEADER.read_text(
+                encoding="utf-8"):
+            print("the generated shader header is out of date; run tools/cook_shaders.py",
+                  file=sys.stderr)
+            return 1
+
+        print(f"shaders are current: {len(entries)} compiled, outputs and header match")
         return 0
 
     MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    write_header(manifest, GENERATED_HEADER)
+
     print(f"cooked {len(entries)} shaders into {COOKED_DIR.relative_to(REPO_ROOT)}")
     for entry in entries:
-        print(f"  {entry['name']} ({entry['stage']})")
+        resources = entry["resources"]
+        used = ", ".join(f"{key}={value}" for key, value in resources.items()
+                         if key != "inputs" and value)
+        print(f"  {entry['name']} ({entry['stage']}){': ' + used if used else ''}")
     return 0
 
 

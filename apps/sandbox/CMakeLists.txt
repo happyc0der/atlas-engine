@@ -5,9 +5,10 @@
 atlas_add_app(sandbox
     SOURCES
         main.cpp
-        renderer.cpp
+        scene.cpp
     DEPENDS
         atlas::platform
-        atlas::rhi
+        atlas::renderer
         atlas::simulation
+        atlas::tools
 )

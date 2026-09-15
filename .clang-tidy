@@ -33,7 +33,8 @@ Checks: >
   -performance-enum-size,
   -cppcoreguidelines-pro-bounds-constant-array-index,
   -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
-  -readability-trailing-comma
+  -readability-trailing-comma,
+  -modernize-use-designated-initializers
 
 # Rationale for the exclusions above:
 #   modernize-use-trailing-return-type  — a style preference, and not Atlas's.
@@ -66,6 +67,12 @@ Checks: >
 #                                         initialiser should break. Formatting is settled by
 #                                         the formatter; two tools arguing about it is worse
 #                                         than either answer.
+#   modernize-use-designated-initializers — right for a descriptor with many optional
+#                                         fields, which is why Atlas uses that form there,
+#                                         and wrong for a two-component vector, where
+#                                         Vec2{x, y} is clearer than naming both. The check
+#                                         cannot tell the two apart, so it is not the
+#                                         arbiter; the convention is.
 
 WarningsAsErrors: '*'
 HeaderFilterRegex: 'engine/.*/include/atlas/.*\.hpp$'

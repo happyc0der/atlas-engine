@@ -174,6 +174,27 @@ GPU-side timing is not available: SDL_GPU exposes fences but no timestamp querie
 zones therefore measure acquire, record and submit on the processor side, and anything
 reported as GPU cost says which it is.
 
+### Drawing
+
+`atlas::renderer` turns quads into draw calls. One quad is an instance: four shared corners
+from one vertex buffer, plus the position, size, texture rectangle and colour that make it
+different. Ten thousand quads are one buffer upload and one draw. A batch breaks when the
+texture changes, because a draw reads one texture, and it reports what it did so that the
+cost is visible rather than guessed at.
+
+`atlas::math` holds the camera and the matrices. Matrices are stored row-major, which is how
+they are written down and how the tests read, and converted on the way to a uniform, because
+shading languages read a uniform matrix column-major. That conversion is a named function
+rather than an implicit step: getting it wrong drops the translation and warps the scene,
+which looks like a shader bug and is not.
+
+`atlas::tools` is the engineering overlay. The immediate-mode library behind it is private,
+and its input is driven from Atlas's own event types rather than through its platform
+backend, which would have required window-system types inside the module. Uploading its
+vertex data begins a copy pass, and a copy pass cannot nest inside a render pass, so
+preparing and drawing are separate calls and the second requires a token produced by the
+first.
+
 ## Simulation contract
 
 Designed now, implemented in M6, parallelised in M8:

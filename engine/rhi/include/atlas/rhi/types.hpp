@@ -107,4 +107,35 @@ enum class TextureFormat : std::uint8_t {
 /// Bytes per pixel, or zero for an unknown format.
 [[nodiscard]] std::uint32_t byte_size(TextureFormat format) noexcept;
 
+/// When a finished frame is handed to the display.
+enum class PresentMode : std::uint8_t {
+    /// Wait for the display's refresh. No tearing, and the frame rate is capped by the
+    /// display, which is what an interactive application wants.
+    Vsync,
+    /// Present immediately. Tears, and is the only honest way to measure how long the
+    /// engine itself takes: with vsync on, every measurement is the refresh interval.
+    Immediate,
+};
+
+[[nodiscard]] std::string_view to_string(PresentMode mode) noexcept;
+
+/// How a texture is sampled between texels.
+enum class Filter : std::uint8_t {
+    /// Nearest texel. What pixel art and an integer-ID target want: interpolating an
+    /// identifier would produce identifiers that were never written.
+    Nearest,
+    /// Linear blend of the neighbouring texels.
+    Linear,
+};
+
+/// What happens outside the zero-to-one range.
+enum class AddressMode : std::uint8_t {
+    ClampToEdge,
+    Repeat,
+    MirroredRepeat,
+};
+
+[[nodiscard]] std::string_view to_string(Filter filter) noexcept;
+[[nodiscard]] std::string_view to_string(AddressMode mode) noexcept;
+
 }  // namespace atlas::rhi

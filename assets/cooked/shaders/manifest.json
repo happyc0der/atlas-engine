@@ -1,16 +1,104 @@
 {
-  "cooker_version": 1,
+  "cooker_version": 2,
   "tools": {
     "glslang": "Glslang Version: 11:16.6.0",
     "spirv-cross": "Git commit:  Timestamp: 2026-07-06T12:43:32",
-    "cooker": "1"
+    "cooker": "2"
   },
   "shaders": [
+    {
+      "name": "sprite",
+      "stage": "fragment",
+      "source": "sprite.frag.hlsl",
+      "source_hash": "be8dfac495eb4bb4",
+      "resources": {
+        "samplers": 1,
+        "storage_textures": 0,
+        "storage_buffers": 0,
+        "uniform_buffers": 0,
+        "inputs": [
+          {
+            "location": 0,
+            "type": "vec2"
+          },
+          {
+            "location": 1,
+            "type": "vec4"
+          }
+        ]
+      },
+      "outputs": {
+        "spirv": {
+          "file": "sprite.frag.spv",
+          "entry_point": "main"
+        },
+        "msl": {
+          "file": "sprite.frag.msl",
+          "entry_point": "main0"
+        }
+      }
+    },
+    {
+      "name": "sprite",
+      "stage": "vertex",
+      "source": "sprite.vert.hlsl",
+      "source_hash": "17080f0c074b69cf",
+      "resources": {
+        "samplers": 0,
+        "storage_textures": 0,
+        "storage_buffers": 0,
+        "uniform_buffers": 1,
+        "inputs": [
+          {
+            "location": 0,
+            "type": "vec2"
+          },
+          {
+            "location": 1,
+            "type": "vec2"
+          },
+          {
+            "location": 2,
+            "type": "vec4"
+          },
+          {
+            "location": 3,
+            "type": "vec4"
+          },
+          {
+            "location": 4,
+            "type": "vec4"
+          }
+        ]
+      },
+      "outputs": {
+        "spirv": {
+          "file": "sprite.vert.spv",
+          "entry_point": "main"
+        },
+        "msl": {
+          "file": "sprite.vert.msl",
+          "entry_point": "main0"
+        }
+      }
+    },
     {
       "name": "triangle",
       "stage": "fragment",
       "source": "triangle.frag.hlsl",
       "source_hash": "e3c11c8c0d12ad5b",
+      "resources": {
+        "samplers": 0,
+        "storage_textures": 0,
+        "storage_buffers": 0,
+        "uniform_buffers": 0,
+        "inputs": [
+          {
+            "location": 0,
+            "type": "vec4"
+          }
+        ]
+      },
       "outputs": {
         "spirv": {
           "file": "triangle.frag.spv",
@@ -27,6 +115,13 @@
       "stage": "vertex",
       "source": "triangle.vert.hlsl",
       "source_hash": "5676504b5125f058",
+      "resources": {
+        "samplers": 0,
+        "storage_textures": 0,
+        "storage_buffers": 0,
+        "uniform_buffers": 0,
+        "inputs": []
+      },
       "outputs": {
         "spirv": {
           "file": "triangle.vert.spv",

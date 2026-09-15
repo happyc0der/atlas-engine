@@ -13,6 +13,7 @@
 #include <SDL3/SDL_gpu.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <format>
@@ -101,7 +102,7 @@ void RenderPass::bind_pipeline(GraphicsPipelineHandle pipeline) {
     SDL_BindGPUGraphicsPipeline(m_impl->pass, resource->pipeline);
 }
 
-void RenderPass::bind_vertex_buffer(BufferHandle buffer, std::uint64_t offset) {
+void RenderPass::bind_vertex_buffer(std::uint32_t slot, BufferHandle buffer, std::uint64_t offset) {
     if (m_impl == nullptr || m_impl->ended) {
         return;
     }
@@ -117,7 +118,77 @@ void RenderPass::bind_vertex_buffer(BufferHandle buffer, std::uint64_t offset) {
     SDL_GPUBufferBinding binding{};
     binding.buffer = resource->buffer;
     binding.offset = static_cast<std::uint32_t>(offset);
-    SDL_BindGPUVertexBuffers(m_impl->pass, 0, &binding, 1);
+    SDL_BindGPUVertexBuffers(m_impl->pass, slot, &binding, 1);
+}
+
+void RenderPass::bind_fragment_samplers(std::uint32_t first_slot,
+                                        std::span<const TextureSamplerBinding> bindings) {
+    if (m_impl == nullptr || m_impl->ended || bindings.empty()) {
+        return;
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    // A small fixed buffer rather than a vector: this runs per draw, and the count is
+    // bounded by how many textures a shader can declare, which is a handful.
+    constexpr std::size_t kMaxBindings = 16;
+    if (bindings.size() > kMaxBindings) {
+        ATLAS_LOG_ERROR(kRhi, "bind_fragment_samplers: {} bindings exceeds the limit of {}",
+                        bindings.size(), kMaxBindings);
+        return;
+    }
+
+    std::array<SDL_GPUTextureSamplerBinding, kMaxBindings> sdl_bindings{};
+    for (std::size_t i = 0; i < bindings.size(); ++i) {
+        const auto* texture = m_impl->frame->device->textures.get(bindings[i].texture);
+        const auto* sampler = m_impl->frame->device->samplers.get(bindings[i].sampler);
+        if (texture == nullptr || sampler == nullptr) {
+            ATLAS_ASSERT_MSG(false, "bind_fragment_samplers given a stale or null handle");
+            ATLAS_LOG_ERROR(kRhi,
+                            "bind_fragment_samplers: binding {} has a handle that does not "
+                            "resolve; the draw is skipped",
+                            i);
+            return;
+        }
+        sdl_bindings[i].texture = texture->texture;
+        sdl_bindings[i].sampler = sampler->sampler;
+    }
+
+    SDL_BindGPUFragmentSamplers(m_impl->pass, first_slot, sdl_bindings.data(),
+                                static_cast<std::uint32_t>(bindings.size()));
+}
+
+void RenderPass::set_vertex_uniforms(std::uint32_t slot, std::span<const std::byte> data) {
+    if (m_impl == nullptr || m_impl->ended || data.empty()) {
+        return;
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+    SDL_PushGPUVertexUniformData(m_impl->frame->commands, slot, data.data(),
+                                 static_cast<std::uint32_t>(data.size()));
+}
+
+void RenderPass::set_fragment_uniforms(std::uint32_t slot, std::span<const std::byte> data) {
+    if (m_impl == nullptr || m_impl->ended || data.empty()) {
+        return;
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+    SDL_PushGPUFragmentUniformData(m_impl->frame->commands, slot, data.data(),
+                                   static_cast<std::uint32_t>(data.size()));
+}
+
+void RenderPass::set_viewport(float x, float y, float width, float height) {
+    if (m_impl == nullptr || m_impl->ended) {
+        return;
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    SDL_GPUViewport viewport{};
+    viewport.x = x;
+    viewport.y = y;
+    viewport.w = width;
+    viewport.h = height;
+    viewport.min_depth = 0.0F;
+    viewport.max_depth = 1.0F;
+    SDL_SetGPUViewport(m_impl->pass, &viewport);
 }
 
 void RenderPass::draw(std::uint32_t vertex_count, std::uint32_t instance_count,
@@ -316,6 +387,20 @@ Result<Device> Device::create(const DeviceDesc& desc, const platform::Window& wi
 
     SDL_SetGPUAllowedFramesInFlight(device, kFramesInFlight);
 
+    // Immediate presentation is not available everywhere, so it is a request rather than a
+    // setting. Falling back silently would make a benchmark quietly measure the display's
+    // refresh interval instead of the engine, so the fallback is reported.
+    if (desc.present_mode == PresentMode::Immediate) {
+        if (SDL_WindowSupportsGPUPresentMode(device, native, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
+            SDL_SetGPUSwapchainParameters(device, native, SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+                                          SDL_GPU_PRESENTMODE_IMMEDIATE);
+        } else {
+            ATLAS_LOG_WARN(kRhi, "immediate presentation was asked for and is not supported here; "
+                                 "frames will wait for the display refresh, so any timing taken "
+                                 "from them measures the display rather than the engine");
+        }
+    }
+
     auto impl = std::make_unique<Impl>();
     impl->device = device;
     impl->window = native;
@@ -357,11 +442,18 @@ Device::~Device() {
     if (counts.total() > 0) {
         std::fprintf(stderr,
                      "atlas rhi: %zu graphics resources were still live at device shutdown "
-                     "(buffers=%zu shaders=%zu pipelines=%zu)\n",
-                     counts.total(), counts.buffers, counts.shaders, counts.pipelines);
+                     "(buffers=%zu textures=%zu samplers=%zu shaders=%zu pipelines=%zu)\n",
+                     counts.total(), counts.buffers, counts.textures, counts.samplers,
+                     counts.shaders, counts.pipelines);
 
         m_impl->buffers.for_each_live([](BufferHandle, const BufferResource& resource) {
             std::fprintf(stderr, "  leaked buffer '%s'\n", resource.debug_name.c_str());
+        });
+        m_impl->textures.for_each_live([](TextureHandle, const TextureResource& resource) {
+            std::fprintf(stderr, "  leaked texture '%s'\n", resource.debug_name.c_str());
+        });
+        m_impl->samplers.for_each_live([](SamplerHandle, const SamplerResource& resource) {
+            std::fprintf(stderr, "  leaked sampler '%s'\n", resource.debug_name.c_str());
         });
         m_impl->shaders.for_each_live([](ShaderHandle, const ShaderResource& resource) {
             std::fprintf(stderr, "  leaked shader '%s'\n", resource.debug_name.c_str());
@@ -377,6 +469,12 @@ Device::~Device() {
     });
     m_impl->shaders.for_each_live([this](ShaderHandle, ShaderResource& resource) {
         SDL_ReleaseGPUShader(m_impl->device, resource.shader);
+    });
+    m_impl->samplers.for_each_live([this](SamplerHandle, SamplerResource& resource) {
+        SDL_ReleaseGPUSampler(m_impl->device, resource.sampler);
+    });
+    m_impl->textures.for_each_live([this](TextureHandle, TextureResource& resource) {
+        SDL_ReleaseGPUTexture(m_impl->device, resource.texture);
     });
     m_impl->buffers.for_each_live([this](BufferHandle, BufferResource& resource) {
         SDL_ReleaseGPUBuffer(m_impl->device, resource.buffer);
@@ -421,6 +519,8 @@ Device::ResourceCounts Device::resource_counts() const noexcept {
     }
     return ResourceCounts{
         .buffers = m_impl->buffers.size(),
+        .textures = m_impl->textures.size(),
+        .samplers = m_impl->samplers.size(),
         .shaders = m_impl->shaders.size(),
         .pipelines = m_impl->pipelines.size(),
     };

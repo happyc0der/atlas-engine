@@ -23,6 +23,10 @@
 #include <span>
 #include <vector>
 
+struct SDL_GPUDevice;
+struct SDL_GPUCommandBuffer;
+struct SDL_GPURenderPass;
+
 namespace atlas::platform {
 class Window;
 }
@@ -31,6 +35,19 @@ namespace atlas::rhi {
 
 class Device;
 class Frame;
+class RenderPass;
+
+namespace internal {
+// Declared here so the friend declarations below can name them. Defined in
+// atlas/rhi/internal/sdl_gpu_access.hpp, whose only permitted consumer is atlas::tools.
+// NOLINTBEGIN(readability-redundant-declaration)
+[[nodiscard]] SDL_GPUDevice* native_device(const Device& device) noexcept;
+[[nodiscard]] SDL_GPUCommandBuffer* native_command_buffer(const Frame& frame) noexcept;
+[[nodiscard]] SDL_GPURenderPass* native_render_pass(const RenderPass& pass) noexcept;
+[[nodiscard]] SDL_GPUCommandBuffer* native_command_buffer_of(const RenderPass& pass) noexcept;
+[[nodiscard]] unsigned int swapchain_texture_format(const Device& device) noexcept;
+// NOLINTEND(readability-redundant-declaration)
+}  // namespace internal
 
 /// Records draw commands into one render pass.
 ///
@@ -48,8 +65,27 @@ class RenderPass {
 
     void bind_pipeline(GraphicsPipelineHandle pipeline);
 
-    /// Bind a vertex buffer to slot zero. One slot is all the current pipelines describe.
-    void bind_vertex_buffer(BufferHandle buffer, std::uint64_t offset = 0);
+    /// Bind a vertex buffer to one stream slot, matching the pipeline's vertex layout.
+    void bind_vertex_buffer(std::uint32_t slot, BufferHandle buffer, std::uint64_t offset = 0);
+
+    /// Bind textures and their samplers for the fragment stage, starting at `first_slot`.
+    ///
+    /// The count must match what the fragment shader declares, which is why the shader's
+    /// resource counts are read out of the compiled shader rather than written by hand.
+    void bind_fragment_samplers(std::uint32_t first_slot,
+                                std::span<const TextureSamplerBinding> bindings);
+
+    /// Push uniform data for the vertex stage.
+    ///
+    /// The data is copied into the command buffer rather than into a buffer the caller
+    /// manages, so it may change every draw without any synchronisation. Sizes are small by
+    /// design: SDL pushes these through a fast path meant for a matrix or a handful of
+    /// values, not for bulk data.
+    void set_vertex_uniforms(std::uint32_t slot, std::span<const std::byte> data);
+    void set_fragment_uniforms(std::uint32_t slot, std::span<const std::byte> data);
+
+    /// Restrict drawing to part of the target, in pixels.
+    void set_viewport(float x, float y, float width, float height);
 
     void draw(std::uint32_t vertex_count, std::uint32_t instance_count = 1,
               std::uint32_t first_vertex = 0, std::uint32_t first_instance = 0);
@@ -69,6 +105,9 @@ class RenderPass {
 
   private:
     friend class Frame;
+    friend SDL_GPURenderPass* internal::native_render_pass(const RenderPass& pass) noexcept;
+    friend SDL_GPUCommandBuffer*
+    internal::native_command_buffer_of(const RenderPass& pass) noexcept;
 
     explicit RenderPass(std::unique_ptr<Impl> impl) noexcept;
 
@@ -112,6 +151,7 @@ class Frame {
 
   private:
     friend class Device;
+    friend SDL_GPUCommandBuffer* internal::native_command_buffer(const Frame& frame) noexcept;
 
     explicit Frame(std::unique_ptr<Impl> impl) noexcept;
 
@@ -170,6 +210,18 @@ class Device {
 
     void destroy_buffer(BufferHandle buffer);
 
+    [[nodiscard]] Result<TextureHandle> create_texture(const TextureDesc& desc);
+
+    /// Copy tightly packed pixel data into a texture, waiting for the copy to finish.
+    ///
+    /// Synchronous, like upload_buffer, and meant for initialisation.
+    [[nodiscard]] Status upload_texture(TextureHandle texture, std::span<const std::byte> pixels);
+
+    void destroy_texture(TextureHandle texture);
+
+    [[nodiscard]] Result<SamplerHandle> create_sampler(const SamplerDesc& desc);
+    void destroy_sampler(SamplerHandle sampler);
+
     [[nodiscard]] Result<ShaderHandle> create_shader(const ShaderDesc& desc);
     void destroy_shader(ShaderHandle shader);
 
@@ -199,10 +251,14 @@ class Device {
     /// Counts of live resources, for the leak report and for tests.
     struct ResourceCounts {
         std::size_t buffers = 0;
+        std::size_t textures = 0;
+        std::size_t samplers = 0;
         std::size_t shaders = 0;
         std::size_t pipelines = 0;
 
-        [[nodiscard]] std::size_t total() const noexcept { return buffers + shaders + pipelines; }
+        [[nodiscard]] std::size_t total() const noexcept {
+            return buffers + textures + samplers + shaders + pipelines;
+        }
     };
 
     [[nodiscard]] ResourceCounts resource_counts() const noexcept;
@@ -211,6 +267,9 @@ class Device {
     struct Impl;
 
   private:
+    friend SDL_GPUDevice* internal::native_device(const Device& device) noexcept;
+    friend unsigned int internal::swapchain_texture_format(const Device& device) noexcept;
+
     explicit Device(std::unique_ptr<Impl> impl) noexcept;
 
     std::unique_ptr<Impl> m_impl;

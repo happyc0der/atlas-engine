@@ -27,7 +27,7 @@ distribution. All current dependencies are permissive and therefore compatible.
 | glslang | Compiles HLSL to SPIR-V | 16.4.0 (vcpkg) / 16.6.0 (Homebrew) | BSD-3-Clause and Apache-2.0 | Yes | Build-time tool only; never linked into engine targets | M2 |
 | SPIRV-Cross | Translates SPIR-V to Metal Shading Language | 1.4.350.1 (vcpkg) / 1.4.357.0 (Homebrew) | Apache-2.0 | Yes | Build-time tool only | M2 |
 | stb | Image decoding (`stb_image`) | 2024-07-29 | MIT / Unlicense | Yes | Private to the assets importer | M3 |
-| Dear ImGui | Editor and debug UI | 1.92.9, docking | MIT | Yes | Private to `tools` | M3 |
+| Dear ImGui | Debug overlay | 1.92.8, features `docking-experimental`, `sdl3-binding`, `sdlgpu3-binding` | MIT | Yes | Private to `tools` | M3 |
 | EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004 | M5 |
 
 Dependencies are added in the milestone that first needs them, never in advance.
@@ -77,11 +77,15 @@ SDL_GPU compiles at device creation. Precompiled `.metallib` is not produced.
 Atlas pins 3.16.0 and confines all EnTT usage to the `scene` wrapper, so a later move is
 contained.
 
-**Dear ImGui features.** The vcpkg feature names are `docking-experimental`,
-`sdl3-binding`, and `sdlgpu3-binding`. The SDL_GPU backend requires
-`ImGui_ImplSDLGPU3_PrepareDrawData` to be called before the render pass that draws the UI;
-this ordering is enforced inside the renderer's frame structure rather than in application
-code.
+**Dear ImGui.** Version 1.92.8 is what the pinned baseline provides. Only the SDL_GPU
+renderer backend is used; the SDL3 platform backend is not, because it would require raw
+window-system events inside `atlas::tools`, and Atlas drives the overlay's input from its
+own event types instead.
+
+`ImGui_ImplSDLGPU3_PrepareDrawData` uploads vertex data through a copy pass, which the
+graphics library refuses to nest inside a render pass. `DebugUi` therefore splits preparing
+from drawing, and drawing requires a token that only preparing can produce, so the wrong
+order fails to compile rather than aborting at run time.
 
 ## Replacement boundaries
 

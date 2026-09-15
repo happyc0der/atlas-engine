@@ -49,6 +49,31 @@ std::string_view to_string(TextureFormat format) noexcept {
     return "unrecognised";
 }
 
+std::string_view to_string(PresentMode mode) noexcept {
+    switch (mode) {
+    case PresentMode::Vsync: return "vsync";
+    case PresentMode::Immediate: return "immediate";
+    }
+    return "unrecognised";
+}
+
+std::string_view to_string(Filter filter) noexcept {
+    switch (filter) {
+    case Filter::Nearest: return "nearest";
+    case Filter::Linear: return "linear";
+    }
+    return "unrecognised";
+}
+
+std::string_view to_string(AddressMode mode) noexcept {
+    switch (mode) {
+    case AddressMode::ClampToEdge: return "clamp-to-edge";
+    case AddressMode::Repeat: return "repeat";
+    case AddressMode::MirroredRepeat: return "mirrored-repeat";
+    }
+    return "unrecognised";
+}
+
 std::uint32_t byte_size(VertexFormat format) noexcept {
     switch (format) {
     case VertexFormat::Float1: return 4;

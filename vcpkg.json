@@ -20,6 +20,14 @@
       "name": "sdl3",
       "default-features": true,
       "platform": "!linux"
+    },
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental",
+        "sdl3-binding",
+        "sdlgpu3-binding"
+      ]
     }
   ],
   "features": {
@@ -42,6 +50,10 @@
     {
       "name": "tracy",
       "version": "0.13.1"
+    },
+    {
+      "name": "imgui",
+      "version": "1.92.8"
     }
   ]
 }

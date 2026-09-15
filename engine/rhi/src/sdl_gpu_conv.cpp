@@ -79,6 +79,23 @@ SDL_GPULoadOp to_sdl(LoadOp op) noexcept {
     return SDL_GPU_LOADOP_CLEAR;
 }
 
+SDL_GPUFilter to_sdl(Filter filter) noexcept {
+    switch (filter) {
+    case Filter::Nearest: return SDL_GPU_FILTER_NEAREST;
+    case Filter::Linear: return SDL_GPU_FILTER_LINEAR;
+    }
+    return SDL_GPU_FILTER_LINEAR;
+}
+
+SDL_GPUSamplerAddressMode to_sdl(AddressMode mode) noexcept {
+    switch (mode) {
+    case AddressMode::ClampToEdge: return SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    case AddressMode::Repeat: return SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    case AddressMode::MirroredRepeat: return SDL_GPU_SAMPLERADDRESSMODE_MIRRORED_REPEAT;
+    }
+    return SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+}
+
 TextureFormat from_sdl(SDL_GPUTextureFormat format) noexcept {
     switch (format) {
     case SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM: return TextureFormat::Bgra8Unorm;

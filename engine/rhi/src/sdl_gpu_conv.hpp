@@ -23,6 +23,8 @@ namespace atlas::rhi::detail {
 [[nodiscard]] SDL_GPUPrimitiveType to_sdl(PrimitiveTopology topology) noexcept;
 [[nodiscard]] SDL_GPUVertexElementFormat to_sdl(VertexFormat format) noexcept;
 [[nodiscard]] SDL_GPULoadOp to_sdl(LoadOp op) noexcept;
+[[nodiscard]] SDL_GPUFilter to_sdl(Filter filter) noexcept;
+[[nodiscard]] SDL_GPUSamplerAddressMode to_sdl(AddressMode mode) noexcept;
 
 [[nodiscard]] TextureFormat from_sdl(SDL_GPUTextureFormat format) noexcept;
 [[nodiscard]] SDL_GPUTextureFormat to_sdl(TextureFormat format) noexcept;

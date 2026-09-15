@@ -11,8 +11,8 @@ Status legend: **done**, *in progress*, planned.
 | M0 | Architecture and reproducible skeleton | M | **done** |
 | M1 | Platform loop | M | **done** |
 | M2 | Minimal GPU renderer | L | **done** |
-| M3 | 2D camera and batching | M | next |
-| M4 | Asset pipeline | L | planned |
+| M3 | 2D camera and batching | M | **done** |
+| M4 | Asset pipeline | L | next |
 | M5 | Scene and serialization | M | planned |
 | M6 | Simulation kernel | L | planned |
 | M7 | Strategy Lab (engine v0.1) | L | planned |
@@ -97,10 +97,29 @@ Slices: shader toolchain hardening for resource bindings; `atlas::math`; orthogr
 camera; texture and sampler upload; quad batching then instancing; the ImGui docking shell
 with log and timing panels; an allocation check; the benchmark harness and first baseline.
 
-**Exit criteria**
+**Exit criteria — all met**
 - Orthographic camera, texture, sampler, quad batching or instancing, and a debug overlay.
 - No unbounded per-frame allocation after warm-up in the demonstrated path.
 - A measured benchmark with machine-readable output and a recorded baseline.
+
+Ten thousand textured quads reach the screen in one draw call, through an orthographic
+camera with drag to pan and wheel to zoom about the pointer. The allocation claim is
+measured rather than asserted: global operator new is replaced with a counting version and a
+settled frame allocates eight times at a thousand quads and eight times at fifty thousand,
+so the count does not grow with the scene.
+
+The shader binding conventions M2 deliberately avoided are settled. Resource counts are read
+out of the compiled shaders by reflection and reach the code as generated constants, so a
+shader that gains a uniform cannot leave a stale count behind.
+
+Three defects were found by running the code rather than by reading it. A shader reads a
+uniform matrix column-major while Atlas stores row-major, so the first camera dropped its
+translation and warped the field into a wedge; a rendered-pixel test now pins the layout
+down and was confirmed to fail when the fix is reverted. Preparing the overlay's vertex data
+uploads through a copy pass, which cannot nest inside the render pass that draws it, so the
+overlay now hands back a token that makes the wrong order impossible to write. And the first
+renderer benchmark measured the display's refresh interval rather than the engine: every
+scene size reported the same 8.3 milliseconds.
 
 ## M4 — Asset pipeline
 

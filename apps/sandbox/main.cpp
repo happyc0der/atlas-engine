@@ -14,13 +14,17 @@
 #include <atlas/core/profile.hpp>
 #include <atlas/core/result.hpp>
 #include <atlas/core/time.hpp>
+#include <atlas/math/camera.hpp>
 #include <atlas/platform/platform.hpp>
+#include <atlas/renderer/quad_batch.hpp>
 #include <atlas/rhi/device.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
+#include <atlas/tools/debug_ui.hpp>
 
-#include "renderer.hpp"
+#include "scene.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -64,6 +68,8 @@ struct Options {
     std::string_view shader_dir = "assets/cooked/shaders";
     std::string_view screenshot;
     bool no_render = false;
+    bool no_overlay = false;
+    std::uint32_t grid = 100;
 };
 
 [[nodiscard]] atlas::Result<atlas::log::Severity> parse_severity(std::string_view name) {
@@ -112,6 +118,8 @@ Options:
   --shader-dir PATH      Where the cooked shaders live. Default: assets/cooked/shaders.
   --screenshot PATH      Write the last rendered frame to PATH as a PPM image, then exit.
   --no-render            Open a window but create no graphics device.
+  --grid N               Draw an N by N field of quads. Default: 100, so ten thousand.
+  --no-overlay           Do not create the debug overlay.
   --version              Print build identity and exit.
   --help                 Print this message and exit.
 
@@ -158,6 +166,18 @@ class LogSession {
     options.shader_dir = args.value_or("shader-dir", std::string_view{"assets/cooked/shaders"});
     options.screenshot = args.value_or("screenshot", std::string_view{});
     options.no_render = args.has("no-render");
+    options.no_overlay = args.has("no-overlay");
+
+    const auto grid = args.value_or("grid", std::uint64_t{100});
+    if (!grid) {
+        return std::unexpected(grid.error());
+    }
+    if (*grid == 0 || *grid > 4000) {
+        return std::unexpected(
+            atlas::Error(atlas::ErrorCode::InvalidArgument,
+                         std::format("--grid must be in [1, 4000], got {}", *grid)));
+    }
+    options.grid = static_cast<std::uint32_t>(*grid);
 
     const auto frames = args.value_or("frames", std::uint64_t{0});
     if (!frames) {
@@ -374,7 +394,8 @@ void step_simulation(atlas::Tick tick) {
     // The device and the renderer are optional: a headless run has neither, and a run with
     // --no-render deliberately skips them to exercise the window path on its own.
     std::optional<atlas::rhi::Device> device;
-    std::optional<atlas::sandbox::TriangleRenderer> renderer;
+    std::optional<atlas::sandbox::DemoScene> scene;
+    std::optional<atlas::tools::DebugUi> overlay;
 
     if (!options->headless && !options->no_render && window.valid()) {
         auto created = atlas::rhi::Device::create({.debug = kDebugBuild}, window);
@@ -384,12 +405,26 @@ void step_simulation(atlas::Tick tick) {
         }
         device = std::move(*created);
 
-        auto triangle = atlas::sandbox::TriangleRenderer::create(*device, options->shader_dir);
-        if (!triangle) {
-            return std::unexpected(
-                std::move(triangle).error().context("preparing the triangle renderer"));
+        auto demo =
+            atlas::sandbox::DemoScene::create(*device, {.grid_width = options->grid,
+                                                        .grid_height = options->grid,
+                                                        .shader_directory = options->shader_dir});
+        if (!demo) {
+            return std::unexpected(std::move(demo).error().context("building the demo scene"));
         }
-        renderer = std::move(*triangle);
+        scene = std::move(*demo);
+        scene->resize(window.pixel_size().width, window.pixel_size().height);
+
+        if (!options->no_overlay) {
+            auto ui = atlas::tools::DebugUi::create(*device, window);
+            if (!ui) {
+                // Not fatal: an engineering overlay that cannot start should not stop the
+                // engine it is meant to observe.
+                ATLAS_LOG_WARN(kApp, "the debug overlay is unavailable: {}", ui.error());
+            } else {
+                overlay = std::move(*ui);
+            }
+        }
     }
 
     auto accumulator = atlas::sim::TickAccumulator::create({
@@ -412,13 +447,21 @@ void step_simulation(atlas::Tick tick) {
     std::uint64_t frame_index = 0;
     bool quit = false;
     bool captured = false;
+    atlas::renderer::BatchStats last_batch;
 
     while (!quit) {
         ATLAS_ZONE_NAMED("frame");
         const std::uint64_t frame_ns = atlas::to_unsigned_ns(clock.tick());
         ++frame_index;
 
-        for (const auto& event : platform->pump()) {
+        const auto events = platform->pump();
+        for (const auto& event : events) {
+            // The overlay sees every event first, and reports whether it used one. A click
+            // on a panel must not also pan the camera behind it.
+            const bool consumed = overlay.has_value() && overlay->handle_event(event);
+            if (consumed) {
+                continue;
+            }
             if (std::holds_alternative<atlas::platform::QuitRequested>(event) ||
                 std::holds_alternative<atlas::platform::WindowCloseRequested>(event)) {
                 quit = true;
@@ -435,6 +478,11 @@ void step_simulation(atlas::Tick tick) {
             } else if (std::holds_alternative<atlas::platform::WindowRestored>(event)) {
                 ATLAS_LOG_DEBUG(kApp, "window restored");
             }
+        }
+
+        // The scene is not updated while the overlay has the pointer, for the same reason.
+        if (scene.has_value() && !(overlay.has_value() && overlay->wants_mouse())) {
+            scene->update(platform->input(), events);
         }
 
         const auto tick_start = std::chrono::steady_clock::now();
@@ -471,6 +519,41 @@ void step_simulation(atlas::Tick tick) {
                         captured = true;
                     }
 
+                    // The overlay is built and uploaded before the render pass opens.
+                    // Uploading its vertex data begins a copy pass, and the graphics library
+                    // refuses to nest one inside a render pass.
+                    atlas::tools::DebugUi::PreparedFrame prepared_overlay{};
+                    std::array<std::string, 6> overlay_values;
+                    if (overlay.has_value()) {
+                        const auto extent = frame->swapchain_extent();
+                        overlay->begin_frame(static_cast<float>(frame_ns) / 1'000'000'000.0F,
+                                             extent.width, extent.height);
+
+                        overlay_values[0] =
+                            std::format("{:.2f} ms", static_cast<double>(frame_ns) / 1e6);
+                        overlay_values[1] = std::format("{}", accumulator->current_tick());
+                        overlay_values[2] =
+                            scene.has_value() ? std::format("{} of {}", scene->visible_last_frame(),
+                                                            scene->quad_count())
+                                              : std::string{"-"};
+                        overlay_values[3] = std::format("{}", last_batch.draw_calls);
+                        overlay_values[4] = std::format("{} KiB", last_batch.bytes_uploaded / 1024);
+                        overlay_values[5] = scene.has_value()
+                                                ? std::format("{:.2f}", scene->camera().zoom())
+                                                : std::string{"-"};
+
+                        const std::array<atlas::tools::Stat, 6> stats{{
+                            {.label = "frame", .value = overlay_values[0]},
+                            {.label = "tick", .value = overlay_values[1]},
+                            {.label = "quads visible", .value = overlay_values[2]},
+                            {.label = "draw calls", .value = overlay_values[3]},
+                            {.label = "uploaded", .value = overlay_values[4]},
+                            {.label = "zoom", .value = overlay_values[5]},
+                        }};
+                        overlay->stats_panel("Atlas", stats);
+                        prepared_overlay = overlay->end_frame(*frame);
+                    }
+
                     auto pass = frame->begin_render_pass({
                         .colour = {.load = atlas::rhi::LoadOp::Clear,
                                    .clear_colour = {.r = 0.06F, .g = 0.07F, .b = 0.10F}},
@@ -478,8 +561,13 @@ void step_simulation(atlas::Tick tick) {
                     });
                     if (!pass) {
                         ATLAS_LOG_ERROR(kApp, "begin_render_pass failed: {}", pass.error());
-                    } else if (renderer.has_value()) {
-                        renderer->draw(*pass);
+                    } else {
+                        if (scene.has_value()) {
+                            last_batch = scene->draw(*pass);
+                        }
+                        if (overlay.has_value()) {
+                            overlay->draw(*pass, prepared_overlay);
+                        }
                     }
                 }
 
@@ -528,9 +616,17 @@ void step_simulation(atlas::Tick tick) {
         }
     }
 
-    // The renderer holds resources the device owns, so it must go first. Destroying them in
-    // the wrong order is the kind of mistake that only shows up in the leak report.
-    renderer.reset();
+    if (scene.has_value()) {
+        ATLAS_LOG_INFO(kApp, "last frame: {} of {} quads visible, {} draw call(s), {} KiB uploaded",
+                       scene->visible_last_frame(), scene->quad_count(), last_batch.draw_calls,
+                       last_batch.bytes_uploaded / 1024);
+    }
+
+    // Both the overlay and the scene hold resources the device owns, so they go first.
+    // Destroying them in the wrong order is the kind of mistake that only shows up in the
+    // leak report.
+    overlay.reset();
+    scene.reset();
     device.reset();
 
     ATLAS_LOG_INFO(kApp, "loop finished at tick {}", accumulator->current_tick());

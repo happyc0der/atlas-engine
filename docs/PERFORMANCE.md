@@ -81,6 +81,35 @@ Provisional and scalable; each is introduced with the subsystem it measures.
 | Task overhead | Spawn and join cost, parallel-for granularity | M8 |
 | Worker scaling | 1, 2, 4, and hardware concurrency minus one | M8 |
 
+## First results
+
+Recorded on the machine described above, RelWithDebInfo, quad batching only. These are the
+processor-side cost of turning quads into an uploaded buffer and a recorded draw; the
+graphics processor's own time is not measurable, because SDL_GPU exposes no timestamp
+queries, and is therefore not reported.
+
+| Scenario | Median | p90 | p99 |
+|---|---|---|---|
+| 10k quads submitted | 0.31 ms | 0.78 ms | 3.3 ms |
+| 100k quads submitted | 1.45 ms | 2.2 ms | 4.2 ms |
+| 10k points transformed | 5.8 us | 5.9 us | 6.3 us |
+| Allocations per frame, 1k quads | 8 | | |
+| Allocations per frame, 50k quads | 8 | | |
+
+The tail is much worse than the median, by a factor of ten at the smaller size. That is
+expected on a machine with other things running and is the reason tails are reported at all,
+but it is also the first thing to look at if these numbers ever need to improve.
+
+The allocation counts are the evidence for M3's "no unbounded per-frame allocation" exit
+criterion. Eight is not zero; what matters is that fifty times the quads does not mean fifty
+times the allocations.
+
+**What these numbers are not.** The first version of this benchmark timed a whole frame
+including presentation and reported 8.3 milliseconds for every scene size, because that is
+the display's refresh interval on this machine. A benchmark that measures the monitor is
+worse than no benchmark, because it looks like data. Presentation is now outside the timed
+section, and the scales differ as they should.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:

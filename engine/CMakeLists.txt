@@ -3,6 +3,9 @@
 # Engine modules, in dependency order. A module appears here in the milestone that first
 # needs it, never in advance: an empty module is an abstraction without a call site.
 add_subdirectory(core)
+add_subdirectory(math)
 add_subdirectory(platform)
 add_subdirectory(rhi)
+add_subdirectory(renderer)
 add_subdirectory(simulation)
+add_subdirectory(tools)
