@@ -248,9 +248,24 @@ unavailable on Metal, which is the backend this project develops on. The classif
 function over the library's message and is tested in both directions, because a false positive
 latches and takes the rest of the run down with it.
 
-Still open from that audit: a software-rasteriser smoke job, the Stop hook that was specified
-and never written, and the Windows formatting script. They are tracked with everything else
-deferred in [DEFERRED.md](DEFERRED.md).
+All three items that audit left open were closed on 2026-09-15.
+
+**The renderer is now verified on a second backend.** It had been developed entirely against
+Metal on one machine. It now runs on Vulkan against Mesa's llvmpipe, a complete software
+implementation, inside a container with no graphics hardware and no display: all 34
+GPU-labelled tests pass, and the sandbox draws a frame and reads it back. One script does this
+locally and in continuous integration, so the two cannot drift. What it does not catch is
+driver behaviour, performance, or anything about Metal; llvmpipe is a correct implementation,
+not a representative one.
+
+**The Stop hook** refuses to finish on a tree that does not build and pass, which the
+completion checklist has always required and nothing enforced. It skips when nothing affecting
+the build has changed, so a documentation edit does not pay for a compile, and it never blocks
+twice in a row.
+
+**The Windows formatting script** matches the shell script's behaviour, directories,
+extensions and version pin, verified against stub formatters in a container since this machine
+has no PowerShell.
 
 ## M6 — Simulation kernel
 
@@ -345,8 +360,9 @@ decision, in [DEFERRED.md](DEFERRED.md). Top risks, as of 2026-09-15:
 - **Nothing has ever been verified anywhere but this machine.** There is no git remote, so
   the three continuous-integration workflows have never run. Windows has never been compiled
   by anything. This is the largest risk in the project and it grows with every milestone.
-- **The renderer is verified on one graphics processor.** The planned software-rasteriser
-  smoke job does not exist, so there is no automatic coverage on any other.
+- **The renderer is verified on one graphics processor and one software rasteriser.** The
+  llvmpipe check covers Vulkan; Direct3D 12 remains unbuilt and unverified, and no real
+  non-Apple hardware has ever run this code.
 - Cross-architecture float divergence between arm64 and x86_64 (M6); mitigated by
   integer-first authoritative state and `-ffp-contract=off` from M0. The arm64-to-arm64
   comparison across two toolchains has been made and agrees; x86_64 remains unmeasured.

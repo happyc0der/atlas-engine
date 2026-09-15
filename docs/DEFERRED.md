@@ -12,25 +12,26 @@ Last reviewed 2026-09-15, after M6.
 
 ## Open gaps in the infrastructure
 
-These were specified in the Gate 0 plan and are simply not done. They are the only entries
-here without a considered reason.
+None. The three found by the M0–M4 audit were closed on 2026-09-15:
 
-| What | Why it matters | Found |
-|---|---|---|
-| A software-rasteriser smoke job | The renderer is verified on exactly one machine. This would give it automatic coverage on Linux without a graphics processor. | M0–M4 audit |
-| The Stop hook | The plan specified three hooks and two were written. The missing one runs the precheck before a change is called finished. | M0–M4 audit |
-| `tools/format.ps1` | Windows is tier-one and its contributors have no formatting entry point. | M0–M4 audit |
+- **The software-rasteriser check** exists as `tools/ci/linux_gpu.sh`, run locally by
+  `tools/ci/docker_gpu.sh` and in continuous integration by `gpu-smoke.yml`. One script for
+  both, so they cannot drift.
+- **The Stop hook** refuses to finish on a tree that does not build and pass. It skips when
+  nothing that could affect the build has changed, and never blocks twice in a row.
+- **`tools/format.ps1`** matches the shell script's behaviour, directories, extensions and
+  version pin.
 
-The planned `shaders.yml` continuous-integration job is **not** on this list. Its purpose,
-catching a shader edited without re-cooking, is served by the `shaders_current` test, which
-runs everywhere the toolchain exists and skips itself where it does not. That is a
-substitution rather than a gap, recorded here because it was never recorded anywhere else.
+The planned `shaders.yml` continuous-integration job was never written and is not a gap. Its
+purpose, catching a shader edited without re-cooking, is served by the `shaders_current` test,
+which runs everywhere the toolchain exists and skips itself where it does not. That is a
+substitution, recorded here because it was never recorded anywhere else.
 
 ## Never verified, as distinct from deferred
 
 | What | State |
 |---|---|
-| Continuous integration | Has never executed. There is no git remote, so the three workflow files have been reviewed and validated as YAML and never run. |
+| Continuous integration | Has never executed. There is no git remote, so the four workflow files have been reviewed and validated as YAML and never run. |
 | Windows | Has never been compiled, by anything. The build is configured for it and that configuration is untested. |
 | x86_64 | No machine. The golden-hash comparison covers two toolchains on arm64 only, which is a real result about compilers and says nothing about architectures. |
 | A decision the plan asked for | The plan said the owner would decide by M3 whether to acquire Windows hardware or a virtual machine. M3 passed without the question being put. |

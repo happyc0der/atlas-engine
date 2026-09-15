@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Render on a software Vulkan device, so the renderer is verified somewhere other than one
+# developer's machine.
+#
+# Atlas is developed against Metal on Apple Silicon. Every other backend is unverified unless
+# something verifies it, and hosted runners have no graphics hardware. Mesa's llvmpipe is a
+# complete Vulkan implementation running on the processor, and SDL_GPU's Vulkan backend
+# enumerates it like any other device, so this exercises the real code path with no hardware.
+#
+# What it catches: anything wrong on Vulkan that happens to work on Metal. Binding
+# conventions, synchronisation the validation layers object to, format assumptions, resource
+# lifetimes. That is a large class and it currently has nothing else looking for it.
+#
+# What it does not catch: driver bugs, performance, and anything about Metal or Direct3D.
+# llvmpipe is a correct implementation, not a representative one. Real-hardware verification
+# stays on the development machine.
+#
+# The steps run tools/ci/linux_gpu.sh, which is the same script tools/ci/docker_gpu.sh runs
+# locally. One script rather than two, so a green run here means the local check passes too.
+name: gpu-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: gpu-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llvmpipe:
+    name: Vulkan on llvmpipe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.cache/vcpkg-archives
+      CC: clang-19
+      CXX: clang++-19
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: System packages
+        run: |
+          bash tools/ci/linux_deps.sh
+          bash tools/ci/linux_gpu_deps.sh
+
+      - name: vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json', '.gitmodules') }}
+          restore-keys: vcpkg-x64-linux-
+
+      - name: Bootstrap vcpkg
+        run: |
+          mkdir -p "${VCPKG_DEFAULT_BINARY_CACHE}"
+          ./external/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Configure
+        run: cmake --preset linux-clang-debug
+
+      - name: Build
+        run: cmake --build --preset linux-clang-debug
+
+      # Everything below here is the same script the development machine runs in a container.
+      - name: GPU tests on a software rasteriser
+        run: bash tools/ci/linux_gpu.sh linux-clang-debug
+
+      - name: Upload the rendered frame
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvmpipe-frame
+          path: /tmp/atlas-lavapipe.ppm
+          if-no-files-found: ignore

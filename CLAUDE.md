@@ -18,11 +18,13 @@ ctest --preset macos-debug-gpu        # test including GPU tests (M2+, real GPU 
 cmake --workflow --preset ci-macos-debug   # configure + build + test
 
 tools/format.sh --check               # clang-format, --fix to apply
+pwsh tools/format.ps1 -Check          # the same, on Windows
 tools/tidy.sh macos-debug             # clang-tidy over first-party targets
 python3 tools/check_module_deps.py    # module boundary + cycle + exception check
 python3 tools/check_spdx.py           # licence headers
 tools/precheck.sh macos-debug         # everything above, in order
 tools/ci/docker_linux.sh              # Linux build in a container, before pushing
+tools/ci/docker_gpu.sh                # GPU tests on a software rasteriser, in a container
 ```
 
 Profiling build: preset `macos-profile` (Tracy on). A default build contains no Tracy
