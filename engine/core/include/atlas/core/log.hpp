@@ -196,12 +196,28 @@ void log_formatted(Category category, Severity severity, std::source_location wh
         }                                                                                          \
     } while (false)
 
+// In a release build these produce no code, but they still have to *compile*. A macro that
+// expanded to nothing would discard its arguments entirely, and two things follow from that.
+// A category or helper used only in debug logging becomes an unused symbol, which is a
+// warning, which is an error here, so the release build breaks for a reason that has nothing
+// to do with release. And a debug log statement with a mistake in it would compile fine in
+// release and fail only in debug, which is the wrong way round for a mistake to be found.
+//
+// A discarded `if constexpr` branch is checked and generates nothing, which is exactly what
+// is wanted: the arguments are type-checked and the format string verified, the symbols count
+// as used, and no instruction is emitted.
 #ifdef NDEBUG
 #define ATLAS_LOG_TRACE(category, ...)                                                             \
     do {                                                                                           \
+        if constexpr (false) {                                                                     \
+            ATLAS_LOG(category, ::atlas::log::Severity::Trace, __VA_ARGS__);                       \
+        }                                                                                          \
     } while (false)
 #define ATLAS_LOG_DEBUG(category, ...)                                                             \
     do {                                                                                           \
+        if constexpr (false) {                                                                     \
+            ATLAS_LOG(category, ::atlas::log::Severity::Debug, __VA_ARGS__);                       \
+        }                                                                                          \
     } while (false)
 #else
 #define ATLAS_LOG_TRACE(category, ...)                                                             \

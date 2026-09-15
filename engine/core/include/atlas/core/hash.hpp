@@ -103,12 +103,20 @@ class Hasher {
         if constexpr (std::is_enum_v<T>) {
             return add(static_cast<std::underlying_type_t<T>>(value));
         } else {
+            // Widened to 64 bits before shifting, rather than shifting the narrow type.
+            // For a one-byte value the last iteration shifts by 8, which is the width of the
+            // type: integer promotion makes that well-defined and it yields zero, so the
+            // result was always correct, but it reads as a mistake and MSVC reports it as
+            // one. Shifting a value that is always wide enough says what is meant.
+            //
+            // The bytes consumed, and their order, are unchanged, so every hash this has
+            // ever produced is unchanged. The golden-scenario test is what holds that.
             using Unsigned = std::make_unsigned_t<T>;
-            auto bits = static_cast<Unsigned>(value);
+            auto bits = static_cast<std::uint64_t>(static_cast<Unsigned>(value));
             for (std::size_t i = 0; i < sizeof(Unsigned); ++i) {
-                m_value ^= static_cast<std::uint64_t>(bits) & 0xFFULL;
+                m_value ^= bits & 0xFFULL;
                 m_value *= detail::kFnvPrime;
-                bits = static_cast<Unsigned>(bits >> 8U);
+                bits >>= 8U;
             }
             return *this;
         }

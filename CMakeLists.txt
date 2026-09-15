@@ -47,6 +47,12 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 if(MSVC)
     set(CMAKE_CXX_STANDARD 23)
     add_compile_options(/std:c++latest)
+
+    # MSVC deprecates standard C functions in favour of its own _s variants, which are not
+    # portable. Atlas uses the standard ones and checks their results; the warning is about
+    # not using Microsoft's alternative, not about a mistake, and silencing it is the only
+    # way to keep one portable implementation.
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
 
 # Keep build output predictable across generators.
