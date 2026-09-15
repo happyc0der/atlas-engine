@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Sanitizers
+
+# ASan and TSan are never combined: they instrument the same things differently. Each gets
+# its own job, and the TSan job runs only the unit and determinism tests, because SDL and
+# other uninstrumented system libraries generate noise rather than findings.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanitize:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux ASan + UBSan
+            os: ubuntu-24.04
+            preset: linux-clang-asan
+            triplet: x64-linux
+          - name: Linux TSan
+            os: ubuntu-24.04
+            preset: linux-clang-tsan
+            triplet: x64-linux
+          - name: macOS ASan + UBSan
+            os: macos-26
+            preset: macos-asan
+            triplet: arm64-osx
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux prerequisites
+        if: runner.os == 'Linux'
+        run: bash tools/ci/linux_deps.sh
+
+      - name: Install macOS prerequisites
+        if: runner.os == 'macOS'
+        run: brew install ninja pkgconf
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: .cache/vcpkg-archives
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', '.gitmodules') }}
+          restore-keys: vcpkg-${{ matrix.triplet }}-
+
+      - name: Bootstrap vcpkg
+        run: ./external/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Configure, build, test
+        run: |
+          cmake --preset ${{ matrix.preset }}
+          cmake --build --preset ${{ matrix.preset }}
+          ctest --preset ${{ matrix.preset }}

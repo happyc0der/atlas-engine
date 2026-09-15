@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Generated from build_info.cpp.in at configure time. Do not edit the generated file.
+#include <atlas/core/build_info.hpp>
+
+namespace atlas::build_info {
+
+std::string_view version() noexcept { return "@PROJECT_VERSION@"; }
+std::string_view git_commit() noexcept { return "@ATLAS_GIT_COMMIT@"; }
+bool git_dirty() noexcept { return @ATLAS_GIT_DIRTY@; }
+std::string_view compiler() noexcept {
+    return "@CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@";
+}
+std::string_view build_type() noexcept { return "@CMAKE_BUILD_TYPE@"; }
+std::string_view system() noexcept { return "@CMAKE_SYSTEM_NAME@ @CMAKE_SYSTEM_PROCESSOR@"; }
+std::string_view configured_at() noexcept { return "@ATLAS_CONFIGURE_TIMESTAMP@"; }
+bool profiling_enabled() noexcept { return ATLAS_TRACY_ENABLED != 0; }
+std::string_view sanitizer() noexcept { return "@ATLAS_SANITIZE@"; }
+
+std::string_view summary() noexcept {
+    return "Atlas @PROJECT_VERSION@ (@ATLAS_GIT_COMMIT@@ATLAS_GIT_DIRTY_SUFFIX@) "
+           "@CMAKE_BUILD_TYPE@ @CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@ "
+           "@CMAKE_SYSTEM_NAME@ @CMAKE_SYSTEM_PROCESSOR@";
+}
+
+}  // namespace atlas::build_info

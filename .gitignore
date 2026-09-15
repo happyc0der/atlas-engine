@@ -1,0 +1,17 @@
+# Build output
+build/
+out/
+
+# Local caches
+.cache/
+vcpkg_installed/
+
+# Local, untracked developer overrides
+CMakeUserPresets.json
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+compile_commands.json

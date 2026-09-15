@@ -1,0 +1,44 @@
+# Atlas formatting. Pin the clang-format major version: output is not stable across
+# majors, so a mismatched tool reformats the whole tree. tools/format.sh checks this.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+ColumnLimit: 100
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+AccessModifierOffset: -2
+IndentAccessModifiers: false
+
+PointerAlignment: Left
+ReferenceAlignment: Left
+QualifierAlignment: Left
+
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+InsertBraces: true
+InsertNewlineAtEOF: true
+SeparateDefinitionBlocks: Always
+
+# Include order: the file's own header, then Atlas, then third-party, then standard.
+# Regroup enforces this rather than merely preserving whatever was written.
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<atlas/'
+    Priority: 2
+  - Regex: '^<(catch2|tracy|SDL3|imgui|entt)/'
+    Priority: 3
+  - Regex: '^<[^/]*>$'
+    Priority: 4
+  - Regex: '.*'
+    Priority: 3
+
+SpaceAfterCStyleCast: false
+SpacesBeforeTrailingComments: 2
+FixNamespaceComments: true
+NamespaceIndentation: None

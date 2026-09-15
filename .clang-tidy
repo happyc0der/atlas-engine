@@ -1,0 +1,101 @@
+# Atlas static analysis.
+#
+# The check list is curated rather than a wholesale "*": several upstream checks contradict
+# the rules in CLAUDE.md or fire constantly on correct code, and a linter nobody can keep
+# green is a linter everybody ignores. Each exclusion below says why.
+---
+Checks: >
+  bugprone-*,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -misc-non-private-member-variables-in-classes,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -readability-identifier-length,
+  -cppcoreguidelines-avoid-do-while,
+  -bugprone-easily-swappable-parameters,
+  -readability-function-cognitive-complexity,
+  -misc-include-cleaner,
+  -cppcoreguidelines-macro-usage,
+  -portability-avoid-pragma-once,
+  -modernize-use-std-print,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-owning-memory,
+  -performance-enum-size
+
+# Rationale for the exclusions above:
+#   modernize-use-trailing-return-type  — a style preference, and not Atlas's.
+#   *-magic-numbers                     — fires on every test expectation and table.
+#   *-non-private-member-variables      — plain data aggregates are deliberate here.
+#   readability-identifier-length       — rejects i, x, y, dt, which are clearer short.
+#   cppcoreguidelines-avoid-do-while    — the log macro needs do/while to be a statement.
+#   bugprone-easily-swappable-parameters— fires on any (width, height) pair.
+#   readability-function-cognitive-complexity — a switch over an enum is not complex.
+#   misc-include-cleaner                — too many false positives with libc++ transitives.
+#   cppcoreguidelines-macro-usage       — the assertion and log macros must be macros: they
+#                                         capture the caller's source location and must not
+#                                         evaluate their arguments when disabled.
+#   portability-avoid-pragma-once       — every tier-one compiler supports #pragma once.
+#   modernize-use-std-print             — CLAUDE.md forbids std::print in engine code; the
+#                                         Ubuntu CI image's libstdc++ 13 lacks <print>.
+#   cppcoreguidelines-pro-type-vararg   — C stdio is used deliberately in the assert handler
+#                                         and console sink, which must work when the rest of
+#                                         the process is in an unknown state.
+#   *-pro-bounds-pointer-arithmetic     — std::from_chars takes a pointer range.
+#   cppcoreguidelines-owning-memory     — FILE* is owned by an RAII wrapper, which is the
+#                                         point of that wrapper.
+#   performance-enum-size               — error code widths are deliberate: they are
+#                                         serialized, so the width is part of the contract.
+
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'engine/.*/include/atlas/.*\.hpp$'
+FormatStyle: file
+
+CheckOptions:
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: lower_case
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.ParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.PrivateMemberPrefix
+    value: 'm_'
+  - key: readability-identifier-naming.ProtectedMemberPrefix
+    value: 'm_'
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.GlobalConstantPrefix
+    value: 'k'
+  - key: readability-identifier-naming.StaticConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.StaticConstantPrefix
+    value: 'k'
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: CamelCase
+  - key: readability-identifier-naming.ConstexprVariablePrefix
+    value: 'k'
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.TypeAliasCase
+    value: CamelCase
+  - key: readability-identifier-naming.TemplateParameterCase
+    value: CamelCase

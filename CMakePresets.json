@@ -1,0 +1,558 @@
+{
+  "version": 8,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "_base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/build/${presetName}/install",
+      "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions",
+        "ATLAS_PROFILE": "OFF",
+        "ATLAS_SANITIZE": "none",
+        "ATLAS_ENABLE_TIDY": "OFF",
+        "ATLAS_WARNINGS_AS_ERRORS": "ON"
+      },
+      "environment": {
+        "VCPKG_BINARY_SOURCES": "clear;files,${sourceDir}/.cache/vcpkg-archives,readwrite"
+      }
+    },
+    {
+      "name": "_debug",
+      "hidden": true,
+      "inherits": "_base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "_release",
+      "hidden": true,
+      "inherits": "_base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "_macos",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "arm64-osx",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "15.0"
+      }
+    },
+    {
+      "name": "_linux_clang",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux",
+        "CMAKE_C_COMPILER": "clang-19",
+        "CMAKE_CXX_COMPILER": "clang++-19"
+      }
+    },
+    {
+      "name": "_windows_msvc",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
+      }
+    },
+    {
+      "name": "macos-debug",
+      "displayName": "macOS arm64 Debug",
+      "inherits": [
+        "_debug",
+        "_macos"
+      ]
+    },
+    {
+      "name": "macos-release",
+      "displayName": "macOS arm64 RelWithDebInfo",
+      "inherits": [
+        "_release",
+        "_macos"
+      ]
+    },
+    {
+      "name": "macos-profile",
+      "displayName": "macOS arm64 RelWithDebInfo + Tracy profiling",
+      "inherits": [
+        "_release",
+        "_macos"
+      ],
+      "cacheVariables": {
+        "ATLAS_PROFILE": "ON"
+      }
+    },
+    {
+      "name": "macos-asan",
+      "displayName": "macOS arm64 Debug + AddressSanitizer/UBSan",
+      "inherits": [
+        "_debug",
+        "_macos"
+      ],
+      "cacheVariables": {
+        "ATLAS_SANITIZE": "address"
+      }
+    },
+    {
+      "name": "macos-tsan",
+      "displayName": "macOS arm64 Debug + ThreadSanitizer",
+      "inherits": [
+        "_debug",
+        "_macos"
+      ],
+      "cacheVariables": {
+        "ATLAS_SANITIZE": "thread"
+      }
+    },
+    {
+      "name": "linux-clang-debug",
+      "displayName": "Linux x86_64 Clang Debug",
+      "inherits": [
+        "_debug",
+        "_linux_clang"
+      ]
+    },
+    {
+      "name": "linux-clang-release",
+      "displayName": "Linux x86_64 Clang RelWithDebInfo",
+      "inherits": [
+        "_release",
+        "_linux_clang"
+      ]
+    },
+    {
+      "name": "linux-clang-asan",
+      "displayName": "Linux x86_64 Clang Debug + AddressSanitizer/UBSan",
+      "inherits": [
+        "_debug",
+        "_linux_clang"
+      ],
+      "cacheVariables": {
+        "ATLAS_SANITIZE": "address"
+      }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "displayName": "Linux x86_64 Clang Debug + ThreadSanitizer",
+      "inherits": [
+        "_debug",
+        "_linux_clang"
+      ],
+      "cacheVariables": {
+        "ATLAS_SANITIZE": "thread"
+      }
+    },
+    {
+      "name": "linux-gcc-debug",
+      "displayName": "Linux x86_64 GCC Debug (best effort, not a CI gate)",
+      "inherits": "_debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux",
+        "CMAKE_C_COMPILER": "gcc-14",
+        "CMAKE_CXX_COMPILER": "g++-14"
+      }
+    },
+    {
+      "name": "windows-msvc-debug",
+      "displayName": "Windows x64 MSVC Debug",
+      "inherits": [
+        "_debug",
+        "_windows_msvc"
+      ]
+    },
+    {
+      "name": "windows-msvc-release",
+      "displayName": "Windows x64 MSVC RelWithDebInfo",
+      "inherits": [
+        "_release",
+        "_windows_msvc"
+      ]
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "macos-debug",
+      "configurePreset": "macos-debug"
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release"
+    },
+    {
+      "name": "macos-profile",
+      "configurePreset": "macos-profile"
+    },
+    {
+      "name": "macos-asan",
+      "configurePreset": "macos-asan"
+    },
+    {
+      "name": "macos-tsan",
+      "configurePreset": "macos-tsan"
+    },
+    {
+      "name": "linux-clang-debug",
+      "configurePreset": "linux-clang-debug"
+    },
+    {
+      "name": "linux-clang-release",
+      "configurePreset": "linux-clang-release"
+    },
+    {
+      "name": "linux-clang-asan",
+      "configurePreset": "linux-clang-asan"
+    },
+    {
+      "name": "linux-clang-tsan",
+      "configurePreset": "linux-clang-tsan"
+    },
+    {
+      "name": "linux-gcc-debug",
+      "configurePreset": "linux-gcc-debug"
+    },
+    {
+      "name": "windows-msvc-debug",
+      "configurePreset": "windows-msvc-debug"
+    },
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc-release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "_test_base",
+      "hidden": true,
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      },
+      "filter": {
+        "exclude": {
+          "label": "gpu"
+        }
+      }
+    },
+    {
+      "name": "_test_gpu",
+      "hidden": true,
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "MTL_DEBUG_LAYER": "1",
+        "MTL_SHADER_VALIDATION": "1"
+      }
+    },
+    {
+      "name": "_test_sanitizer",
+      "hidden": true,
+      "inherits": "_test_base",
+      "filter": {
+        "include": {
+          "label": "unit|determinism"
+        },
+        "exclude": {
+          "label": "gpu"
+        }
+      }
+    },
+    {
+      "name": "macos-debug",
+      "inherits": "_test_base",
+      "configurePreset": "macos-debug"
+    },
+    {
+      "name": "macos-release",
+      "inherits": "_test_base",
+      "configurePreset": "macos-release"
+    },
+    {
+      "name": "macos-profile",
+      "inherits": "_test_base",
+      "configurePreset": "macos-profile"
+    },
+    {
+      "name": "macos-debug-gpu",
+      "displayName": "macOS Debug, including GPU tests, with Metal validation",
+      "inherits": "_test_gpu",
+      "configurePreset": "macos-debug"
+    },
+    {
+      "name": "macos-asan",
+      "inherits": "_test_base",
+      "configurePreset": "macos-asan"
+    },
+    {
+      "name": "macos-tsan",
+      "inherits": "_test_sanitizer",
+      "configurePreset": "macos-tsan"
+    },
+    {
+      "name": "linux-clang-debug",
+      "inherits": "_test_base",
+      "configurePreset": "linux-clang-debug"
+    },
+    {
+      "name": "linux-clang-release",
+      "inherits": "_test_base",
+      "configurePreset": "linux-clang-release"
+    },
+    {
+      "name": "linux-clang-asan",
+      "inherits": "_test_base",
+      "configurePreset": "linux-clang-asan"
+    },
+    {
+      "name": "linux-clang-tsan",
+      "inherits": "_test_sanitizer",
+      "configurePreset": "linux-clang-tsan"
+    },
+    {
+      "name": "linux-gcc-debug",
+      "inherits": "_test_base",
+      "configurePreset": "linux-gcc-debug"
+    },
+    {
+      "name": "windows-msvc-debug",
+      "inherits": "_test_base",
+      "configurePreset": "windows-msvc-debug"
+    },
+    {
+      "name": "windows-msvc-release",
+      "inherits": "_test_base",
+      "configurePreset": "windows-msvc-release"
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "ci-macos-debug",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "macos-debug"
+        },
+        {
+          "type": "build",
+          "name": "macos-debug"
+        },
+        {
+          "type": "test",
+          "name": "macos-debug"
+        }
+      ]
+    },
+    {
+      "name": "ci-macos-release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "macos-release"
+        },
+        {
+          "type": "build",
+          "name": "macos-release"
+        },
+        {
+          "type": "test",
+          "name": "macos-release"
+        }
+      ]
+    },
+    {
+      "name": "ci-macos-profile",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "macos-profile"
+        },
+        {
+          "type": "build",
+          "name": "macos-profile"
+        },
+        {
+          "type": "test",
+          "name": "macos-profile"
+        }
+      ]
+    },
+    {
+      "name": "ci-macos-asan",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "macos-asan"
+        },
+        {
+          "type": "build",
+          "name": "macos-asan"
+        },
+        {
+          "type": "test",
+          "name": "macos-asan"
+        }
+      ]
+    },
+    {
+      "name": "ci-macos-tsan",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "macos-tsan"
+        },
+        {
+          "type": "build",
+          "name": "macos-tsan"
+        },
+        {
+          "type": "test",
+          "name": "macos-tsan"
+        }
+      ]
+    },
+    {
+      "name": "ci-linux-clang-debug",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "linux-clang-debug"
+        },
+        {
+          "type": "build",
+          "name": "linux-clang-debug"
+        },
+        {
+          "type": "test",
+          "name": "linux-clang-debug"
+        }
+      ]
+    },
+    {
+      "name": "ci-linux-clang-release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "linux-clang-release"
+        },
+        {
+          "type": "build",
+          "name": "linux-clang-release"
+        },
+        {
+          "type": "test",
+          "name": "linux-clang-release"
+        }
+      ]
+    },
+    {
+      "name": "ci-linux-clang-asan",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "linux-clang-asan"
+        },
+        {
+          "type": "build",
+          "name": "linux-clang-asan"
+        },
+        {
+          "type": "test",
+          "name": "linux-clang-asan"
+        }
+      ]
+    },
+    {
+      "name": "ci-linux-clang-tsan",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "linux-clang-tsan"
+        },
+        {
+          "type": "build",
+          "name": "linux-clang-tsan"
+        },
+        {
+          "type": "test",
+          "name": "linux-clang-tsan"
+        }
+      ]
+    },
+    {
+      "name": "ci-windows-msvc-debug",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "windows-msvc-debug"
+        },
+        {
+          "type": "build",
+          "name": "windows-msvc-debug"
+        },
+        {
+          "type": "test",
+          "name": "windows-msvc-debug"
+        }
+      ]
+    },
+    {
+      "name": "ci-windows-msvc-release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "windows-msvc-release"
+        },
+        {
+          "type": "build",
+          "name": "windows-msvc-release"
+        },
+        {
+          "type": "test",
+          "name": "windows-msvc-release"
+        }
+      ]
+    }
+  ]
+}

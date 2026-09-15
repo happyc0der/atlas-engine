@@ -1,0 +1,11 @@
+# Normalize line endings: LF in the repository and in every working tree.
+# MSVC and clang-cl handle LF fine; this avoids CRLF noise from Windows CI.
+* text=auto eol=lf
+
+# Binary assets must never be munged.
+*.png  binary
+*.jpg  binary
+*.ktx2 binary
+*.spv  binary
+*.dxil binary
+*.metallib binary

@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI
+
+# Runner labels are pinned, never "*-latest". windows-latest silently became Visual Studio
+# 2026 in June 2026; a build that only works by accident of the default is not reproducible.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64 Debug
+            os: macos-26
+            preset: macos-debug
+            triplet: arm64-osx
+          - name: macOS arm64 Release
+            os: macos-26
+            preset: macos-release
+            triplet: arm64-osx
+          - name: Linux x86_64 Clang Debug
+            os: ubuntu-24.04
+            preset: linux-clang-debug
+            triplet: x64-linux
+          - name: Linux x86_64 Clang Release
+            os: ubuntu-24.04
+            preset: linux-clang-release
+            triplet: x64-linux
+          - name: Windows x64 MSVC Debug
+            os: windows-2025
+            preset: windows-msvc-debug
+            triplet: x64-windows
+          - name: Windows x64 MSVC Release
+            os: windows-2025
+            preset: windows-msvc-release
+            triplet: x64-windows
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux prerequisites
+        if: runner.os == 'Linux'
+        run: bash tools/ci/linux_deps.sh
+
+      - name: Install macOS prerequisites
+        if: runner.os == 'macOS'
+        run: brew install ninja pkgconf
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # The binary cache is what keeps this from rebuilding every dependency from source on
+      # every push. Keyed on the manifest and the pinned vcpkg commit, so a dependency
+      # change invalidates it and nothing else does.
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: .cache/vcpkg-archives
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', '.gitmodules') }}
+          restore-keys: vcpkg-${{ matrix.triplet }}-
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        run: ./external/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: .\external\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # Excludes the "gpu" label: hosted runners have no GPU.
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+      - name: Run the sandbox
+        shell: bash
+        run: |
+          ./build/${{ matrix.preset }}/bin/atlas_sandbox --version
+          ./build/${{ matrix.preset }}/bin/atlas_sandbox --headless --iterations 100
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.preset }}
+          path: |
+            build/${{ matrix.preset }}/vcpkg-manifest-install.log
+            external/vcpkg/buildtrees/**/*.log
+          retention-days: 7
+          if-no-files-found: ignore
