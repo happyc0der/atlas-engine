@@ -22,7 +22,17 @@ ${SUDO} apt-get update -qq
 # clang 18 can never see std::expected no matter which libstdc++ is installed. Clang 19
 # reports 202002 and works. libstdc++ rather than libc++ keeps the standard-library ABI
 # consistent with the dependencies vcpkg builds with GCC.
+# autoconf, automake, libtool and autoconf-archive are vcpkg's prerequisites, not Atlas's.
+# Some ports build with autotools and vcpkg runs autoreconf on them; libxcrypt, which arrives
+# transitively on x64-linux, is one. Without these the failure is "building libxcrypt failed"
+# during configure, several layers below anything Atlas wrote. They are not needed on every
+# platform or every triplet, which is why this was invisible until x86_64 continuous
+# integration ran for the first time.
 ${SUDO} apt-get install -y --no-install-recommends \
+    autoconf \
+    autoconf-archive \
+    automake \
+    libtool \
     build-essential \
     ca-certificates \
     clang-19 \

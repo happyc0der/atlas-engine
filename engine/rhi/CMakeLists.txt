@@ -7,6 +7,7 @@
 # SDL_GPU with a native backend rewrites this directory and nothing above it.
 # See docs/adr/0002-rendering-backend.md.
 find_package(SDL3 CONFIG REQUIRED)
+atlas_define_sdl3_target()
 
 atlas_add_module(rhi
     SOURCES
@@ -27,7 +28,7 @@ atlas_add_module(rhi
         platform
         platform_internal
     PRIVATE_DEPS
-        SDL3::SDL3-static
+        atlas::sdl3
 )
 
 target_include_directories(atlas_rhi PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/internal/include)

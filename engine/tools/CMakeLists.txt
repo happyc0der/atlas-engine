@@ -7,6 +7,7 @@
 # platform backend, which would have required window-system types inside this module.
 find_package(imgui CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
+atlas_define_sdl3_target()
 
 atlas_add_module(tools
     SOURCES
@@ -22,5 +23,5 @@ atlas_add_module(tools
         scene
     PRIVATE_DEPS
         imgui::imgui
-        SDL3::SDL3-static
+        atlas::sdl3
 )

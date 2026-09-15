@@ -20,7 +20,7 @@ atlas_add_test(platform_keymap
     DEPENDS
         atlas::platform
     PRIVATE_DEPS
-        SDL3::SDL3-static
+        atlas::sdl3
     INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/../src
     LABELS
@@ -38,7 +38,7 @@ atlas_add_test(platform_lifetime
     DEPENDS
         atlas::platform
     PRIVATE_DEPS
-        SDL3::SDL3-static
+        atlas::sdl3
     INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/../src
     LABELS

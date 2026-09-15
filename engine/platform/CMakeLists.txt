@@ -7,6 +7,7 @@
 # header would fail to compile in the sandbox. That is the enforcement; the boundary script
 # is the backstop.
 find_package(SDL3 CONFIG REQUIRED)
+atlas_define_sdl3_target()
 atlas_assert_from_vcpkg(SDL3 "${SDL3_DIR}")
 
 atlas_add_module(platform
@@ -29,7 +30,7 @@ atlas_add_module(platform
     DEPENDS
         core
     PRIVATE_DEPS
-        SDL3::SDL3-static
+        atlas::sdl3
 )
 
 target_include_directories(atlas_platform PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/internal/include)
