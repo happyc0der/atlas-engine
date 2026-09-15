@@ -27,12 +27,15 @@ ${SUDO} apt-get update -qq
 # transitively on x64-linux, is one. Without these the failure is "building libxcrypt failed"
 # during configure, several layers below anything Atlas wrote. They are not needed on every
 # platform or every triplet, which is why this was invisible until x86_64 continuous
-# integration ran for the first time.
+# integration ran for the first time. libltdl-dev is the same story one layer down: libxcrypt
+# links against ltdl and vcpkg checks for its development headers before it will even
+# configure.
 ${SUDO} apt-get install -y --no-install-recommends \
     autoconf \
     autoconf-archive \
     automake \
     libtool \
+    libltdl-dev \
     build-essential \
     ca-certificates \
     clang-19 \
