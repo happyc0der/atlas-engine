@@ -291,20 +291,56 @@ widget becoming a second way in.
 
 ## Simulation contract
 
-Designed now, implemented in M6, parallelised in M8:
+Implemented in M6, parallelised in M8.
 
-- Systems have stable IDs and a deterministic order.
-- Each system declares its read set and write set at table granularity.
-- The compute phase may run concurrently and writes only to system-private buffers.
-- The commit phase applies staged mutations in system order, each in stable index order.
-- Reductions merge per-worker partials in worker-index order, so no result depends on
-  completion order.
-- Randomness comes from counter-based streams keyed by seed, stream name, tick, and
-  counter. There is no ambient global RNG.
-- Commands are stamped with target tick, source, and a monotonic sequence, and are
-  validated before they are applied.
-- A canonical state hash is computed per tick, with per-system sub-hashes so a divergence
-  can be localised.
+**A tick is four steps, always in this order.** Drain the commands stamped for this tick and
+apply them in `(source, sequence)` order. Compute, batch by batch. Commit, system by system in
+declared order. Hash the result.
+
+**Everything from outside enters through a command.** Input, a script, a network peer and a
+replay all take the same path. That is not tidiness: if anything else could reach state,
+recording commands would not be a recording of what happened, and a replay would not be a
+replay. Commands name the tick they apply to and are never applied on arrival, because arrival
+depends on frame rate, network and thread scheduling, and none of those may influence results.
+
+**Compute and commit are separated by `const`.** The compute phase receives a `const World`
+and writes only storage its own system owns; the commit phase receives a mutable one. The
+compiler enforces the split, so a system cannot write shared state while another reads it even
+by mistake. This is the single reason moving compute onto workers in M8 is a scheduling change
+rather than a redesign.
+
+**Batches are derived now and executed sequentially.** Systems that share no table in a
+conflicting way are grouped, following declared order so the grouping is reproducible. M6 runs
+one system at a time regardless. Deriving the batches anyway means M8 has nothing left to
+design, and a wrong access declaration fails today instead of becoming a data race later.
+
+**The kernel knows nothing about what a table holds.** A table is asked to hash itself and to
+write and read itself, and nothing more, so layouts stay the application's choice per measured
+query as ADR-0004 intends. Table identity is the hash of its name, so a save written by one
+build reads in another that registers its tables in a different order.
+
+**Ordering is imposed, never inherited.** Tables are kept sorted by identifier, commands are
+sorted by source and sequence, and systems run in declared order. Nothing observable depends
+on the order things happened to be created or arrive.
+
+**Randomness is counter-based.** A value is a pure function of seed, stream, tick and counter,
+with no generator carrying state between ticks and no ambient one. With a shared stateful
+generator, adding a single call anywhere shifts every later value everywhere, and a replay
+stops matching for a reason that has nothing to do with the change.
+
+**A canonical hash is computed each tick, with per-system sub-hashes.** The sub-hashes are what
+make a divergence attributable rather than merely detected: a bare state hash says only that
+something differs somewhere.
+
+**Snapshots carry presentation data to the renderer.** The renderer never reads authoritative
+state. After a tick the simulation publishes an immutable snapshot of what is worth drawing,
+and the renderer holds one for a whole frame, so what it draws is a single consistent moment.
+Latest wins with no queue, because a renderer that fell behind would be drawing history and
+the backlog would only grow.
+
+**Determinism does not come from the fixed timestep.** It comes from the command order, the
+system order, the commit order, and the numeric rules in [DETERMINISM.md](DETERMINISM.md). The
+tick loop only decides how many times to run.
 
 ## Error handling and failure
 

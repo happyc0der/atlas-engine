@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed, 2026-09-14. Becomes Accepted when M6 implements it.
+Accepted, 2026-09-15. M6 implemented the fixed-tick kernel, the command path, the two-phase
+system contract, and immutable snapshot publication.
+
+Proposed 2026-09-14; the condition was that M6 implement it, and it has. What the
+implementation confirmed and what it corrected is under Consequences.
 
 ## Context
 
@@ -77,6 +81,30 @@ needed. Rejected for v0.1, revisitable with trace evidence.
 - Interpolation requires keeping the previous snapshot as well as the current one.
 - Presentation-only state must be identified explicitly. Anything the renderer needs has to
   be projected into the snapshot, which is friction by design: it makes coupling visible.
+
+### What implementing it in M6 showed
+
+- **The two-phase split is enforced by the type system, not by discipline.** The compute phase
+  receives a `const World` and the commit phase a mutable one, so a system cannot write shared
+  state while others read it even by mistake. That was stronger than the ADR proposed and cost
+  nothing, and it is the single thing that makes moving compute onto workers in M8 a
+  scheduling change rather than a redesign.
+- **Batches are derived now and executed sequentially.** The ADR left this open. Deriving them
+  in M6, where nothing runs in parallel, means M8 has nothing left to design, and it catches a
+  wrong access declaration today instead of when it becomes a data race.
+- **The snapshot channel could not use the obvious primitive.** `std::atomic<std::shared_ptr>`
+  is the natural fit and is unavailable: the development platform's standard library does not
+  define `__cpp_lib_atomic_shared_ptr`, checked rather than assumed, and the deprecated
+  free-function overloads are removed in C++26. A mutex guards the pointer instead. It is held
+  for the length of a pointer copy, once per tick and once per frame, so the cost is not on any
+  path that could contend.
+- **Commands needed validation in two places, not one.** The ADR treated payload validation as
+  a single step. It happens on submission, while the caller still has the context that produced
+  the command, and again on application, because a load may have replaced the state the command
+  referred to in between.
+- **A late command is dropped and counted, not applied.** The ADR did not say. Applying one
+  would make the result depend on when it arrived, which is the thing the whole design avoids;
+  counting it keeps a late producer visible rather than silent.
 
 ## Rollback cost
 

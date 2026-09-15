@@ -14,8 +14,8 @@ Status legend: **done**, *in progress*, planned.
 | M3 | 2D camera and batching | M | **done** |
 | M4 | Asset pipeline | L | **done** |
 | M5 | Scene and serialization | M | **done** |
-| M6 | Simulation kernel | L | next |
-| M7 | Strategy Lab (engine v0.1) | L | planned |
+| M6 | Simulation kernel | L | **done** |
+| M7 | Strategy Lab (engine v0.1) | L | next |
 | M8 | Performance hardening and parallel simulation | L | planned |
 | M9 | Tooling and scripting decision | S–M | planned |
 
@@ -258,12 +258,50 @@ Scope is single-threaded. Slices: structure-of-arrays tables and read/write sets
 schedule and its validation; commands; counter-based RNG streams; canonical state hashing;
 replay; save and load; snapshot publication; the numeric policy ADR; the determinism suite.
 
-**Exit criteria**
+**Exit criteria — all met**
 - Fixed integer ticks, commands, stable scheduling, seeded RNG streams, state hashing,
   replay, save/load, and immutable render snapshots.
 - The same command log produces the same per-tick hashes across repeated runs, with the
   first divergent system reported on failure.
 - Worker-count invariance is explicitly deferred to M8 and documented as a known limit.
+
+A tick is four steps in a fixed order: drain and apply the commands stamped for it, compute,
+commit, hash. Compute receives a `const World` and commit a mutable one, so a system cannot
+write shared state while another reads it. The compiler enforces that rather than a rule
+doing it, and it is the single reason moving compute onto workers in M8 is a scheduling
+change instead of a redesign.
+
+Random numbers are counter-based, keyed by seed, stream, tick and counter. With one shared
+stateful generator, adding a call anywhere shifts every later value everywhere and a replay
+stops matching for a reason unrelated to the change. A test pins that property directly.
+
+Batches are derived and validated even though M6 runs everything sequentially, so M8 has
+nothing left to design and a wrong access declaration is caught now rather than becoming a
+data race later.
+
+The determinism suite tests the mechanism as well as the claim. It corrupts a recorded
+checkpoint and requires the playback to report the tick and name the first system whose
+writes differ; it alters a command and alters the seed and requires each to diverge, because
+a playback that ignored its own log would pass every other test.
+
+**Measured: the fixed golden scenario produces identical hashes on Apple Clang 21 with libc++
+and on Clang 19 with libstdc++.** Both are arm64. The comparison against x86_64 has not been
+made, because this project has no x86_64 machine and its continuous integration has never
+run. The numbers and that limit are in [DETERMINISM.md](DETERMINISM.md).
+
+Deferred with reasons rather than silently:
+
+- **The snapshot channel uses a mutex, not an atomic shared pointer.**
+  `std::atomic<std::shared_ptr<T>>` is the natural fit and is unavailable: the development
+  platform's standard library does not define `__cpp_lib_atomic_shared_ptr`, checked rather
+  than assumed, and the deprecated free-function overloads are removed in C++26. The lock is
+  held for the length of a pointer copy, once per tick and once per frame.
+- **No save migration code.** There is no second format version to migrate from, and writing
+  migration for an imagined change would be writing untested code. The version check is what
+  makes deferring it safe: a file this build cannot read is refused rather than misread.
+- **Worker-count invariance belongs to M8**, as planned. M6 proves single-threaded replay
+  determinism and ships the contract that M8 needs; doing both at once would double the
+  debugging surface.
 
 ## M7 — Strategy Lab — engine v0.1
 

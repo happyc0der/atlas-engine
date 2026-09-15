@@ -57,6 +57,9 @@ Result<TickReport> Kernel::step() {
                 continue;
             }
             ++report.commands_applied;
+            if (m_config.record_applied_commands) {
+                report.applied_commands.push_back(command);
+            }
         }
     }
 

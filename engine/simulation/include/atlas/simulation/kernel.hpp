@@ -54,6 +54,14 @@ struct TickReport {
     std::size_t commands_rejected = 0;
     /// One per system that writes anything, in schedule order.
     std::vector<SystemHash> system_hashes;
+
+    /// The commands that were applied, in the order they were applied.
+    ///
+    /// Populated only when `KernelConfig::record_applied_commands` is set, because copying
+    /// every payload each tick costs something a run that is not being recorded should not
+    /// pay. Rejected commands are not included: a recording is of what happened, and a
+    /// command that was refused did not happen.
+    std::vector<Command> applied_commands;
 };
 
 struct KernelConfig {
@@ -66,6 +74,12 @@ struct KernelConfig {
     /// cost is one hash per written table per tick. A run that has measured the cost and
     /// does not need attribution can turn it off.
     bool record_system_hashes = true;
+
+    /// Copy the applied commands into each tick's report, for recording a replay.
+    ///
+    /// Off by default. A run that is not being recorded should not pay to copy payloads it
+    /// will never look at.
+    bool record_applied_commands = false;
 };
 
 /// Advances a world through ticks.

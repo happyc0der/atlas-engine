@@ -122,7 +122,40 @@ Each is either eliminated by the rules above or explicitly out of authoritative 
 
 ## How determinism is tested
 
-From M6: replay the same command log several times in one process and across processes,
-comparing per-tick hashes. From M8: repeat across worker counts 1, 2, 4, and hardware
-concurrency minus one. Golden hashes for a small fixed scenario are also compared between
-macOS arm64 and Linux x86_64 in CI to measure, and document, cross-architecture behaviour.
+Replaying the same command log reproduces the same per-tick hashes, checked repeatedly in one
+process and across a write to bytes and a read back. A recording that is altered must be
+caught: the suite corrupts a checkpoint and requires the playback to report the tick and name
+the first system whose writes differ. It also changes a command payload and changes the seed,
+and requires each to diverge, because a playback that silently ignored its own log would pass
+every other test.
+
+Submission order is tested directly: the same commands fed in the reverse order must produce
+the same state, since they are ordered by source and sequence rather than by arrival.
+
+Save, load and replay are checked against each other rather than only on their own. A run
+saved midway and resumed from the file must reach the hash the uninterrupted run reached.
+
+From M8: the same, repeated across worker counts 1, 2, 4, and hardware concurrency minus one.
+
+## Measured, as of 2026-09-15
+
+A fixed integer-only scenario of 500 ticks over 64 rows with three systems and a random
+stream produces these values:
+
+| Quantity | Value |
+|---|---|
+| Final state hash | `0xCECE73AEEC22FBCA` |
+| Hash over all 500 tick hashes | `0xD71CEC7C1078DD46` |
+
+**These values are identical on two toolchains.** Apple Clang 21 with libc++ on macOS arm64,
+and Clang 19 with libstdc++ on Linux arm64 in a container. The test carrying them is compiled
+and run on both.
+
+That is a measurement of compiler and standard-library independence, and it is worth
+separating from what it is not. **Both are arm64.** The cross-architecture comparison against
+x86_64 has not been made, because this project has no x86_64 machine and its continuous
+integration has never run. Until it does, nothing here says anything about x86_64, and the
+scenario being integer-only is a reason to expect agreement rather than evidence of it.
+
+The scenario deliberately uses no floating point. A scenario that did would be the interesting
+case, and there is not one yet.

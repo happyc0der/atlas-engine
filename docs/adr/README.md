@@ -12,10 +12,11 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 |---|---|---|
 | [0001](0001-language-build-platform.md) | Language, build system, and target platforms | Accepted |
 | [0002](0002-rendering-backend.md) | Rendering backend: SDL_GPU behind an engine-owned boundary | Accepted |
-| [0003](0003-simulation-render-separation.md) | Simulation and render separation | Proposed |
+| [0003](0003-simulation-render-separation.md) | Simulation and render separation | Accepted |
 | [0004](0004-scene-ecs-vs-simulation-storage.md) | Scene ECS versus specialised simulation storage | Accepted |
 | [0005](0005-error-and-ownership-model.md) | Error handling and ownership model | Accepted |
 | [0006](0006-shader-toolchain.md) | Shader toolchain | Accepted |
 | [0007](0007-scene-file-format.md) | Scene file format | Accepted |
+| [0008](0008-numeric-and-save-policy.md) | Numeric policy and the simulation save format | Accepted |
 
-Planned: 0008 numeric and determinism policy (M6), 0009 scripting decision (M9).
+Planned: 0009 scripting decision (M9).

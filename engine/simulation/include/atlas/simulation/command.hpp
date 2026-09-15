@@ -136,6 +136,12 @@ class CommandQueue {
     [[nodiscard]] std::uint64_t next_sequence(SourceId source) const noexcept;
     void set_next_sequence(SourceId source, std::uint64_t sequence);
 
+    /// Every source that has issued a command, in identifier order.
+    ///
+    /// Ordered so that a save file is canonical: iterating whatever the container happened
+    /// to hold would make the bytes depend on insertion order.
+    [[nodiscard]] std::vector<SourceId> sources() const;
+
     void clear();
 
   private:

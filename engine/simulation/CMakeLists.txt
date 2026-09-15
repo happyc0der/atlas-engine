@@ -10,6 +10,8 @@ atlas_add_module(simulation
         src/save_stream.cpp
         src/command.cpp
         src/kernel.cpp
+        src/replay.cpp
+        src/save.cpp
         src/schedule.cpp
         src/world.cpp
     HEADERS
@@ -19,6 +21,9 @@ atlas_add_module(simulation
         include/atlas/simulation/kernel.hpp
         include/atlas/simulation/rng.hpp
         include/atlas/simulation/schedule.hpp
+        include/atlas/simulation/replay.hpp
+        include/atlas/simulation/save.hpp
+        include/atlas/simulation/snapshot.hpp
         include/atlas/simulation/table.hpp
         include/atlas/simulation/world.hpp
     DEPENDS

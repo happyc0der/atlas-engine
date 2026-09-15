@@ -62,6 +62,16 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   (M9). Panels take it by const reference so the compiler enforces that.
 - `simulation` contains tick scheduling, commands, hashing, and system contracts.
   It contains no game rules.
+- A tick is always: drain and apply commands, compute, commit, hash. Nothing reaches
+  simulation state except through a command.
+- Compute takes a `const World` and commit a mutable one. A system writes only storage it
+  owns during compute. Never widen that.
+- Authoritative state is integer by default. Floating point in it needs a recorded reason
+  and a passing golden-hash comparison (ADR-0008).
+- Random numbers come from a named stream keyed by seed, stream, tick and counter. No
+  ambient generator, no state carried between ticks.
+- The golden-scenario hashes are written down. If a change makes that test fail, decide
+  whether the change was meant to alter simulation results, and say so.
 - Applications are composition roots. Reusable logic belongs in a module.
 - Cyclic module dependencies are forbidden.
 

@@ -180,6 +180,16 @@ std::uint64_t CommandQueue::next_sequence(SourceId source) const noexcept {
     return at == m_impl->next_sequence.end() ? 0 : at->second;
 }
 
+std::vector<SourceId> CommandQueue::sources() const {
+    std::vector<SourceId> out;
+    out.reserve(m_impl->next_sequence.size());
+    // The map is ordered, so this comes out sorted without sorting.
+    for (const auto& [source, sequence] : m_impl->next_sequence) {
+        out.push_back(source);
+    }
+    return out;
+}
+
 void CommandQueue::set_next_sequence(SourceId source, std::uint64_t sequence) {
     m_impl->next_sequence[source] = sequence;
 }
