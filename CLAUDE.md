@@ -129,6 +129,12 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   constants `k`, macros `ATLAS_UPPER_SNAKE`.
 - Every first-party file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`.
 
+## Deferred work
+
+Anything consciously not built goes in `docs/DEFERRED.md`, with the reason and what would
+have to become true for it to be worth doing. A reason recorded only in a commit message is
+a reason nobody can find.
+
 ## Before adding anything
 
 - State the concrete problem an abstraction solves before writing it. Prefer plain code

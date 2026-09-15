@@ -248,9 +248,9 @@ unavailable on Metal, which is the backend this project develops on. The classif
 function over the library's message and is tested in both directions, because a false positive
 latches and takes the rest of the run down with it.
 
-Still open from that audit, in rough order of value: a software-rasteriser smoke job, so the
-renderer is verified somewhere other than this one machine; the Stop hook that was specified
-and never written; and the Windows formatting script.
+Still open from that audit: a software-rasteriser smoke job, the Stop hook that was specified
+and never written, and the Windows formatting script. They are tracked with everything else
+deferred in [DEFERRED.md](DEFERRED.md).
 
 ## M6 — Simulation kernel
 
@@ -339,18 +339,18 @@ usability; the scripting ADR.
 
 ## Risks and deferred work
 
-Top risks, with mitigations and the milestone where each bites, are tracked in the Gate 0
-plan and summarised here:
+Everything consciously not built is listed, with its reason and what would change the
+decision, in [DEFERRED.md](DEFERRED.md). Top risks, as of 2026-09-15:
 
-- Shader toolchain on macOS has no prebuilt DXC; a from-source build or Slang is needed (M2).
+- **Nothing has ever been verified anywhere but this machine.** There is no git remote, so
+  the three continuous-integration workflows have never run. Windows has never been compiled
+  by anything. This is the largest risk in the project and it grows with every milestone.
+- **The renderer is verified on one graphics processor.** The planned software-rasteriser
+  smoke job does not exist, so there is no automatic coverage on any other.
 - Cross-architecture float divergence between arm64 and x86_64 (M6); mitigated by
-  integer-first authoritative state and `-ffp-contract=off` from M0.
-- No GPU on hosted CI runners; mitigated by a software-Vulkan lane and local verification (M2+).
-- No local Windows machine; MSVC-only breakage is found in CI. The owner decides by M3
-  whether to acquire Windows hardware or a VM.
+  integer-first authoritative state and `-ffp-contract=off` from M0. The arm64-to-arm64
+  comparison across two toolchains has been made and agrees; x86_64 remains unmeasured.
+- No local Windows machine. The plan asked for a decision by M3 on acquiring hardware or a
+  virtual machine, and M3 passed without the question being put. It is still open.
 - Snapshot copy cost growth (M6–M8); mitigated by presentation-only snapshots and
   measurement before optimisation.
-
-Deferred deliberately: render graph, custom allocator, custom ECS, work-stealing
-scheduler, networking, physics, animation, plugin ABI, multi-viewport ImGui, filesystem
-watchers, device-loss recovery, `.metallib` precompilation.
