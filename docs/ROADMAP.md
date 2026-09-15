@@ -299,10 +299,12 @@ checkpoint and requires the playback to report the tick and name the first syste
 writes differ; it alters a command and alters the seed and requires each to diverge, because
 a playback that ignored its own log would pass every other test.
 
-**Measured: the fixed golden scenario produces identical hashes on Apple Clang 21 with libc++
-and on Clang 19 with libstdc++.** Both are arm64. The comparison against x86_64 has not been
-made, because this project has no x86_64 machine and its continuous integration has never
-run. The numbers and that limit are in [DETERMINISM.md](DETERMINISM.md).
+**Measured: the fixed golden scenario produces identical hashes on macOS arm64, Linux arm64
+and Linux x86_64**, across two compilers and two standard libraries. The arm64 and x86_64
+agreement is the pair the numeric policy was written for, since one contracts multiply-add by
+default and the other does not. Windows and MSVC remain unmeasured, and the scenario is
+integer-only on purpose, so this says nothing yet about floating point in authoritative state.
+The numbers and those limits are in [DETERMINISM.md](DETERMINISM.md).
 
 Deferred with reasons rather than silently:
 

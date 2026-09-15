@@ -147,15 +147,33 @@ stream produces these values:
 | Final state hash | `0xCECE73AEEC22FBCA` |
 | Hash over all 500 tick hashes | `0xD71CEC7C1078DD46` |
 
-**These values are identical on two toolchains.** Apple Clang 21 with libc++ on macOS arm64,
-and Clang 19 with libstdc++ on Linux arm64 in a container. The test carrying them is compiled
-and run on both.
+**These values are identical across two architectures, two compilers and two standard
+libraries:**
 
-That is a measurement of compiler and standard-library independence, and it is worth
-separating from what it is not. **Both are arm64.** The cross-architecture comparison against
-x86_64 has not been made, because this project has no x86_64 machine and its continuous
-integration has never run. Until it does, nothing here says anything about x86_64, and the
-scenario being integer-only is a reason to expect agreement rather than evidence of it.
+| Platform | Compiler | Standard library | Where |
+|---|---|---|---|
+| macOS arm64 | Apple Clang 21 | libc++ | development machine |
+| Linux arm64 | Clang 19 | libstdc++ | local container |
+| Linux x86_64 | Clang 19 | libstdc++ | continuous integration |
 
-The scenario deliberately uses no floating point. A scenario that did would be the interesting
-case, and there is not one yet.
+The test carrying the values is compiled and run in all three. The x86_64 result arrived on
+2026-09-15, when continuous integration ran for the first time; before that this section said
+the comparison had not been made, because it had not.
+
+**arm64 and x86_64 agreeing is the result worth having.** It is the pair the numeric policy
+was written for: arm64 contracts multiply-add into a fused instruction by default and x86_64
+without those instructions does not, which is why `-ffp-contract=off` has been set since M0.
+
+What this does **not** establish:
+
+- **Windows and MSVC are unmeasured.** A different compiler with a different standard library
+  and a different optimiser. Nothing here predicts it.
+- **The scenario uses no floating point.** It is integer-only on purpose, so agreement across
+  architectures is expected rather than surprising. A scenario with floating point in
+  authoritative state would be the interesting case, and there is not one, because
+  [ADR-0008](adr/0008-numeric-and-save-policy.md) requires a recorded justification before
+  there can be.
+
+So the honest reading is that the ordering rules, the hashing, and the random mixer are
+architecture-independent, and that the hard question about floating point has not been asked
+yet because nothing has needed to ask it.
