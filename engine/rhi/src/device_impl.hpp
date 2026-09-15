@@ -79,6 +79,16 @@ struct Frame::Impl {
     Device::Impl* device = nullptr;
     SDL_GPUCommandBuffer* commands = nullptr;
     SDL_GPUTexture* swapchain = nullptr;
+
+    /// Where this frame draws when a capture was asked for.
+    ///
+    /// Null on an ordinary frame, in which case drawing goes straight to the swapchain. On a
+    /// capture frame it is an offscreen colour texture, because the swapchain image cannot be
+    /// read: Metal creates it framebuffer-only, so copying from it or sampling it is invalid.
+    /// Drawing offscreen and blitting the result to the swapchain gives a frame that is both
+    /// visible and readable.
+    SDL_GPUTexture* capture_target = nullptr;
+
     Extent2D extent;
     bool submitted = false;
     bool pass_open = false;
@@ -95,12 +105,12 @@ namespace detail {
 /// Build an error from `what` plus whatever SDL last reported, clearing SDL's slot.
 [[nodiscard]] Error gpu_error(ErrorCode code, std::string_view what);
 
-/// Copy the swapchain image back to memory and store it on the device.
+/// Copy a readable colour texture back to memory and store it on the device.
 ///
 /// Submits `commands` and waits for it, because the pixels cannot be read before the copy
 /// has finished. The caller must therefore not submit the command buffer itself.
-[[nodiscard]] Status capture_swapchain(Device::Impl& device, SDL_GPUCommandBuffer* commands,
-                                       SDL_GPUTexture* swapchain, Extent2D extent);
+[[nodiscard]] Status capture_texture(Device::Impl& device, SDL_GPUCommandBuffer* commands,
+                                     SDL_GPUTexture* swapchain, Extent2D extent);
 
 }  // namespace detail
 }  // namespace atlas::rhi

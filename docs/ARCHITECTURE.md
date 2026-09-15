@@ -15,9 +15,9 @@ graph TD
   rhi[atlas::rhi<br/>device, resources, passes]
   renderer[atlas::renderer<br/>camera, batching, ID target]
   assets[atlas::assets<br/>VFS, asset IDs, import, hot reload]
-  scene[atlas::scene<br/>presentation entities, transforms]
+  scene[atlas::scene<br/>presentation entities, transforms,<br/>hierarchy, serialization]
   simulation[atlas::simulation<br/>ticks, commands, systems, hashing]
-  runtime[atlas::runtime<br/>M5: composition, main loop]
+  runtime[atlas::runtime<br/>deferred: composition, main loop]
   tools[atlas::tools<br/>editor shell, panels]
   apps[apps: sandbox, editor, strategy_lab]
 
@@ -32,6 +32,8 @@ graph TD
   assets --> platform
   scene --> core
   scene --> math
+  scene --> assets
+  scene --> rhi
   simulation --> core
   simulation --> tasks
   runtime --> platform
@@ -40,13 +42,25 @@ graph TD
   runtime --> assets
   runtime --> scene
   runtime --> simulation
-  tools --> runtime
-  apps --> runtime
+  tools --> rhi
+  tools --> renderer
+  tools --> scene
+  apps --> renderer
+  apps --> assets
+  apps --> scene
   apps --> tools
 ```
 
+`atlas::runtime` does not exist yet. The plan created it in M5 on the assumption that a
+second application would need the same composition; scene inspection went into the existing
+overlay instead, so there is still one composition root in `apps/sandbox/main.cpp` and a
+`runtime` module would be an abstraction with a single call site. Until it exists, `tools`
+and `apps` depend on the engine modules directly, which is what the graph above shows.
+
 Third-party libraries are private to exactly one module: SDL3 to `platform` and `rhi`,
-EnTT to `scene`, Dear ImGui to `tools`, Tracy to `core` behind compiled-out macros.
+EnTT and nlohmann-json to `scene`, Dear ImGui to `tools`, Tracy to `core` behind
+compiled-out macros. EnTT is permitted in `atlas/scene` headers by ADR-0004 and does not
+appear in any of them.
 Because static-library `PRIVATE` dependencies propagate as `$<LINK_ONLY:>`, a public
 header that includes a third-party header fails to compile in an application. That is the
 primary enforcement; the script is the backstop.
@@ -219,6 +233,41 @@ distinct from `Ready`.
 A missing or broken asset is recorded and resolves to a fallback rather than stopping the
 engine. An engine that halts because one texture is corrupt is much harder to work on than
 one that draws a magenta square and says why.
+
+## Scene
+
+The scene is a tree of presentation entities: names, transforms, parentage, sprites, and
+cameras. It is not the grand-strategy database, and nothing in it should acquire a field
+because a future game might want one. Provinces, populations and armies live in
+structure-of-arrays tables chosen from measured query patterns, for the reasons in
+[ADR-0004](adr/0004-scene-ecs-vs-simulation-storage.md).
+
+**Identity is Atlas's, not the library's.** Callers refer to entities by `StableId`. The
+entity library's own handle is recycled as entities come and go and means nothing outside one
+run, so a file that recorded one would load without complaint and refer to different
+entities. `Scene` keeps the mapping and never lets the library's handle escape.
+
+**Everything observable is ordered by identifier.** Iteration, draw order, sibling lists and
+the saved file are all sorted on the way out. The entity library stores components in
+whatever order suits its compaction, and inheriting that would make what overlaps what, and
+what a file looks like, depend on the order things happened to be created.
+
+**World transforms are derived and recomputed, never authored.** `update_transforms` walks
+parents before children once per batch of changes rather than on each change, because
+composing a child needs its parent to be current. Depth is bounded, and a cycle is refused at
+the moment of reparenting rather than discovered when the walk fails to terminate.
+
+**Destroying an entity destroys its children.** A child whose parent is gone has a transform
+relative to nothing, and leaving that state reachable would mean every reader has to handle
+it.
+
+Serialization is canonical, versioned, and treats its input as hostile; the format and the
+reasoning behind it are in [ADR-0007](adr/0007-scene-file-format.md).
+
+The scene is inspected, not edited. The overlay's panel takes it by const reference, so the
+compiler enforces that rather than discipline. Editing arrives with the command and undo
+infrastructure in M9, so that every change goes through one validated path instead of each
+widget becoming a second way in.
 
 ## Simulation contract
 

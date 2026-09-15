@@ -52,6 +52,16 @@ class AssetId {
         return from(path.text(), type);
     }
 
+    /// Rebuild an identifier from a stored value.
+    ///
+    /// For reading a file that recorded one. There is deliberately no validation: a hash
+    /// cannot be checked without the path that produced it, so an identifier read from a
+    /// file either matches an asset this run knows about or resolves to nothing, and
+    /// resolving to nothing is already handled by the fallback.
+    [[nodiscard]] static constexpr AssetId from_raw(std::uint64_t value, AssetType type) noexcept {
+        return AssetId{value, type};
+    }
+
     [[nodiscard]] constexpr bool valid() const noexcept { return m_value != 0; }
 
     [[nodiscard]] constexpr std::uint64_t value() const noexcept { return m_value; }

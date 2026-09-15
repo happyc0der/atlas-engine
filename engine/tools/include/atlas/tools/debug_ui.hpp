@@ -13,9 +13,11 @@
 #include <atlas/core/result.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/rhi/device.hpp>
+#include <atlas/scene/scene.hpp>
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -60,6 +62,31 @@ class DebugUi {
 
     /// A panel of label and value rows.
     void stats_panel(std::string_view title, std::span<const Stat> stats);
+
+    /// A read-only view of a scene: its tree on the left, the selected entity's components
+    /// on the right.
+    ///
+    /// Read-only on purpose, and not as a temporary limitation. An editing panel needs the
+    /// command and undo infrastructure behind it, or every widget becomes a second path
+    /// into the scene that bypasses the validation `Scene` performs. Inspection is useful
+    /// now and costs nothing to make correct, so it arrives first; mutation arrives with
+    /// the infrastructure that makes it safe. The scene is taken by const reference so this
+    /// is enforced by the compiler rather than by intent.
+    ///
+    /// Selection is the panel's own state, not the scene's, and is remembered across frames.
+    /// A selected entity that has since been destroyed is dropped silently.
+    void scene_panel(std::string_view title, const scene::Scene& scene);
+
+    /// The entity currently selected in the scene panel, if any.
+    [[nodiscard]] std::optional<scene::StableId> selected_entity() const noexcept;
+
+    /// Select an entity from outside the panel, or clear the selection with `None`.
+    ///
+    /// Selection is a property of the view, so something other than a click may set it: a
+    /// click in the viewport, a search, or a command line asking for a particular entity.
+    /// Setting it does not check that the entity exists; the panel drops a selection that has
+    /// gone away on the next frame it draws.
+    void select_entity(scene::StableId id) noexcept;
 
     /// Proof that an overlay frame was prepared and is ready to be drawn.
     ///

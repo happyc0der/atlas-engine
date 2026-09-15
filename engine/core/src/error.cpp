@@ -20,6 +20,7 @@ std::string_view to_string(ErrorCode code) noexcept {
     case ErrorCode::PermissionDenied: return "PermissionDenied";
     case ErrorCode::Cancelled: return "Cancelled";
     case ErrorCode::Internal: return "Internal";
+    case ErrorCode::IoFailure: return "IoFailure";
 
     case ErrorCode::PlatformInitFailed: return "PlatformInitFailed";
     case ErrorCode::WindowCreationFailed: return "WindowCreationFailed";

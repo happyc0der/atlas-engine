@@ -51,6 +51,14 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   `atlas::platform_internal` target. Never in `include/`.
 - `renderer` reads immutable snapshots; it never mutates simulation or scene state.
 - `scene` is presentation only. It is not the grand-strategy database.
+- Entities are referred to by `StableId`. The entity library's handle is never stored,
+  serialized, or exposed: it is recycled and means nothing outside one run.
+- Anything observable from `scene` is ordered by stable identifier, not by the entity
+  library's storage order: iteration, draw order, sibling lists, and the saved file.
+- Saved files name and version themselves, refuse a version they do not know, and are
+  treated as hostile input. A failed load changes nothing.
+- The scene is inspected, not edited, until the command and undo infrastructure exists
+  (M9). Panels take it by const reference so the compiler enforces that.
 - `simulation` contains tick scheduling, commands, hashing, and system contracts.
   It contains no game rules.
 - Applications are composition roots. Reusable logic belongs in a module.

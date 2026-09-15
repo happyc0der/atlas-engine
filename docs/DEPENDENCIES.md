@@ -28,7 +28,8 @@ distribution. All current dependencies are permissive and therefore compatible.
 | SPIRV-Cross | Translates SPIR-V to Metal Shading Language | 1.4.350.1 (vcpkg) / 1.4.357.0 (Homebrew) | Apache-2.0 | Yes | Build-time tool only | M2 |
 | stb | Image decoding (`stb_image`) | 2024-07-29, port-version 1 | MIT / Unlicense | Yes | Private to the assets importer | M4 |
 | Dear ImGui | Debug overlay | 1.92.8, features `docking-experimental`, `sdl3-binding`, `sdlgpu3-binding` | MIT | Yes | Private to `tools` | M3 |
-| EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004 | M5 |
+| EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004; in practice private to `scene/src` | M5 |
+| nlohmann-json | Reading and writing the scene file | 3.12.0, port-version 2 | MIT | Yes | Private to `scene/src`; no JSON type appears in any Atlas header | M5 |
 
 Dependencies are added in the milestone that first needs them, never in advance.
 
@@ -104,6 +105,7 @@ order fails to compile rather than aborting at run time.
 | Tracy | Another profiler | Remapping the macros in `core/profile.hpp` |
 | Catch2 | Another test framework | Mechanical test rewrite |
 | stb_image | libpng plus libjpeg-turbo | Rewriting one importer |
+| nlohmann-json | Another JSON library, or a bespoke format | Rewriting `scene/src/serialization.cpp`; no caller changes |
 
 ## Update policy
 
@@ -115,7 +117,14 @@ order fails to compile rather than aborting at run time.
 
 ## Considered and not adopted
 
-glm, fmt, spdlog, nlohmann-json, and xxhash are all available and are deliberately not
-used yet: logging and formatting are served by `std::format`, hashing by a first-party
-canonical hash whose algorithm identity is versioned, and math by a small first-party
-header when M3 needs it. Each would be adopted only with a recorded need.
+glm, fmt, spdlog, and xxhash are all available and are deliberately not used: logging and
+formatting are served by `std::format`, hashing by a first-party canonical hash whose
+algorithm identity is versioned, and math by a small first-party header. Each would be
+adopted only with a recorded need.
+
+nlohmann-json was on this list until M5. The recorded need is the scene file format
+([ADR-0007](adr/0007-scene-file-format.md)): the file is untrusted input, and a hand-written
+parser for untrusted input is the kind of code this project should not be writing when a
+hardened one is a dependency away. It is used through `ordered_json`, whose key order is the
+writer's rather than a hash's, and through the non-throwing parse overload, because
+exceptions do not cross module boundaries here.

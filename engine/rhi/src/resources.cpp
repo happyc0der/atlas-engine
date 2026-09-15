@@ -396,9 +396,9 @@ std::optional<Device::Capture> Device::take_capture() noexcept {
 
 namespace detail {
 
-Status capture_swapchain(Device::Impl& device, SDL_GPUCommandBuffer* commands,
-                         SDL_GPUTexture* swapchain, Extent2D extent) {
-    ATLAS_ZONE_NAMED("capture swapchain");
+Status capture_texture(Device::Impl& device, SDL_GPUCommandBuffer* commands, SDL_GPUTexture* source,
+                       Extent2D extent) {
+    ATLAS_ZONE_NAMED("capture texture");
 
     const std::uint32_t pixel_size = byte_size(device.swapchain_format);
     if (pixel_size == 0 || extent.width == 0 || extent.height == 0) {
@@ -421,7 +421,7 @@ Status capture_swapchain(Device::Impl& device, SDL_GPUCommandBuffer* commands,
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
 
     SDL_GPUTextureRegion region{};
-    region.texture = swapchain;
+    region.texture = source;
     region.w = extent.width;
     region.h = extent.height;
     region.d = 1;

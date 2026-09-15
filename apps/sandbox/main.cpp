@@ -19,10 +19,12 @@
 #include <atlas/platform/platform.hpp>
 #include <atlas/renderer/quad_batch.hpp>
 #include <atlas/rhi/device.hpp>
+#include <atlas/scene/scene.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
 #include <atlas/tools/debug_ui.hpp>
 
 #include "scene.hpp"
+#include "scene_demo.hpp"
 
 #include <algorithm>
 #include <array>
@@ -76,6 +78,9 @@ struct Options {
     bool hot_reload = false;
     std::uint32_t grid = 100;
     std::string_view assets_dir = "assets/source";
+    bool scene_graph = false;
+    std::string_view scene_file = "build/sandbox-scene.json";
+    std::uint64_t inspect = 0;  ///< 0 means no entity is selected to begin with.
 };
 
 [[nodiscard]] atlas::Result<atlas::log::Severity> parse_severity(std::string_view name) {
@@ -125,6 +130,11 @@ Options:
   --screenshot PATH      Write the last rendered frame to PATH as a PPM image, then exit.
   --no-render            Open a window but create no graphics device.
   --grid N               Draw an N by N field of quads. Default: 100, so ten thousand.
+  --scene                Draw a small scene graph instead of the quad field. The scene is
+                         built, saved, loaded back, and drawn from the loaded copy.
+  --scene-file PATH      Where --scene writes and reads its scene.
+                         Default: build/sandbox-scene.json.
+  --inspect ID           Start with the given entity selected in the scene panel.
   --no-overlay           Do not create the debug overlay.
   --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
   --hot-reload           Re-read assets whose files change while running.
@@ -176,6 +186,9 @@ class LogSession {
     options.no_render = args.has("no-render");
     options.no_overlay = args.has("no-overlay");
     options.hot_reload = args.has("hot-reload");
+    options.scene_graph = args.has("scene");
+    options.scene_file = args.value_or("scene-file", std::string_view{"build/sandbox-scene.json"});
+    options.inspect = args.value_or("inspect", std::uint64_t{0}).value_or(0);
     options.assets_dir = args.value_or("assets-dir", std::string_view{"assets/source"});
 
     const auto grid = args.value_or("grid", std::uint64_t{100});
@@ -416,6 +429,7 @@ void step_simulation(atlas::Tick tick) {
     // --no-render deliberately skips them to exercise the window path on its own.
     std::optional<atlas::rhi::Device> device;
     std::optional<atlas::sandbox::DemoScene> scene;
+    std::optional<atlas::sandbox::SceneDemo> scene_demo;
     std::optional<atlas::tools::DebugUi> overlay;
 
     if (!options->headless && !options->no_render && window.valid()) {
@@ -426,15 +440,28 @@ void step_simulation(atlas::Tick tick) {
         }
         device = std::move(*created);
 
-        auto demo = atlas::sandbox::DemoScene::create(*device, *registry,
-                                                      {.grid_width = options->grid,
-                                                       .grid_height = options->grid,
-                                                       .shader_directory = options->shader_dir});
-        if (!demo) {
-            return std::unexpected(std::move(demo).error().context("building the demo scene"));
+        if (options->scene_graph) {
+            auto demo = atlas::sandbox::SceneDemo::create(
+                *device, *registry,
+                {.shader_directory = options->shader_dir,
+                 .save_path = std::filesystem::path{options->scene_file}});
+            if (!demo) {
+                return std::unexpected(std::move(demo).error().context("building the scene demo"));
+            }
+            scene_demo = std::move(*demo);
+            scene_demo->resize(window.pixel_size().width, window.pixel_size().height);
+        } else {
+            auto demo =
+                atlas::sandbox::DemoScene::create(*device, *registry,
+                                                  {.grid_width = options->grid,
+                                                   .grid_height = options->grid,
+                                                   .shader_directory = options->shader_dir});
+            if (!demo) {
+                return std::unexpected(std::move(demo).error().context("building the demo scene"));
+            }
+            scene = std::move(*demo);
+            scene->resize(window.pixel_size().width, window.pixel_size().height);
         }
-        scene = std::move(*demo);
-        scene->resize(window.pixel_size().width, window.pixel_size().height);
 
         if (!options->no_overlay) {
             auto ui = atlas::tools::DebugUi::create(*device, window);
@@ -444,6 +471,9 @@ void step_simulation(atlas::Tick tick) {
                 ATLAS_LOG_WARN(kApp, "the debug overlay is unavailable: {}", ui.error());
             } else {
                 overlay = std::move(*ui);
+                if (options->inspect != 0) {
+                    overlay->select_entity(atlas::scene::StableId{options->inspect});
+                }
             }
         }
     }
@@ -503,18 +533,24 @@ void step_simulation(atlas::Tick tick) {
         }
 
         // The scene is not updated while the overlay has the pointer, for the same reason.
-        if (scene.has_value() && !(overlay.has_value() && overlay->wants_mouse())) {
-            scene->update(platform->input(), events);
+        if (!(overlay.has_value() && overlay->wants_mouse())) {
+            if (scene.has_value()) {
+                scene->update(platform->input(), events);
+            }
+            if (scene_demo.has_value()) {
+                scene_demo->update(platform->input(), events);
+            }
         }
 
         // Bring finished asset work in, then turn anything decoded into graphics resources.
         // Both are main-thread steps: workers produce bytes and stop there.
         registry->pump();
-        if (scene.has_value()) {
-            const std::size_t finalised = scene->finalise_assets(*registry);
-            if (finalised > 0) {
-                ATLAS_LOG_INFO(kApp, "finalised {} asset(s)", finalised);
-            }
+        const std::size_t finalised = scene.has_value() ? scene->finalise_assets(*registry)
+                                      : scene_demo.has_value()
+                                          ? scene_demo->finalise_assets(*registry)
+                                          : 0;
+        if (finalised > 0) {
+            ATLAS_LOG_INFO(kApp, "finalised {} asset(s)", finalised);
         }
 
         // Polling rather than watching the filesystem: three platforms have three different
@@ -534,7 +570,11 @@ void step_simulation(atlas::Tick tick) {
         const auto tick_start = std::chrono::steady_clock::now();
         const auto plan = accumulator->advance(frame_ns);
         for (std::uint32_t i = 0; i < plan.ticks_to_run; ++i) {
-            step_simulation(accumulator->current_tick() + i);
+            const atlas::Tick tick = accumulator->current_tick() + i;
+            step_simulation(tick);
+            if (scene_demo.has_value()) {
+                scene_demo->tick(tick, options->ticks_per_second);
+            }
         }
         accumulator->commit(plan.ticks_to_run);
         const auto tick_ns =
@@ -581,22 +621,34 @@ void step_simulation(atlas::Tick tick) {
                         overlay_values[2] =
                             scene.has_value() ? std::format("{} of {}", scene->visible_last_frame(),
                                                             scene->quad_count())
-                                              : std::string{"-"};
+                            : scene_demo.has_value() ? std::format("{} of {}", last_batch.quads,
+                                                                   scene_demo->scene().size())
+                                                     : std::string{"-"};
                         overlay_values[3] = std::format("{}", last_batch.draw_calls);
                         overlay_values[4] = std::format("{} KiB", last_batch.bytes_uploaded / 1024);
                         overlay_values[5] = scene.has_value()
                                                 ? std::format("{:.2f}", scene->camera().zoom())
+                                            : scene_demo.has_value()
+                                                ? std::format("{:.2f}", scene_demo->camera().zoom())
                                                 : std::string{"-"};
 
                         const std::array<atlas::tools::Stat, 6> stats{{
                             {.label = "frame", .value = overlay_values[0]},
                             {.label = "tick", .value = overlay_values[1]},
-                            {.label = "quads visible", .value = overlay_values[2]},
+                            {.label = scene_demo.has_value() ? "sprites drawn" : "quads visible",
+                             .value = overlay_values[2]},
                             {.label = "draw calls", .value = overlay_values[3]},
                             {.label = "uploaded", .value = overlay_values[4]},
                             {.label = "zoom", .value = overlay_values[5]},
                         }};
                         overlay->stats_panel("Atlas", stats);
+
+                        // Read-only: the panel takes the scene by const reference, so no
+                        // widget can reach past the validation Scene performs.
+                        if (scene_demo.has_value()) {
+                            overlay->scene_panel("Scene", scene_demo->scene());
+                        }
+
                         prepared_overlay = overlay->end_frame(*frame);
                     }
 
@@ -610,6 +662,9 @@ void step_simulation(atlas::Tick tick) {
                     } else {
                         if (scene.has_value()) {
                             last_batch = scene->draw(*pass);
+                        }
+                        if (scene_demo.has_value()) {
+                            last_batch = scene_demo->draw(*pass);
                         }
                         if (overlay.has_value()) {
                             overlay->draw(*pass, prepared_overlay);
@@ -682,8 +737,12 @@ void step_simulation(atlas::Tick tick) {
     // Both the overlay and the scene hold resources the device owns, so they go first.
     // Destroying them in the wrong order is the kind of mistake that only shows up in the
     // leak report.
+    // Order matters and is explicit rather than left to scope: every one of these holds
+    // graphics resources the device owns, and the device reports anything still live when it
+    // shuts down. Forgetting one here is caught by that report, not by a crash.
     overlay.reset();
     scene.reset();
+    scene_demo.reset();
     device.reset();
 
     ATLAS_LOG_INFO(kApp, "loop finished at tick {}", accumulator->current_tick());

@@ -33,6 +33,9 @@ enum class ErrorCode : std::uint32_t {
     PermissionDenied = 8,
     Cancelled = 9,
     Internal = 10,
+    /// A file could not be opened, read or written. Distinct from `NotFound`, which says the
+    /// path is wrong; this says the path was right and the operation still failed.
+    IoFailure = 11,
 
     PlatformInitFailed = 100,
     WindowCreationFailed = 101,

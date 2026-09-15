@@ -13,8 +13,8 @@ Status legend: **done**, *in progress*, planned.
 | M2 | Minimal GPU renderer | L | **done** |
 | M3 | 2D camera and batching | M | **done** |
 | M4 | Asset pipeline | L | **done** |
-| M5 | Scene and serialization | M | next |
-| M6 | Simulation kernel | L | planned |
+| M5 | Scene and serialization | M | **done** |
+| M6 | Simulation kernel | L | next |
 | M7 | Strategy Lab (engine v0.1) | L | planned |
 | M8 | Performance hardening and parallel simulation | L | planned |
 | M9 | Tooling and scripting decision | S–M | planned |
@@ -158,14 +158,61 @@ dependency graph is not built, because with one asset type nothing depends on an
 
 ## M5 — Scene and serialization
 
-Slices: extract the `runtime` module; EnTT and the scene wrapper; hierarchy, cycle checks,
-transform order; versioned canonical serialization; read-only editor panels; a sandbox
-scene round trip.
+Slices: EnTT and the scene wrapper; hierarchy, cycle checks, transform order; versioned
+canonical serialization; a read-only scene panel in the overlay; a sandbox scene round trip.
 
-**Exit criteria**
+**Exit criteria — all met**
 - A minimal scene ECS, transform hierarchy, stable IDs, versioned serialization, reload,
   and editor inspection.
 - No simulation-domain assumptions in scene APIs.
+
+Entities are referred to by a `StableId` the scene assigns, never by the entity library's
+handle. The handle is recycled as entities come and go, so a file that stored one would load
+without complaint and refer to the wrong things. Everything observable is ordered by that
+identifier: iteration, drawing, sibling lists, and the saved file. See
+[ADR-0004](adr/0004-scene-ecs-vs-simulation-storage.md).
+
+The file format is JSON that names and versions itself, refuses a version it does not know,
+and is canonical: the same scene produces the same bytes whatever order it was built in.
+That property is tested by building one scene two ways and comparing the output, not only by
+saving twice, because saving twice passes under any fixed order. See
+[ADR-0007](adr/0007-scene-file-format.md).
+
+A scene file is untrusted input. Malformed JSON, a wrong marker, a missing version, a
+reserved or duplicate identifier, a parent that does not exist, a cycle, an over-long name
+and an out-of-range layer are each refused with a reason, and a failed load leaves the target
+scene exactly as it was rather than half-populated.
+
+The sandbox proves the whole path in one run under `--scene`: it builds a hierarchy in code,
+saves it, reads the file back, saves the loaded copy again, refuses to start if the two do
+not match byte for byte, and then draws the loaded copy. The overlay's scene panel shows the
+tree and the components of a selected entity, including its composed world transform.
+
+**Fixed in passing: frame capture was doing something Metal forbids.** Reading a frame back
+copied from the swapchain image, which Metal creates framebuffer-only. Without the validation
+layer the copy appeared to work; with it enabled, four GPU tests aborted. Capture now draws
+into an offscreen colour texture and blits that to the swapchain, which is legal, keeps the
+frame visible, and is the same offscreen target M7's picking needs. The defect predated M5 and
+was found by turning the GPU test preset's Metal validation on.
+
+**Known gap: the batcher cannot draw a rotated sprite.** A scene may hold any rotation and
+composes it correctly, but `renderer::Quad` is an axis-aligned rectangle, so drawing takes
+position and scale from the composed matrix and drops rotation. The sandbox scene therefore
+uses no rotation rather than displaying something that does not match what it holds. Rotated
+instances are picked up when the renderer next changes, in M7.
+
+Deferred with reasons rather than silently:
+
+- **The `runtime` module was not extracted.** The plan put it here on the assumption that a
+  second application would need the same composition. Scene inspection went into the existing
+  overlay instead, so there is still exactly one composition root. Extracting it now would
+  produce an abstraction with one call site, which this project's own rules forbid. It is
+  created when a second application genuinely needs it.
+- **No command or undo infrastructure, and so no editing.** The scene panel takes the scene by
+  const reference, which means the compiler enforces the restriction rather than discipline
+  doing it. Mutation arrives in M9 together with the infrastructure that makes every change go
+  through one validated path; adding widgets first would create a second way into the scene
+  that bypasses the checks `Scene` performs.
 
 ## M6 — Simulation kernel
 

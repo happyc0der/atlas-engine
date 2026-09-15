@@ -307,8 +307,41 @@ Result<RenderPass> Frame::begin_render_pass(const RenderPassDesc& desc) {
             Error(ErrorCode::InvalidArgument, "a render pass is already open on this frame"));
     }
 
+    // A frame that is going to be captured draws into an offscreen texture rather than
+    // straight into the swapchain image, because the swapchain image cannot be read back:
+    // Metal creates it framebuffer-only, so copying from it or sampling it is invalid and
+    // its validation layer aborts. The result is blitted to the swapchain at end_frame, so
+    // the window still shows the frame that was captured.
+    //
+    // Decided here rather than at begin_frame because that is where callers ask: a capture
+    // is requested once the frame is known to have an image to draw into.
+    if (m_impl->device->capture_requested && m_impl->capture_target == nullptr) {
+        SDL_GPUTextureCreateInfo info{};
+        info.type = SDL_GPU_TEXTURETYPE_2D;
+        // Asked of SDL rather than converted from the stored Atlas format: the offscreen
+        // texture must match the swapchain exactly for the blit to be valid.
+        info.format =
+            SDL_GetGPUSwapchainTextureFormat(m_impl->device->device, m_impl->device->window);
+        info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        info.width = m_impl->extent.width;
+        info.height = m_impl->extent.height;
+        info.layer_count_or_depth = 1;
+        info.num_levels = 1;
+        info.sample_count = SDL_GPU_SAMPLECOUNT_1;
+
+        m_impl->capture_target = SDL_CreateGPUTexture(m_impl->device->device, &info);
+        if (m_impl->capture_target == nullptr) {
+            // Not fatal: the frame still draws and presents, and end_frame reports that the
+            // capture produced nothing rather than the frame disappearing.
+            ATLAS_LOG_ERROR(kRhi, "could not create a capture target: {}", SDL_GetError());
+            SDL_ClearError();
+        } else {
+            SDL_SetGPUTextureName(m_impl->device->device, m_impl->capture_target, "capture target");
+        }
+    }
+
     SDL_GPUColorTargetInfo target{};
-    target.texture = m_impl->swapchain;
+    target.texture = m_impl->capture_target != nullptr ? m_impl->capture_target : m_impl->swapchain;
     target.load_op = detail::to_sdl(desc.colour.load);
     target.store_op = SDL_GPU_STOREOP_STORE;
     target.clear_color = SDL_FColor{
@@ -587,11 +620,39 @@ Status Device::end_frame(Frame&& frame) {
 
     // A capture submits the command buffer itself, because it has to wait on a fence before
     // the pixels can be read.
-    if (m_impl->capture_requested && local.m_impl->swapchain != nullptr) {
+    if (m_impl->capture_requested && local.m_impl->capture_target != nullptr) {
+        // The frame was drawn offscreen, so copy it to the swapchain before reading it back.
+        // Without this the window would show whatever the swapchain image happened to hold
+        // and the captured frame would never appear.
+        SDL_GPUBlitInfo blit{};
+        blit.source.texture = local.m_impl->capture_target;
+        blit.source.w = local.m_impl->extent.width;
+        blit.source.h = local.m_impl->extent.height;
+        blit.destination.texture = local.m_impl->swapchain;
+        blit.destination.w = local.m_impl->extent.width;
+        blit.destination.h = local.m_impl->extent.height;
+        blit.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        blit.filter = SDL_GPU_FILTER_NEAREST;
+        SDL_BlitGPUTexture(local.m_impl->commands, &blit);
+
         local.m_impl->submitted = true;
         m_impl->frame_open = false;
-        return detail::capture_swapchain(*m_impl, local.m_impl->commands, local.m_impl->swapchain,
-                                         local.m_impl->extent);
+
+        auto status = detail::capture_texture(*m_impl, local.m_impl->commands,
+                                              local.m_impl->capture_target, local.m_impl->extent);
+
+        // Released after the capture, which waited on its own fence, so the GPU is finished
+        // with it. The frame no longer owns it either way.
+        SDL_ReleaseGPUTexture(m_impl->device, local.m_impl->capture_target);
+        local.m_impl->capture_target = nullptr;
+        return status;
+    }
+
+    // Asked for but impossible: the window had no image, or the offscreen target could not be
+    // created. Say so rather than leaving the request pending forever.
+    if (m_impl->capture_requested) {
+        m_impl->capture_requested = false;
+        ATLAS_LOG_WARN(kRhi, "a capture was requested but this frame had nothing to capture");
     }
 
     const bool submitted = SDL_SubmitGPUCommandBuffer(local.m_impl->commands);

@@ -18,6 +18,8 @@ atlas_add_module(tools
         platform
         rhi
         rhi_internal
+        math
+        scene
     PRIVATE_DEPS
         imgui::imgui
         SDL3::SDL3-static

@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed, 2026-09-14. Becomes Accepted when M5 implements the scene layer.
+Accepted, 2026-09-15. M5 implemented the scene layer on EnTT, confined to `atlas::scene`.
+
+Proposed 2026-09-14; the condition for acceptance was that M5 implement the scene layer, and
+it has. What the implementation confirmed and what it corrected is recorded under
+Consequences.
 
 ## Context
 
@@ -85,6 +89,24 @@ recorded limitation justifies it. Rejected.
   API. Because usage is confined to the wrapper, moving later is contained.
 - Some duplication is unavoidable: an entity that exists in both worlds needs an explicit
   projection, which is friction that makes the coupling visible rather than accidental.
+
+### What implementing it in M5 showed
+
+- **The wrapper is tighter than proposed.** EnTT's types were expected to appear in
+  `atlas/scene` headers, and this ADR permits that. They do not. `Scene` holds the registry
+  in a private implementation and the public header names no EnTT type at all, so the pin is
+  moveable without touching a single caller. The permission stays on the books because
+  revoking it would cost something the day a component wants a view type, but nothing has
+  needed it yet.
+- **The library's entity handle is never the identity.** Confirmed as designed, and it turned
+  out to matter more than expected: the handle is reused as entities come and go, so the
+  scene keeps its own `StableId` and a map beside the registry. Serialising the library's
+  handle would produce a file that loaded without error and referred to the wrong entities.
+- **Canonical ordering had to be imposed, not inherited.** EnTT stores components in whatever
+  order suits its compaction. Every observable order in `Scene` — iteration, drawing,
+  serialisation, sibling lists — is sorted by stable identifier on the way out. This is the
+  concrete form of the ADR's claim that the simulation could not live with EnTT's iteration
+  order: the scene layer cannot either, and pays a sort to avoid it.
 
 ## Rollback cost
 

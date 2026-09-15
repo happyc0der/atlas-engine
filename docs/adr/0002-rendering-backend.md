@@ -84,6 +84,15 @@ engine should be structured than Atlas wants to inherit. Rejected.
 - Debugging is weaker than with a native backend: no Xcode frame capture without full
   Xcode, no RenderDoc through SDL_GPU's Metal path. Metal's validation layers are available
   through environment variables and are enabled in GPU test presets.
+- **The swapchain image cannot be read back.** Metal creates the drawable texture
+  framebuffer-only, and SDL never clears that flag, so copying from it or sampling it is
+  invalid. Reading a frame therefore means drawing into an offscreen colour texture and
+  blitting that to the swapchain, which `rhi` does whenever a capture is pending. This was
+  found by the Metal validation layer, which aborts on the illegal copy; without validation
+  the copy appeared to work, which is the more dangerous outcome and the reason the GPU test
+  presets turn validation on rather than leaving it optional. The offscreen target is also
+  what M7's integer-identifier picking needs, so the constraint pushed the design toward
+  where it had to go anyway.
 
 ## Rollback cost
 

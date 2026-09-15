@@ -7,8 +7,10 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include <format>
 #include <imgui.h>
 #include <imgui_impl_sdlgpu3.h>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -69,6 +71,10 @@ struct DebugUi::Impl {
     ImGuiContext* context = nullptr;
     bool frame_open = false;
     bool backend_ready = false;
+
+    /// Selection belongs to the panel, not to the scene. Putting it in the scene would make
+    /// a save file depend on what an engineer happened to have clicked.
+    std::optional<scene::StableId> selected;
 
     Impl() = default;
     Impl(const Impl&) = delete;
@@ -247,8 +253,15 @@ void DebugUi::stats_panel(std::string_view title, std::span<const Stat> stats) {
     // End must be called whether or not Begin returned true, while EndTable must be called
     // only when BeginTable did. Collapsing the two conditions hides that difference.
     // NOLINTNEXTLINE(readability-redundant-nested-if)
-    if (ImGui::Begin(window_title.c_str())) {
-        if (ImGui::BeginTable("stats", 2, ImGuiTableFlags_SizingStretchProp)) {
+    // Auto-resizing every frame, not just fitting once. A counter's text gets longer as the
+    // numbers do, and a window sized on the first frame would clip the rows it was opened to
+    // show as soon as they mattered.
+    if (ImGui::Begin(window_title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        // Fixed-fit, not stretch-proportional. A stretched table takes whatever width the
+        // window has and contributes none of its own, so an auto-sized window collapses to
+        // its minimum and clips every row. Fitting to content is what makes the window grow
+        // to hold the rows it was given.
+        if (ImGui::BeginTable("stats", 2, ImGuiTableFlags_SizingFixedFit)) {
             for (const auto& stat : stats) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -260,6 +273,152 @@ void DebugUi::stats_panel(std::string_view title, std::span<const Stat> stats) {
         }
     }
     ImGui::End();
+}
+
+namespace {
+
+/// Draw one entity's subtree. Recursive because the tree is, and the scene bounds its own
+/// depth, so the recursion is bounded by the same limit.
+void draw_tree_node(const scene::Scene& scene, scene::StableId id,
+                    std::optional<scene::StableId>& selected) {
+    const auto children = scene.children(id);
+    const auto raw = static_cast<std::uint64_t>(id);
+
+    auto flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth |
+                 ImGuiTreeNodeFlags_DefaultOpen;
+    if (children.empty()) {
+        flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    }
+    if (selected.has_value() && *selected == id) {
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
+
+    const std::string_view name = scene.name(id);
+    const std::string label =
+        name.empty() ? std::format("entity {}", raw) : std::format("{}##{}", name, raw);
+
+    const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+        selected = id;
+    }
+
+    if (open && !children.empty()) {
+        for (const scene::StableId child : children) {
+            draw_tree_node(scene, child, selected);
+        }
+        ImGui::TreePop();
+    }
+}
+
+void row(std::string_view label, const std::string& value) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::TextUnformatted(label.data(), label.data() + label.size());
+    ImGui::TableSetColumnIndex(1);
+    ImGui::TextUnformatted(value.c_str());
+}
+
+void draw_inspector(const scene::Scene& scene, scene::StableId id) {
+    if (!ImGui::BeginTable("components", 2, ImGuiTableFlags_SizingFixedFit)) {
+        return;
+    }
+
+    row("id", std::format("{}", static_cast<std::uint64_t>(id)));
+    row("name", std::string{scene.name(id)});
+
+    const scene::StableId parent = scene.parent(id);
+    row("parent", parent == scene::StableId::None
+                      ? std::string{"none"}
+                      : std::format("{}", static_cast<std::uint64_t>(parent)));
+    row("children", std::format("{}", scene.children(id).size()));
+
+    if (const auto* local = scene.local_transform(id)) {
+        row("local position", std::format("{:.3f}, {:.3f}", local->position.x, local->position.y));
+        row("local rotation", std::format("{:.3f} rad", local->rotation));
+        row("local scale", std::format("{:.3f}, {:.3f}", local->scale.x, local->scale.y));
+    }
+
+    // Shown separately from the local transform rather than instead of it: when a child is
+    // in the wrong place on screen, the question is always which of the two disagrees.
+    if (const auto* world = scene.world_transform(id)) {
+        const auto elements = world->matrix.uniform_elements();
+        row("world translation", std::format("{:.3f}, {:.3f}", elements[12], elements[13]));
+    } else {
+        row("world transform", "not composed yet");
+    }
+
+    if (const auto* sprite = scene.sprite(id)) {
+        row("sprite texture", std::format("{:#018x}", sprite->texture.value()));
+        row("sprite size", std::format("{:.3f}, {:.3f}", sprite->size.x, sprite->size.y));
+        row("sprite tint", std::format("{:.2f}, {:.2f}, {:.2f}, {:.2f}", sprite->tint.r,
+                                       sprite->tint.g, sprite->tint.b, sprite->tint.a));
+        row("sprite layer", std::format("{}", sprite->layer));
+        row("sprite visible", sprite->visible ? "yes" : "no");
+    }
+
+    if (const auto* camera = scene.camera(id)) {
+        row("camera zoom", std::format("{:.3f}", camera->zoom));
+        row("camera active", camera->active ? "yes" : "no");
+    }
+
+    ImGui::EndTable();
+}
+
+}  // namespace
+
+void DebugUi::scene_panel(std::string_view title, const scene::Scene& scene) {
+    if (m_impl == nullptr || !m_impl->frame_open) {
+        return;
+    }
+    ImGui::SetCurrentContext(m_impl->context);
+
+    // A selection can outlive what it pointed at, because the panel does not own the scene
+    // and is not told when an entity goes away.
+    if (m_impl->selected.has_value() && !scene.contains(*m_impl->selected)) {
+        m_impl->selected.reset();
+    }
+
+    // Placed once, then left to the user. Without this the panel opens exactly where the
+    // statistics panel does and hides it, which makes the overlay look broken.
+    ImGui::SetNextWindowPos(ImVec2(20.0F, 320.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(320.0F, 420.0F), ImGuiCond_FirstUseEver);
+
+    const std::string window_title{title};
+    if (ImGui::Begin(window_title.c_str())) {
+        ImGui::TextUnformatted(std::format("{} entities", scene.size()).c_str());
+        ImGui::Separator();
+
+        if (ImGui::BeginChild("tree", ImVec2(0.0F, 180.0F), ImGuiChildFlags_Borders)) {
+            for (const scene::StableId root : scene.roots()) {
+                draw_tree_node(scene, root, m_impl->selected);
+            }
+        }
+        ImGui::EndChild();
+
+        ImGui::Separator();
+
+        if (m_impl->selected.has_value()) {
+            draw_inspector(scene, *m_impl->selected);
+        } else {
+            ImGui::TextUnformatted("No entity selected.");
+        }
+    }
+    ImGui::End();
+}
+
+void DebugUi::select_entity(scene::StableId id) noexcept {
+    if (m_impl == nullptr) {
+        return;
+    }
+    if (id == scene::StableId::None) {
+        m_impl->selected.reset();
+    } else {
+        m_impl->selected = id;
+    }
+}
+
+std::optional<scene::StableId> DebugUi::selected_entity() const noexcept {
+    return m_impl == nullptr ? std::nullopt : m_impl->selected;
 }
 
 DebugUi::PreparedFrame DebugUi::end_frame(rhi::Frame& frame) {
