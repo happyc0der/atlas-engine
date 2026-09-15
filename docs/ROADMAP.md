@@ -354,6 +354,47 @@ usability; the scripting ADR.
 - An ADR decides whether Lua is justified, identifies its API boundary and security model,
   and either implements a tiny end-to-end script or explicitly defers it.
 
+## First continuous integration
+
+A remote was created on 2026-09-15 and the four workflows ran for the first time. Everything
+before that date was verified on one machine.
+
+It took seven attempts and found **twelve distinct problems**, none of which any local check
+could have found. They fall into three groups.
+
+**Things only a different machine could show.** The submodule was cloned shallow, which broke
+every workflow. Windows had no build tool on its path. vcpkg needed autotools and then a
+development header that the arm64 container never pulls, because it never builds that port.
+The sanitizer runtimes are a separate package on Ubuntu, so the compiler accepted the flag and
+then failed to link.
+
+**Things only a different compiler could show.** A test aliased the logging namespace to
+`log`, which collides with the mathematics function that MSVC's headers pull into the global
+namespace. MSVC deprecates standard C functions in favour of its own. And it found a shift by
+the full width of its own type in the hasher: well defined, correct in every value it ever
+produced, and reading exactly like a bug.
+
+**Things only a configuration nobody had run could show.** Release builds were broken on both
+macOS and Linux. The debug log macros expanded to nothing, discarding their arguments, so any
+symbol used only in debug logging became unused, which is a warning, which is an error here.
+The macros now type-check their arguments in a discarded branch that emits nothing. A mistake
+inside a debug log statement now also fails to compile in release, which is the right way
+round for a mistake to be found.
+
+Separately, clang-tidy had never analysed the scene or simulation modules, because it is
+opt-in locally and this workflow had never run. Forty findings across eleven checks, and the
+workflow was pinning a different clang-format major from the one the script requires.
+
+**What is now verified on every push:** macOS arm64 and Linux x86_64 in Debug and Release,
+Windows x64 in Debug and Release, address and thread sanitizers, the Vulkan renderer on a
+software rasteriser, formatting, module boundaries, licence headers, shader currency, and
+static analysis.
+
+**What is still not verified:** Windows has no graphics path coverage, because hosted runners
+have no graphics hardware and the software rasteriser lane is Linux. The Direct3D 12 backend
+is not built at all ([ADR-0006](adr/0006-shader-toolchain.md)). No real non-Apple graphics
+hardware has ever run this code.
+
 ## Risks and deferred work
 
 Everything consciously not built is listed, with its reason and what would change the
