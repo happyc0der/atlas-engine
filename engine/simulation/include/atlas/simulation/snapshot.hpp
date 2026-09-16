@@ -64,7 +64,7 @@ template <typename T> class SnapshotChannel {
     /// keep drawing from a snapshot the simulation has already replaced.
     void publish(Pointer snapshot) {
         {
-            const std::lock_guard<std::mutex> guard(m_mutex);
+            const std::scoped_lock guard(m_mutex);
             m_latest = std::move(snapshot);
         }
         m_published.fetch_add(1, std::memory_order_relaxed);
@@ -75,7 +75,7 @@ template <typename T> class SnapshotChannel {
     /// Returns a shared pointer rather than a reference deliberately: the caller holds the
     /// snapshot alive for as long as it is using it, which is what makes a frame consistent.
     [[nodiscard]] Pointer latest() const {
-        const std::lock_guard<std::mutex> guard(m_mutex);
+        const std::scoped_lock guard(m_mutex);
         return m_latest;
     }
 
@@ -87,7 +87,7 @@ template <typename T> class SnapshotChannel {
     [[nodiscard]] bool empty() const { return latest() == nullptr; }
 
     void clear() {
-        const std::lock_guard<std::mutex> guard(m_mutex);
+        const std::scoped_lock guard(m_mutex);
         m_latest = nullptr;
     }
 
