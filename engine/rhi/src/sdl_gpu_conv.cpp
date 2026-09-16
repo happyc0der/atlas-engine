@@ -102,6 +102,7 @@ TextureFormat from_sdl(SDL_GPUTextureFormat format) noexcept {
     case SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM: return TextureFormat::Rgba8Unorm;
     case SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB: return TextureFormat::Bgra8UnormSrgb;
     case SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB: return TextureFormat::Rgba8UnormSrgb;
+    case SDL_GPU_TEXTUREFORMAT_R32_UINT: return TextureFormat::R32Uint;
     default: return TextureFormat::Unknown;
     }
 }
@@ -112,9 +113,21 @@ SDL_GPUTextureFormat to_sdl(TextureFormat format) noexcept {
     case TextureFormat::Rgba8Unorm: return SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     case TextureFormat::Bgra8UnormSrgb: return SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB;
     case TextureFormat::Rgba8UnormSrgb: return SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB;
+    case TextureFormat::R32Uint: return SDL_GPU_TEXTUREFORMAT_R32_UINT;
     case TextureFormat::Unknown: return SDL_GPU_TEXTUREFORMAT_INVALID;
     }
     return SDL_GPU_TEXTUREFORMAT_INVALID;
+}
+
+SDL_GPUTextureUsageFlags to_sdl(TextureUsage usage) noexcept {
+    SDL_GPUTextureUsageFlags flags = 0;
+    if (usage.sampled) {
+        flags |= SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    }
+    if (usage.colour_target) {
+        flags |= SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+    }
+    return flags;
 }
 
 }  // namespace atlas::rhi::detail

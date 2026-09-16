@@ -9,6 +9,7 @@
 /// See docs/adr/0002-rendering-backend.md.
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace atlas::rhi {
@@ -100,12 +101,54 @@ enum class TextureFormat : std::uint8_t {
     Rgba8Unorm,
     Bgra8UnormSrgb,
     Rgba8UnormSrgb,
+    /// One unsigned 32-bit integer per pixel.
+    ///
+    /// For an identifier target, where a value read back must be exactly a value that was
+    /// written. No blending, no filtering, no colour-space conversion: each of those would
+    /// produce identifiers nothing ever wrote.
+    R32Uint,
 };
 
 [[nodiscard]] std::string_view to_string(TextureFormat format) noexcept;
 
 /// Bytes per pixel, or zero for an unknown format.
 [[nodiscard]] std::uint32_t byte_size(TextureFormat format) noexcept;
+
+/// Whether a format holds unsigned integers rather than normalised colour.
+///
+/// The distinction is not cosmetic. Blending an integer target aborts the process on Metal
+/// and is silently accepted on Vulkan, which would produce blended identifiers; both were
+/// measured. Atlas refuses the combination itself so the behaviour is the same everywhere
+/// and the message names the cause.
+[[nodiscard]] constexpr bool is_integer_format(TextureFormat format) noexcept {
+    return format == TextureFormat::R32Uint;
+}
+
+/// What a texture may be used for.
+///
+/// Drives the allocation, so it cannot be changed afterwards. Two independent answers rather
+/// than a flag enumeration, because both combinations are real: an identifier target is
+/// written by a pass and never sampled, and every texture before M7 was sampled and never
+/// written.
+struct TextureUsage {
+    /// Readable by a shader through a sampler.
+    bool sampled = true;
+    /// Writable by a render pass.
+    bool colour_target = false;
+
+    [[nodiscard]] friend constexpr bool operator==(TextureUsage, TextureUsage) noexcept = default;
+};
+
+[[nodiscard]] std::string to_string(TextureUsage usage);
+
+/// A rectangle of texels, in pixels, with the origin at the top-left.
+struct Rect2D {
+    std::uint32_t x = 0;
+    std::uint32_t y = 0;
+    Extent2D extent;
+
+    [[nodiscard]] friend constexpr bool operator==(Rect2D, Rect2D) noexcept = default;
+};
 
 /// When a finished frame is handed to the display.
 enum class PresentMode : std::uint8_t {

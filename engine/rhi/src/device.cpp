@@ -320,6 +320,14 @@ TextureFormat Frame::swapchain_format() const noexcept {
     return m_impl->device->swapchain_format;
 }
 
+Extent2D RenderPass::target_extent() const noexcept {
+    return m_impl != nullptr ? m_impl->target_extent : Extent2D{};
+}
+
+TextureFormat RenderPass::target_format() const noexcept {
+    return m_impl != nullptr ? m_impl->target_format : TextureFormat::Unknown;
+}
+
 Result<RenderPass> Frame::begin_render_pass(const RenderPassDesc& desc) {
     ATLAS_ASSERT_MAIN_THREAD();
 
@@ -327,15 +335,55 @@ Result<RenderPass> Frame::begin_render_pass(const RenderPassDesc& desc) {
         return std::unexpected(
             Error(ErrorCode::InvalidArgument, "begin_render_pass on an invalid frame"));
     }
-    if (m_impl->swapchain == nullptr) {
-        return std::unexpected(
-            Error(ErrorCode::Unavailable,
-                  "this frame has no swapchain target, so there is nothing to draw into. The "
-                  "window is probably minimised; check has_swapchain_target() first."));
-    }
     if (m_impl->pass_open) {
         return std::unexpected(
             Error(ErrorCode::InvalidArgument, "a render pass is already open on this frame"));
+    }
+
+    // A pass that names its own texture needs no swapchain image, so this gate applies only
+    // to the swapchain case. That is what lets an offscreen pass run while the window is
+    // minimised, and what makes an offscreen test deterministic instead of retrying for an
+    // image the window system may not hand over.
+    const bool draws_offscreen = desc.colour.texture.valid();
+    if (!draws_offscreen && m_impl->swapchain == nullptr) {
+        return std::unexpected(
+            Error(ErrorCode::Unavailable,
+                  "this frame has no swapchain target, so there is nothing to draw into. The "
+                  "window is probably minimised; check has_swapchain_target() first, or name "
+                  "a texture in the pass, which needs no swapchain image."));
+    }
+
+    // Target selection, in one place and in priority order:
+    //
+    //   a named texture   -> that texture
+    //   a pending capture -> this frame's capture target
+    //   otherwise         -> the swapchain image
+    //
+    // A capture must never hijack a pass that named its own target: the caller owns that
+    // texture and is going to read it, and blitting it to the swapchain at end_frame would
+    // both show the wrong thing and read back the wrong thing.
+    SDL_GPUTexture* native_target = nullptr;
+    TextureFormat target_format = TextureFormat::Unknown;
+    Extent2D target_extent;
+
+    if (draws_offscreen) {
+        const TextureResource* resource = m_impl->device->textures.get(desc.colour.texture);
+        if (resource == nullptr) {
+            return std::unexpected(
+                Error(ErrorCode::InvalidArgument,
+                      "the texture named as this pass's colour target does not resolve; it was "
+                      "destroyed, or the handle is from another device"));
+        }
+        if (!resource->usage.colour_target) {
+            return std::unexpected(
+                Error(ErrorCode::InvalidArgument,
+                      std::format("texture '{}' is named as a colour target but was created as {}. "
+                                  "Set TextureUsage::colour_target when creating it.",
+                                  resource->debug_name, to_string(resource->usage))));
+        }
+        native_target = resource->texture;
+        target_format = resource->format;
+        target_extent = Extent2D{.width = resource->width, .height = resource->height};
     }
 
     // A frame that is going to be captured draws into an offscreen texture rather than
@@ -346,7 +394,8 @@ Result<RenderPass> Frame::begin_render_pass(const RenderPassDesc& desc) {
     //
     // Decided here rather than at begin_frame because that is where callers ask: a capture
     // is requested once the frame is known to have an image to draw into.
-    if (m_impl->device->capture_requested && m_impl->capture_target == nullptr) {
+    if (!draws_offscreen && m_impl->device->capture_requested &&
+        m_impl->capture_target == nullptr) {
         SDL_GPUTextureCreateInfo info{};
         info.type = SDL_GPU_TEXTURETYPE_2D;
         // Asked of SDL rather than converted from the stored Atlas format: the offscreen
@@ -371,16 +420,32 @@ Result<RenderPass> Frame::begin_render_pass(const RenderPassDesc& desc) {
         }
     }
 
+    if (!draws_offscreen) {
+        native_target =
+            m_impl->capture_target != nullptr ? m_impl->capture_target : m_impl->swapchain;
+        target_format = m_impl->device->swapchain_format;
+        target_extent = m_impl->extent;
+    }
+
     SDL_GPUColorTargetInfo target{};
-    target.texture = m_impl->capture_target != nullptr ? m_impl->capture_target : m_impl->swapchain;
+    target.texture = native_target;
     target.load_op = detail::to_sdl(desc.colour.load);
     target.store_op = SDL_GPU_STOREOP_STORE;
-    target.clear_color = SDL_FColor{
-        .r = desc.colour.clear_colour.r,
-        .g = desc.colour.clear_colour.g,
-        .b = desc.colour.clear_colour.b,
-        .a = desc.colour.clear_colour.a,
-    };
+
+    if (is_integer_format(target_format)) {
+        // Always zero. The graphics library takes a clear colour as floats and the backends
+        // disagree about what that means for an integer format: one converts the value, the
+        // other reinterprets the bits. Zero is the only value both agree on. See the note on
+        // ColourTargetDesc::clear_colour.
+        target.clear_color = SDL_FColor{.r = 0.0F, .g = 0.0F, .b = 0.0F, .a = 0.0F};
+    } else {
+        target.clear_color = SDL_FColor{
+            .r = desc.colour.clear_colour.r,
+            .g = desc.colour.clear_colour.g,
+            .b = desc.colour.clear_colour.b,
+            .a = desc.colour.clear_colour.a,
+        };
+    }
 
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(m_impl->commands, &target, 1, nullptr);
     if (pass == nullptr) {
@@ -398,6 +463,8 @@ Result<RenderPass> Frame::begin_render_pass(const RenderPassDesc& desc) {
     auto impl = std::make_unique<RenderPass::Impl>();
     impl->frame = m_impl.get();
     impl->pass = pass;
+    impl->target_extent = target_extent;
+    impl->target_format = target_format;
     return RenderPass{std::move(impl)};
 }
 
@@ -493,6 +560,26 @@ Device::~Device() {
 
     // Nothing may be destroyed while the graphics processor might still be reading it.
     SDL_WaitForGPUIdle(m_impl->device);
+
+    // Readbacks the application asked for and never collected. After the wait above every
+    // fence has signalled, so this is releasing memory rather than abandoning work in
+    // flight. Named for the same reason a leaked resource is: asking and not collecting is
+    // the same class of mistake, and it is invisible otherwise.
+    if (m_impl->readbacks.size() > 0) {
+        std::fprintf(stderr, "atlas rhi: %zu readback(s) were asked for and never collected\n",
+                     m_impl->readbacks.size());
+    }
+    m_impl->readbacks.for_each_live([this](ReadbackHandle, PendingReadback& pending) {
+        if (pending.fence != nullptr) {
+            SDL_ReleaseGPUFence(m_impl->device, pending.fence);
+            pending.fence = nullptr;
+        }
+        if (pending.transfer != nullptr) {
+            SDL_ReleaseGPUTransferBuffer(m_impl->device, pending.transfer);
+            pending.transfer = nullptr;
+        }
+    });
+    m_impl->readbacks.clear();
 
     // Report anything still live before tearing it down. A resource the application forgot
     // to destroy is a leak in the application, and naming it is more useful than silently

@@ -28,5 +28,6 @@ namespace atlas::rhi::detail {
 
 [[nodiscard]] TextureFormat from_sdl(SDL_GPUTextureFormat format) noexcept;
 [[nodiscard]] SDL_GPUTextureFormat to_sdl(TextureFormat format) noexcept;
+[[nodiscard]] SDL_GPUTextureUsageFlags to_sdl(TextureUsage usage) noexcept;
 
 }  // namespace atlas::rhi::detail

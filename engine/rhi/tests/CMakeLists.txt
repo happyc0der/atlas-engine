@@ -7,6 +7,7 @@ atlas_add_test(rhi
         test_types.cpp
         test_device.cpp
         test_render.cpp
+        test_render_target.cpp
     DEPENDS
         atlas::rhi
     LABELS

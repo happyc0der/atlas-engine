@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <atlas/rhi/descs.hpp>
 #include <atlas/rhi/types.hpp>
 
 namespace atlas::rhi {
@@ -45,6 +46,7 @@ std::string_view to_string(TextureFormat format) noexcept {
     case TextureFormat::Rgba8Unorm: return "rgba8unorm";
     case TextureFormat::Bgra8UnormSrgb: return "bgra8unorm-srgb";
     case TextureFormat::Rgba8UnormSrgb: return "rgba8unorm-srgb";
+    case TextureFormat::R32Uint: return "r32uint";
     }
     return "unrecognised";
 }
@@ -91,9 +93,31 @@ std::uint32_t byte_size(TextureFormat format) noexcept {
     case TextureFormat::Bgra8Unorm:
     case TextureFormat::Rgba8Unorm:
     case TextureFormat::Bgra8UnormSrgb:
-    case TextureFormat::Rgba8UnormSrgb: return 4;
+    case TextureFormat::Rgba8UnormSrgb:
+    case TextureFormat::R32Uint: return 4;
     }
     return 0;
+}
+
+std::string_view to_string(BlendMode mode) noexcept {
+    switch (mode) {
+    case BlendMode::AlphaBlend: return "alpha-blend";
+    case BlendMode::Replace: return "replace";
+    }
+    return "unrecognised";
+}
+
+std::string to_string(TextureUsage usage) {
+    if (usage.sampled && usage.colour_target) {
+        return "sampled|colour-target";
+    }
+    if (usage.sampled) {
+        return "sampled";
+    }
+    if (usage.colour_target) {
+        return "colour-target";
+    }
+    return "none";
 }
 
 }  // namespace atlas::rhi

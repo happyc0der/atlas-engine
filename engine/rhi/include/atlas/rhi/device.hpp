@@ -87,6 +87,16 @@ class RenderPass {
     /// Restrict drawing to part of the target, in pixels.
     void set_viewport(float x, float y, float width, float height);
 
+    /// Size of the texture this pass draws into, in pixels.
+    ///
+    /// The swapchain image's size for a swapchain pass, the named texture's for an
+    /// offscreen one. A caller setting a viewport, or mapping a pointer position into
+    /// target space, needs this and must not assume the window's size.
+    [[nodiscard]] Extent2D target_extent() const noexcept;
+
+    /// Format of the texture this pass draws into. A bound pipeline must match it.
+    [[nodiscard]] TextureFormat target_format() const noexcept;
+
     void draw(std::uint32_t vertex_count, std::uint32_t instance_count = 1,
               std::uint32_t first_vertex = 0, std::uint32_t first_instance = 0);
 
@@ -264,6 +274,60 @@ class Device {
     /// duration of its own frame. It stalls until the copy completes, so this is for
     /// screenshots and tests, never for a frame path. The same readback route carries
     /// integer-ID picking in M7.
+    /// A rectangle of pixels copied back from a texture.
+    struct Readback {
+        /// The region that was asked for, in the source texture.
+        Rect2D region;
+        TextureFormat format = TextureFormat::Unknown;
+        /// Tightly packed rows, `byte_size(format)` bytes per pixel.
+        std::vector<std::byte> pixels;
+    };
+
+    /// How many readbacks may be outstanding at once.
+    ///
+    /// Small on purpose. A caller that asks and never collects is a bug, and being told so
+    /// at the fifth request is better than growing until memory runs out.
+    static constexpr std::size_t kMaxPendingReadbacks = 4;
+
+    /// Ask for a rectangle of a texture to be copied back to memory.
+    ///
+    /// Records the copy, submits it on its own command buffer, and returns. **It does not
+    /// wait.** The cost paid here is one submission, not a pipeline drain, which is what
+    /// makes this usable for picking on a frame that also has to be drawn. The pixels
+    /// become available a frame or two later: ask `readback_ready`, then take.
+    ///
+    /// To make a test deterministic, call `wait_idle()` first; after that the copy has
+    /// certainly finished.
+    ///
+    /// Ownership: the device owns the staging memory and the fence until the result is
+    /// taken or the device is destroyed. `texture` must stay alive until then.
+    ///
+    /// Thread affinity: main thread.
+    ///
+    /// Failure: `InvalidArgument` for a stale handle, an empty region, or a region that
+    /// leaves the texture; `NotSupported` for a format with no known pixel size;
+    /// `Exhausted` when `kMaxPendingReadbacks` are already outstanding;
+    /// `ResourceCreationFailed` if staging memory cannot be had; `DeviceLost` as everywhere.
+    [[nodiscard]] Result<ReadbackHandle> request_readback(TextureHandle texture, Rect2D region);
+
+    /// Whether a readback has finished and can be taken.
+    ///
+    /// Not const: it asks the graphics library and latches the answer, so the fence and the
+    /// staging memory are released at the first opportunity rather than the last. False for
+    /// a null or stale ticket, which `take_readback` then reports properly.
+    [[nodiscard]] bool readback_ready(ReadbackHandle ticket) noexcept;
+
+    /// Take a finished readback. The ticket is released, so a second take fails.
+    ///
+    /// Failure: `InvalidArgument` for a null or stale ticket; `Unavailable` while the copy
+    /// is still in flight, which is not an error — ask `readback_ready` first; `Internal`
+    /// if the copy itself failed, in which case the ticket is released so the failure is
+    /// reported once rather than on every poll.
+    [[nodiscard]] Result<Readback> take_readback(ReadbackHandle ticket);
+
+    /// Readbacks asked for and not yet collected.
+    [[nodiscard]] std::size_t pending_readbacks() const noexcept;
+
     void request_capture() noexcept;
 
     /// Take the capture, if one completed. Clears it, so a second call returns nothing.

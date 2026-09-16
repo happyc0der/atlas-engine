@@ -18,11 +18,18 @@ struct TextureTag;
 struct SamplerTag;
 struct ShaderTag;
 struct GraphicsPipelineTag;
+struct ReadbackTag;
 
 using BufferHandle = Handle<BufferTag>;
 using TextureHandle = Handle<TextureTag>;
 using SamplerHandle = Handle<SamplerTag>;
 using ShaderHandle = Handle<ShaderTag>;
 using GraphicsPipelineHandle = Handle<GraphicsPipelineTag>;
+
+/// A ticket for a readback that has been asked for and not yet collected.
+///
+/// Generation-counted like every other handle here, so a ticket taken twice, or held across
+/// a device move, stops resolving instead of quietly naming a later request.
+using ReadbackHandle = Handle<ReadbackTag>;
 
 }  // namespace atlas::rhi

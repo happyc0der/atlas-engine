@@ -35,6 +35,9 @@ struct TextureResource {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     TextureFormat format = TextureFormat::Unknown;
+    /// Kept so a pass can refuse a texture that was never made a colour target, with a
+    /// message naming what it actually is.
+    TextureUsage usage;
     std::string debug_name;
 };
 
@@ -50,6 +53,19 @@ struct ShaderResource {
 
 struct PipelineResource {
     SDL_GPUGraphicsPipeline* pipeline = nullptr;
+    std::string debug_name;
+};
+
+/// A readback that has been recorded and submitted and not yet collected.
+struct PendingReadback {
+    SDL_GPUFence* fence = nullptr;              ///< Released as soon as it signals.
+    SDL_GPUTransferBuffer* transfer = nullptr;  ///< Released once the pixels are copied out.
+    Rect2D region;
+    TextureFormat format = TextureFormat::Unknown;
+    std::uint32_t byte_count = 0;
+    /// Filled the first time the fence is seen signalled, so the staging memory can go back
+    /// at the first opportunity rather than being held until the caller gets round to it.
+    std::optional<Device::Readback> result;
     std::string debug_name;
 };
 
@@ -74,6 +90,8 @@ struct Device::Impl {
     /// A capture was asked for and has not been taken yet.
     bool capture_requested = false;
     std::optional<Capture> capture;
+
+    HandlePool<PendingReadback, ReadbackTag> readbacks;
 
     /// Whether the graphics device is still there. See device_loss.hpp.
     detail::DeviceHealth health;
@@ -113,6 +131,10 @@ struct Frame::Impl {
 struct RenderPass::Impl {
     Frame::Impl* frame = nullptr;
     SDL_GPURenderPass* pass = nullptr;
+    /// The target's size and format, so a caller setting a viewport or matching a pipeline
+    /// need not assume the window's.
+    Extent2D target_extent;
+    TextureFormat target_format = TextureFormat::Unknown;
     bool ended = false;
 };
 
@@ -120,6 +142,17 @@ namespace detail {
 
 /// Build an error from `what` plus whatever SDL last reported, clearing SDL's slot.
 [[nodiscard]] Error gpu_error(ErrorCode code, std::string_view what);
+
+/// Record a download of `region` from `source` into `transfer`. Does not submit.
+///
+/// The caller chooses whether to wait on a fence or poll one, which is the only difference
+/// between a capture and a readback.
+void record_texture_download(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* source, Rect2D region,
+                             SDL_GPUTransferBuffer* transfer);
+
+/// Copy a finished download out of its staging buffer into the pending record, and release
+/// the fence and the staging buffer.
+void collect_readback(Device::Impl& device, PendingReadback& pending);
 
 /// Copy a readable colour texture back to memory and store it on the device.
 ///

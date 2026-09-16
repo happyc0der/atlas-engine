@@ -43,6 +43,14 @@ struct TextureDesc {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     TextureFormat format = TextureFormat::Rgba8Unorm;
+
+    /// What the texture may be used for.
+    ///
+    /// The default is a texture a shader samples, which is what every texture before M7
+    /// was. A texture a render pass draws into must say so here, because the usage decides
+    /// the allocation and cannot be changed afterwards.
+    TextureUsage usage;
+
     std::string_view debug_name = "texture";
 };
 
@@ -98,6 +106,18 @@ struct VertexLayout {
     std::span<const VertexStream> streams;
 };
 
+/// How a pipeline's output combines with what is already in the colour target.
+enum class BlendMode : std::uint8_t {
+    /// Straight alpha, source over destination. What a sprite with a transparent border
+    /// needs, and what every pipeline before M7 got.
+    AlphaBlend,
+    /// None: the source replaces the destination. Required for an integer target, and
+    /// cheaper anywhere alpha is not used.
+    Replace,
+};
+
+[[nodiscard]] std::string_view to_string(BlendMode mode) noexcept;
+
 struct GraphicsPipelineDesc {
     ShaderHandle vertex_shader;
     ShaderHandle fragment_shader;
@@ -107,6 +127,14 @@ struct GraphicsPipelineDesc {
     /// Format of the colour target this pipeline will draw into. Must match the target, so
     /// it usually comes from the swapchain.
     TextureFormat colour_format = TextureFormat::Unknown;
+
+    /// How the output combines with what is already in the target.
+    ///
+    /// The default matches every pipeline before M7. An integer `colour_format` requires
+    /// `Replace` and is refused otherwise, because the backends disagree about what
+    /// blending one means: Metal aborts the process and Vulkan accepts it silently and
+    /// blends the identifiers. Both were measured.
+    BlendMode blend = BlendMode::AlphaBlend;
 
     std::string_view debug_name = "pipeline";
 };
@@ -123,7 +151,35 @@ enum class LoadOp : std::uint8_t {
 };
 
 struct ColourTargetDesc {
+    /// Where the pass draws.
+    ///
+    /// Null, the default, means this frame's swapchain image, which is what every pass
+    /// before M7 wanted. Unset-means-swapchain rather than a second method, so every
+    /// existing call site keeps compiling and keeps meaning what it meant;
+    /// `GraphicsPipelineDesc::colour_format` already uses the same convention.
+    ///
+    /// A named texture must have been created with `TextureUsage::colour_target`. A pass
+    /// that names one needs no swapchain image at all, so it works while the window is
+    /// minimised.
+    ///
+    /// Lifetime: the texture must outlive the pass and must not be destroyed before the
+    /// frame is submitted.
+    TextureHandle texture;
+
     LoadOp load = LoadOp::Clear;
+
+    /// The colour a non-integer target is cleared to.
+    ///
+    /// **An integer target always clears to zero**, whatever is put here, and there is
+    /// deliberately no way to ask for another value. The graphics library takes a clear
+    /// colour as four floats and hands them to the backend unchanged, and the backends then
+    /// disagree about what that means for an integer format: one converts the value and the
+    /// other reinterprets its bits. Zero is the only value both agree on, because zero has
+    /// all-zero bits either way. Measured on Metal and on Vulkan.
+    ///
+    /// So zero is reserved as "nothing here" on an identifier target, and identifiers start
+    /// at one. That costs one value out of four billion and removes a portability trap that
+    /// would otherwise appear as identifiers that were never written.
     Colour clear_colour;
 };
 

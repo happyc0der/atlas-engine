@@ -282,6 +282,17 @@ Result<GraphicsPipelineHandle> Device::create_graphics_pipeline(const GraphicsPi
                   std::format("pipeline '{}' has no colour target format", desc.debug_name)));
     }
 
+    // Refused here rather than left to the backend, because the backends disagree and both
+    // answers are bad. Metal aborts the process on a validation assertion; Vulkan accepts it
+    // and blends the identifiers, producing values nothing ever wrote. Measured on both.
+    if (is_integer_format(colour_format) && desc.blend != BlendMode::Replace) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("pipeline '{}' draws into {}, an integer format, with blend mode {}. "
+                              "An integer target cannot be blended; use BlendMode::Replace.",
+                              desc.debug_name, to_string(colour_format), to_string(desc.blend))));
+    }
+
     // One SDL description per stream, and one attribute entry per attribute across all of
     // them, each tagged with the slot it belongs to. Two streams is the batching case: a
     // shared unit quad in slot zero and per-instance data in slot one.
@@ -331,16 +342,21 @@ Result<GraphicsPipelineHandle> Device::create_graphics_pipeline(const GraphicsPi
     SDL_GPUColorTargetDescription colour_target{};
     colour_target.format = detail::to_sdl(colour_format);
 
-    // Straight alpha blending, which is what a sprite with a transparent border needs. A
-    // pipeline-level blend setting is enough while there is one pipeline; it becomes part of
-    // the descriptor when something needs a different mode.
-    colour_target.blend_state.enable_blend = true;
-    colour_target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
-    colour_target.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
-    colour_target.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
-    colour_target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
-    colour_target.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
-    colour_target.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+    // The blend mode is part of the descriptor now, which is what the previous comment here
+    // said would happen when something needed a different one. An identifier target is that
+    // something.
+    if (desc.blend == BlendMode::AlphaBlend) {
+        // Straight alpha, which is what a sprite with a transparent border needs.
+        colour_target.blend_state.enable_blend = true;
+        colour_target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        colour_target.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colour_target.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+        colour_target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colour_target.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colour_target.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+    } else {
+        colour_target.blend_state.enable_blend = false;
+    }
 
     SDL_GPUGraphicsPipelineCreateInfo info{};
     info.vertex_shader = vertex->shader;
@@ -405,7 +421,215 @@ std::optional<Device::Capture> Device::take_capture() noexcept {
     return std::exchange(m_impl->capture, std::nullopt);
 }
 
+Result<ReadbackHandle> Device::request_readback(TextureHandle texture, Rect2D region) {
+    ATLAS_ZONE_NAMED("Device::request_readback");
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    if (m_impl == nullptr) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument, "request_readback on an invalid device"));
+    }
+    if (m_impl->health.lost()) {
+        return std::unexpected(m_impl->already_lost("read a texture back"));
+    }
+
+    const TextureResource* resource = m_impl->textures.get(texture);
+    if (resource == nullptr) {
+        return std::unexpected(Error(ErrorCode::InvalidArgument,
+                                     "the texture to read back does not resolve; it was "
+                                     "destroyed, or the handle is from another device"));
+    }
+
+    const std::uint32_t pixel_size = byte_size(resource->format);
+    if (pixel_size == 0) {
+        return std::unexpected(
+            Error(ErrorCode::NotSupported,
+                  std::format("texture '{}' has format {}, whose pixel size is not known here",
+                              resource->debug_name, to_string(resource->format))));
+    }
+    if (region.extent.width == 0 || region.extent.height == 0) {
+        return std::unexpected(Error(
+            ErrorCode::InvalidArgument,
+            std::format("an empty region of texture '{}' was asked for", resource->debug_name)));
+    }
+
+    // Checked in 64 bits before any of it is used to size an allocation, so a region near
+    // the top of the range cannot wrap into a small, plausible one.
+    const std::uint64_t right = static_cast<std::uint64_t>(region.x) + region.extent.width;
+    const std::uint64_t bottom = static_cast<std::uint64_t>(region.y) + region.extent.height;
+    if (right > resource->width || bottom > resource->height) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("the region ({},{} {}x{}) leaves texture '{}', which is {}x{}",
+                              region.x, region.y, region.extent.width, region.extent.height,
+                              resource->debug_name, resource->width, resource->height)));
+    }
+
+    if (m_impl->readbacks.size() >= kMaxPendingReadbacks) {
+        return std::unexpected(
+            Error(ErrorCode::Exhausted,
+                  std::format("{} readbacks are already outstanding, which is the limit. Something "
+                              "is asking and not collecting.",
+                              kMaxPendingReadbacks)));
+    }
+
+    const std::uint32_t byte_count = region.extent.width * region.extent.height * pixel_size;
+
+    SDL_GPUTransferBufferCreateInfo info{};
+    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    info.size = byte_count;
+
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(m_impl->device, &info);
+    if (transfer == nullptr) {
+        return std::unexpected(
+            m_impl->fail(ErrorCode::ResourceCreationFailed, "creating a readback staging buffer"));
+    }
+
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(m_impl->device);
+    if (commands == nullptr) {
+        auto error = m_impl->fail(ErrorCode::Internal, "acquiring a command buffer for a readback");
+        SDL_ReleaseGPUTransferBuffer(m_impl->device, transfer);
+        return std::unexpected(std::move(error));
+    }
+
+    detail::record_texture_download(commands, resource->texture, region, transfer);
+
+    // Submitted with a fence and deliberately not waited on. That is the whole difference
+    // between this and capture, and the reason picking does not stall a frame.
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+    if (fence == nullptr) {
+        auto error = m_impl->fail(ErrorCode::Internal, "submitting a readback");
+        SDL_ReleaseGPUTransferBuffer(m_impl->device, transfer);
+        return std::unexpected(std::move(error));
+    }
+
+    auto ticket = m_impl->readbacks.insert(PendingReadback{
+        .fence = fence,
+        .transfer = transfer,
+        .region = region,
+        .format = resource->format,
+        .byte_count = byte_count,
+        .result = std::nullopt,
+        .debug_name = resource->debug_name,
+    });
+    if (!ticket) {
+        SDL_ReleaseGPUFence(m_impl->device, fence);
+        SDL_ReleaseGPUTransferBuffer(m_impl->device, transfer);
+        return std::unexpected(std::move(ticket).error().context("recording a readback"));
+    }
+    return *ticket;
+}
+
+bool Device::readback_ready(ReadbackHandle ticket) noexcept {
+    if (m_impl == nullptr) {
+        return false;
+    }
+    PendingReadback* pending = m_impl->readbacks.get(ticket);
+    if (pending == nullptr) {
+        return false;
+    }
+    if (pending->result.has_value()) {
+        return true;
+    }
+    if (pending->fence == nullptr) {
+        return false;
+    }
+    if (!SDL_QueryGPUFence(m_impl->device, pending->fence)) {
+        return false;
+    }
+
+    // Signalled. Copy the pixels out now and give the staging memory and the fence back,
+    // rather than holding them until the caller happens to take the result.
+    detail::collect_readback(*m_impl, *pending);
+    return pending->result.has_value();
+}
+
+Result<Device::Readback> Device::take_readback(ReadbackHandle ticket) {
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    if (m_impl == nullptr) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument, "take_readback on an invalid device"));
+    }
+    PendingReadback* pending = m_impl->readbacks.get(ticket);
+    if (pending == nullptr) {
+        return std::unexpected(Error(ErrorCode::InvalidArgument,
+                                     "this readback ticket does not resolve; it was already "
+                                     "taken, or it is from another device"));
+    }
+    if (!pending->result.has_value() && !readback_ready(ticket)) {
+        return std::unexpected(Error(ErrorCode::Unavailable,
+                                     "this readback has not finished yet; ask readback_ready "
+                                     "first, or wait_idle to force it"));
+    }
+    // readback_ready may have reallocated nothing, but re-resolve anyway rather than relying
+    // on the pointer surviving a call that can mutate the pool.
+    pending = m_impl->readbacks.get(ticket);
+    if (pending == nullptr || !pending->result.has_value()) {
+        return std::unexpected(
+            Error(ErrorCode::Internal, "a readback signalled but produced no pixels"));
+    }
+
+    Readback taken = std::move(*pending->result);
+    m_impl->readbacks.destroy(ticket);
+    return taken;
+}
+
+std::size_t Device::pending_readbacks() const noexcept {
+    return m_impl != nullptr ? m_impl->readbacks.size() : 0;
+}
+
 namespace detail {
+
+void record_texture_download(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* source, Rect2D region,
+                             SDL_GPUTransferBuffer* transfer) {
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+
+    SDL_GPUTextureRegion source_region{};
+    source_region.texture = source;
+    source_region.x = region.x;
+    source_region.y = region.y;
+    source_region.w = region.extent.width;
+    source_region.h = region.extent.height;
+    source_region.d = 1;
+
+    SDL_GPUTextureTransferInfo destination{};
+    destination.transfer_buffer = transfer;
+    destination.offset = 0;
+    destination.pixels_per_row = region.extent.width;
+    destination.rows_per_layer = region.extent.height;
+
+    SDL_DownloadFromGPUTexture(copy, &source_region, &destination);
+    SDL_EndGPUCopyPass(copy);
+}
+
+void collect_readback(Device::Impl& device, PendingReadback& pending) {
+    if (pending.fence != nullptr) {
+        SDL_ReleaseGPUFence(device.device, pending.fence);
+        pending.fence = nullptr;
+    }
+    if (pending.transfer == nullptr) {
+        return;
+    }
+
+    void* mapped = SDL_MapGPUTransferBuffer(device.device, pending.transfer, false);
+    if (mapped != nullptr) {
+        Device::Readback readback;
+        readback.region = pending.region;
+        readback.format = pending.format;
+        readback.pixels.resize(pending.byte_count);
+        std::memcpy(readback.pixels.data(), mapped, pending.byte_count);
+        SDL_UnmapGPUTransferBuffer(device.device, pending.transfer);
+        pending.result = std::move(readback);
+    } else {
+        ATLAS_LOG_ERROR(kRhi, "mapping the pixels read back from '{}' failed: {}",
+                        pending.debug_name, SDL_GetError());
+        SDL_ClearError();
+    }
+
+    SDL_ReleaseGPUTransferBuffer(device.device, pending.transfer);
+    pending.transfer = nullptr;
+}
 
 Status capture_texture(Device::Impl& device, SDL_GPUCommandBuffer* commands, SDL_GPUTexture* source,
                        Extent2D extent) {

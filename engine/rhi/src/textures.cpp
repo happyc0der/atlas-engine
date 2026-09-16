@@ -38,11 +38,33 @@ Result<TextureHandle> Device::create_texture(const TextureDesc& desc) {
         return std::unexpected(Error(ErrorCode::InvalidArgument,
                                      std::format("texture '{}' has no format", desc.debug_name)));
     }
+    if (!desc.usage.sampled && !desc.usage.colour_target) {
+        // A texture nothing may do anything with is a mistake at the call site, not a
+        // resource worth allocating.
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("texture '{}' declares no usage, so nothing could read or write it",
+                              desc.debug_name)));
+    }
+
+    const SDL_GPUTextureUsageFlags usage = detail::to_sdl(desc.usage);
+
+    // Asked before creating, because SDL returns a null texture with a generic message for
+    // an unsupported combination, and the useful part is which format and which usage.
+    if (!SDL_GPUTextureSupportsFormat(m_impl->device, detail::to_sdl(desc.format),
+                                      SDL_GPU_TEXTURETYPE_2D, usage)) {
+        SDL_ClearError();
+        return std::unexpected(Error(
+            ErrorCode::NotSupported,
+            std::format("this backend ({}) cannot use format {} as {}, wanted for texture '{}'",
+                        m_impl->backend_name, to_string(desc.format), to_string(desc.usage),
+                        desc.debug_name)));
+    }
 
     SDL_GPUTextureCreateInfo info{};
     info.type = SDL_GPU_TEXTURETYPE_2D;
     info.format = detail::to_sdl(desc.format);
-    info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    info.usage = usage;
     info.width = desc.width;
     info.height = desc.height;
     info.layer_count_or_depth = 1;
@@ -67,6 +89,7 @@ Result<TextureHandle> Device::create_texture(const TextureDesc& desc) {
         .width = desc.width,
         .height = desc.height,
         .format = desc.format,
+        .usage = desc.usage,
         .debug_name = name,
     });
     if (!handle) {
