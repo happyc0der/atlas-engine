@@ -184,3 +184,41 @@ function(atlas_add_app name)
     atlas_enable_tidy(${target})
     atlas_link_tracy(${target})
 endfunction()
+
+# atlas_add_app_library: a static library of application support code.
+#
+# Not an engine module: it does not consult ATLAS_MODULES, it lives under apps/, and engine
+# modules may never depend on it. It exists for code that two applications share and no
+# module should own, such as argument plumbing and a frame-time ring. Everything else about
+# it matches a module: the same warnings, sanitizers, static analysis and profiling hooks.
+function(atlas_add_app_library name)
+    cmake_parse_arguments(ARG "" "" "SOURCES;DEPENDS" ${ARGN})
+
+    if(NOT ATLAS_BUILD_APPS)
+        return()
+    endif()
+
+    set(target atlas_${name})
+    add_library(${target} STATIC ${ARG_SOURCES})
+    add_library(atlas::${name} ALIAS ${target})
+
+    target_include_directories(${target}
+        PUBLIC  "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+    foreach(dep IN LISTS ARG_DEPENDS)
+        target_link_libraries(${target} PUBLIC ${dep})
+    endforeach()
+
+    set_target_properties(${target} PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+        FOLDER "apps")
+
+    atlas_set_warnings(${target})
+    atlas_set_common_compile_options(${target})
+    atlas_apply_sanitizers(${target})
+    atlas_enable_tidy(${target})
+    atlas_link_tracy(${target})
+endfunction()

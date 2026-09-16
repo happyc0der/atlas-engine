@@ -35,7 +35,7 @@ integration ran for the first time. What it found is recorded in
 
 | What | State |
 |---|---|
-| Continuous integration | Runs, on every push. It found ten distinct problems in its first six attempts, across five corrective pushes. None could have been found locally: they are properties of the runner images, the checkout action, the triplets, and compilers this machine does not have. |
+| Continuous integration | Runs, on every push. It found twelve distinct problems in its first seven attempts, across six corrective pushes. None could have been found locally: they are properties of the runner images, the checkout action, the triplets, and compilers this machine does not have. |
 | macOS and Linux x86_64 | Both build and pass, in Debug and Release. Linux x86_64 is verified for the first time; the local container is arm64. |
 | Windows | Compiles for the first time. It found two genuine portability bugs in code that had never been compiled by MSVC. |
 | x86_64 determinism | Measured. The golden hashes are identical on macOS arm64, Linux arm64 and Linux x86_64. MSVC is still unmeasured, and the scenario is integer-only, so floating point in authoritative state remains an open question rather than an answered one. |
@@ -59,12 +59,19 @@ integration ran for the first time. What it found is recorded in
 
 ### M3 — camera and batching
 
-- **A render graph.** Waits for two real multi-pass features to exist, so it is designed
-  against something rather than imagined.
+- **A render graph.** ADR-0002 set the bar at two real multi-pass features, so that it is
+  designed against something rather than imagined. **Status changed in M7:** capture's
+  offscreen-then-blit and the identifier-target picking pass are those two. The question is
+  live for M8, and the design must be checked against both implementations, in particular
+  against what each does with target lifetime and pass ordering, before a line is written.
 - **Rotated sprites.** The batcher draws axis-aligned rectangles. A scene can express a
-  rotation the renderer cannot draw, and the sandbox scene avoids rotation rather than
-  displaying something that does not match what it holds. Picked up when the renderer next
-  changes, in M7.
+  rotation the renderer cannot draw. First deferred in M3 with "picked up when the renderer
+  next changes, in M7". The renderer changed in M7 and this was deferred again, on a stated
+  reason rather than by lapse: the Strategy Lab is axis-aligned, and at a million cells every
+  added instance byte costs a megabyte per upload in the exact path M7 made faster. The silent
+  drop in the sandbox scene demo becomes a logged warning, so a scene expressing something the
+  renderer cannot draw is visible. Picked up by the first consumer that needs a rotated
+  instance, or when instance data is next redesigned.
 
 ### M4 — assets
 
@@ -78,9 +85,14 @@ integration ran for the first time. What it found is recorded in
 ### M5 — scene
 
 - **The `runtime` module.** Planned here on the assumption a second application would need the
-  same composition. Scene inspection went into the existing overlay, so there is still one
-  composition root, and extracting a module for it would be an abstraction with a single call
-  site. Created when a second application genuinely needs it.
+  same composition. In M7 the second application arrived and the assumption was tested line by
+  line against `apps/sandbox/main.cpp`: what would be duplicated split into about 195 lines of
+  pure, untested utilities that were identical, and a frame loop that was not, because the
+  sandbox loop has no kernel and no snapshot publication while the lab's has no scene graph.
+  The utilities became `apps/common`, a static library with the tests they never had. A module
+  for the loop would have been a second `main` depending on every other module, and would have
+  made the dependency table less informative than it is. Re-deferred with a sharper condition:
+  a third application, or the two loops converging in shape rather than merely in ingredients.
 - **Command and undo infrastructure, and therefore scene editing.** The scene panel takes the
   scene by const reference, so the compiler enforces read-only rather than discipline. Mutation
   arrives in M9 with the infrastructure that routes every change through one validated path.

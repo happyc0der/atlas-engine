@@ -17,6 +17,7 @@
 
 #include "harness.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -75,8 +76,9 @@ void collect(void* context, void* data, int size) {
     for (const std::uint32_t side : {512U, 2048U}) {
         const std::vector<std::byte> png = make_png(side);
         const auto label = std::format("{}x{} png, {} KiB", side, side, png.size() / 1024);
-        const std::uint64_t key =
-            atlas::assets::ArtifactCache::key_for(png, atlas::assets::kTextureImporterVersion);
+        const auto when = std::filesystem::file_time_type{} + std::chrono::seconds{1'000};
+        const std::uint64_t key = atlas::assets::ArtifactCache::key_for(
+            "bench.png", png.size(), when, atlas::assets::kTextureImporterVersion);
 
         // Cold: decode. Fewer iterations at the large size, since each is real work.
         const std::uint64_t iterations = side >= 2048 ? 12 : 40;
@@ -111,8 +113,8 @@ void collect(void* context, void* data, int size) {
         // Hashing the source is part of every cache lookup and is paid on hits and misses
         // alike, so it is reported on its own.
         auto hashing = atlas::bench::measure("assets/cache_key", label, iterations * 4, 4, [&] {
-            volatile std::uint64_t sink =
-                atlas::assets::ArtifactCache::key_for(png, atlas::assets::kTextureImporterVersion);
+            volatile std::uint64_t sink = atlas::assets::ArtifactCache::key_for(
+                "bench.png", png.size(), when, atlas::assets::kTextureImporterVersion);
             (void)sink;
         });
         hashing.units_per_iteration = png.size();

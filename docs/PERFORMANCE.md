@@ -42,7 +42,7 @@ GPU timing is reported.
 
 `benchmarks/atlas_bench` appears in M3. It emits machine-readable JSON plus a
 human-readable table. Each result records scenario, parameters, sample count, warm-up
-policy, median, p90, p99, build configuration, dependency revisions, commit, and machine
+policy, median, p90, p99, build configuration, commit, and machine
 metadata.
 
 Baselines live in `benchmarks/baselines/<machine-id>.json` and are compared by
@@ -193,8 +193,22 @@ in the roadmap, because the three candidates trade different things: a faster ha
 dependency, keying by size and modification time is the industry standard but weaker, and a
 first-party word-at-a-time hash is neither.
 
-Until that is settled, `--cache-dir` exists and should not be used for anything but the
-measurement above.
+**Re-keyed.** The owner chose size and modification time, the key every build system uses.
+Prediction before the change: the warm path becomes the 2.1 ms read alone, about 4x. Result:
+
+| Noise PNG | Cold decode | Warm read | Computing the key |
+|---|---|---|---|
+| 512x512, 1 MB | 0.53 ms | 0.14 ms | below timer resolution |
+| 2048x2048, 16 MB | 8.46 ms | 2.26 ms | below timer resolution |
+
+3.7x at both sizes, and the key line is now a trivial hash of a path and two integers. The
+trade was recorded up front and stands: a file rewritten with the same size inside the
+timestamp's resolution serves the previous decode, and a moved file misses. `--cache-dir` is
+now safe to use.
+
+The first attempt is left in this history on purpose. A cache that was slower than no cache
+passed every functional test; only the benchmark caught it, which is the argument for the
+measurement policy in one paragraph.
 
 ## Optimisation candidates
 

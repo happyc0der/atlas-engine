@@ -4,10 +4,11 @@
 /// \file
 /// Loading cooked shaders from disk.
 ///
-/// A stopgap, and labelled as one: it reads files by path, which the asset system in M4
-/// replaces with virtual paths, identifiers and asynchronous loading. What it does do now is
-/// pick the format the device accepts and feed the reflected resource counts into shader
-/// creation, so the counts cannot disagree with the shaders.
+/// Reads cooked shaders by path rather than through the asset registry. That is a recorded
+/// deferral, not an oversight: the registry has nothing to add to a shader whose resource
+/// counts are already compile-time constants from the generated manifest. See
+/// docs/DEFERRED.md under M4. It moves behind the registry when the registry can offer it
+/// something, such as hot reload of a re-cooked shader.
 
 #include <atlas/core/result.hpp>
 #include <atlas/rhi/device.hpp>

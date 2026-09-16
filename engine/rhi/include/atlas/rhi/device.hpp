@@ -296,9 +296,8 @@ class Device {
     ///
     /// The copy happens inside end_frame, because a swapchain image exists only for the
     /// duration of its own frame. It stalls until the copy completes, so this is for
-    /// screenshots and tests, never for a frame path. The same readback route carries
-    /// integer-ID picking in M7.
-    /// A rectangle of pixels copied back from a texture.
+    /// screenshots and tests, never for a frame path. Picking does not go through this; it uses
+    /// request_readback, which does not wait. A rectangle of pixels copied back from a texture.
     struct Readback {
         /// The region that was asked for, in the source texture.
         Rect2D region;

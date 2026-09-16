@@ -8,6 +8,7 @@ atlas_add_app(sandbox
         scene.cpp
         scene_demo.cpp
     DEPENDS
+        atlas::app_common
         atlas::assets
         atlas::platform
         atlas::renderer

@@ -82,8 +82,12 @@ struct CommitContext {
 struct SystemDesc {
     std::string_view name;
 
-    /// Tables read during compute. Reading an undeclared table is not detectable by the
-    /// kernel; declaring it is what makes the conflict analysis mean anything.
+    /// Tables read during compute that some *other* system writes. A system's own written
+    /// tables are not listed here: add() refuses a table in both sets, because compute would
+    /// see the value from before the system's own commit and the ordering would be
+    /// ambiguous. A system may read what it writes without declaring it. Reading an
+    /// undeclared table is not detectable by the kernel; declaring it is what makes the
+    /// conflict analysis mean anything.
     std::vector<TableId> reads;
 
     /// Tables written during commit.

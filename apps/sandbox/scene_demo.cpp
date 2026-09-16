@@ -17,6 +17,10 @@ namespace {
 
 constexpr log::Category kApp = log::category::kApp;
 
+// A composed matrix's off-diagonal terms are exactly zero for pure scale, but arrive through
+// float multiplication; anything under this fraction of the axis length is arithmetic noise.
+constexpr float kRotationTolerance = 1e-4F;
+
 constexpr float kParentSize = 24.0F;
 constexpr float kChildSize = 10.0F;
 constexpr float kOrbitRadius = 40.0F;
@@ -322,12 +326,18 @@ renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
         }
 
         // The batcher draws axis-aligned rectangles, so a composed rotation cannot be shown.
-        // Position and scale are taken from the composed matrix and rotation is dropped. The
-        // demonstration therefore uses no rotation, rather than quietly drawing something
-        // that does not match the scene. See docs/ROADMAP.md for where rotation is picked up.
+        // Position and scale are taken from the composed matrix and rotation is dropped. A
+        // scene that expresses one is told so once, rather than drawn quietly wrong; the
+        // re-deferral and its reason are in docs/DEFERRED.md under M3.
         const auto m = world->matrix.uniform_elements();
         const float scale_x = std::hypot(m[0], m[1]);
         const float scale_y = std::hypot(m[4], m[5]);
+        if (!m_warned_rotation && (std::abs(m[1]) > kRotationTolerance * scale_x ||
+                                   std::abs(m[4]) > kRotationTolerance * scale_y)) {
+            m_warned_rotation = true;
+            ATLAS_LOG_WARN(kApp, "a sprite carries a rotation the batcher cannot draw; it is drawn "
+                                 "axis-aligned, and this is reported once per scene");
+        }
         const float width = sprite->size.x * scale_x;
         const float height = sprite->size.y * scale_y;
 

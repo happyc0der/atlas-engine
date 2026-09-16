@@ -84,6 +84,8 @@ class SceneDemo {
     renderer::TextureCache m_textures;
     renderer::QuadBatch m_batch;
     assets::AssetId m_texture_id;
+    /// Rotation is reported the first time it is dropped, not every frame.
+    bool m_warned_rotation = false;
 
     scene::Scene m_scene;
     std::filesystem::path m_save_path;

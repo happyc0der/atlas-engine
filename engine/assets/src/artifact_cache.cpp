@@ -78,7 +78,7 @@ Result<ArtifactCache> ArtifactCache::open(std::filesystem::path directory) {
     // failure would be one line in a log per asset.
     const auto probe = directory / ".atlas-cache-probe";
     {
-        std::ofstream stream(probe, std::ios::binary | std::ios::trunc);
+        const std::ofstream stream(probe, std::ios::binary | std::ios::trunc);
         if (!stream) {
             return std::unexpected(
                 Error(ErrorCode::PermissionDenied,
@@ -92,16 +92,19 @@ Result<ArtifactCache> ArtifactCache::open(std::filesystem::path directory) {
     return ArtifactCache(std::move(directory));
 }
 
-std::uint64_t ArtifactCache::key_for(std::span<const std::byte> source,
+std::uint64_t ArtifactCache::key_for(std::string_view path, std::uint64_t size,
+                                     std::filesystem::file_time_type modified,
                                      std::uint32_t importer_version) noexcept {
-    // The versions go in first, so two importers reading identical bytes produce different
+    // The versions go in first, so two importers reading the same file produce different
     // keys, and so a change of hash algorithm changes every key rather than colliding with an
-    // entry the old algorithm wrote.
+    // entry the old algorithm wrote. The timestamp's representation is the platform's own,
+    // which is fine for a cache that lives on one machine and is never shared.
     Hasher hasher;
     hasher.add(kHashAlgorithmVersion);
     hasher.add(importer_version);
-    hasher.add(static_cast<std::uint64_t>(source.size()));
-    hasher.add(source);
+    hasher.add(path);
+    hasher.add(size);
+    hasher.add(static_cast<std::int64_t>(modified.time_since_epoch().count()));
     return hasher.value();
 }
 

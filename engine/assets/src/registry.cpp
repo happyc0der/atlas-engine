@@ -122,9 +122,14 @@ struct Registry::Impl {
             // The cache first, keyed by what is about to be decoded and by the importer that
             // would decode it. A hit is a read instead of a decode; a miss decodes and then
             // stores, so the next run hits.
+            // The key needs the modification time, which was read above and may be missing;
+            // without it the file is decoded and simply not cached.
+            const bool cacheable = cache.has_value() && completion.modified_at.has_value();
             const std::uint64_t key =
-                cache.has_value() ? ArtifactCache::key_for(*bytes, kTextureImporterVersion) : 0;
-            if (cache.has_value()) {
+                cacheable ? ArtifactCache::key_for(job.path.text(), bytes->size(),
+                                                   *completion.modified_at, kTextureImporterVersion)
+                          : 0;
+            if (cacheable) {
                 if (auto cached = cache->load_texture(key)) {
                     completion.texture = std::move(*cached);
                     completion.from_cache = true;
@@ -137,7 +142,7 @@ struct Registry::Impl {
                 completion.error = imported.error().to_string();
                 break;
             }
-            if (cache.has_value()) {
+            if (cacheable) {
                 // A failed store is logged and otherwise ignored: the decode succeeded, and
                 // the only consequence is decoding again next time.
                 if (auto status = cache->store_texture(key, *imported); !status) {

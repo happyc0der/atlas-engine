@@ -4,12 +4,19 @@
 /// \file
 /// Decoded assets kept on disk, so a repeated import is a read rather than a decode.
 ///
-/// Keyed by **content**, not by path: the key is a hash of the source bytes together with the
-/// importer's version, so a file that moves still hits and a file that changes cannot. The
-/// importer version is part of the key so that changing what the importer produces
-/// invalidates everything it produced before, rather than serving stale output that happens
-/// to parse. The canonical hash's own algorithm version is folded in as well, for the same
-/// reason one level down.
+/// Keyed by the source's **path, size and modification time**, plus the importer's version.
+/// Not by content. The first version of this cache hashed the source bytes, which is the
+/// safer key, and the measurement showed why it is the wrong one here: hashing a sixteen
+/// megabyte PNG with the canonical byte-serial hash took fifteen milliseconds, against an
+/// eight millisecond decode, so the warm path was slower than no cache at all. A key built
+/// from three integers costs nothing, which is what lets the cached read be the whole cost.
+///
+/// The trade, stated plainly: a file rewritten with the same size inside the timestamp's
+/// resolution serves the previous decode, and a moved file misses. That is the trade every
+/// build system makes, and the second half is the harmless one. The importer version is in
+/// the key so that changing what the importer produces invalidates everything it produced
+/// before, and the canonical hash's algorithm version is folded in for the same reason one
+/// level down.
 ///
 /// **A cache entry is untrusted input.** It is a file in a directory anyone can write to.
 /// Every length is checked before it is used and a corrupt entry is discarded rather than
@@ -24,10 +31,13 @@
 #include <atlas/assets/importer.hpp>
 #include <atlas/core/result.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
 
 namespace atlas::assets {
 
@@ -44,8 +54,10 @@ class ArtifactCache {
     /// up front rather than failing quietly on every store.
     [[nodiscard]] static Result<ArtifactCache> open(std::filesystem::path directory);
 
-    /// The key for a source, from its content and the importer that will decode it.
-    [[nodiscard]] static std::uint64_t key_for(std::span<const std::byte> source,
+    /// The key for a source, from where it is, how big it is, when it changed, and which
+    /// importer will decode it. Cheap by design; see the file comment for why not content.
+    [[nodiscard]] static std::uint64_t key_for(std::string_view path, std::uint64_t size,
+                                               std::filesystem::file_time_type modified,
                                                std::uint32_t importer_version) noexcept;
 
     /// A cached texture for `key`, or nothing.

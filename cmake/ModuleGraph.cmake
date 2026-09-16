@@ -41,7 +41,7 @@ set(ATLAS_MODULE_DEPS_scene             "core;math;assets;rhi" CACHE INTERNAL ""
 set(ATLAS_MODULE_DEPS_simulation        "core;tasks" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_runtime           "core;math;platform;rhi;renderer;assets;scene;simulation" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_rhi_internal      "core;platform;rhi" CACHE INTERNAL "")
-set(ATLAS_MODULE_DEPS_tools             "core;math;platform;platform_internal;rhi;rhi_internal;renderer;assets;scene;simulation;runtime" CACHE INTERNAL "")
+set(ATLAS_MODULE_DEPS_tools             "core;math;platform;platform_internal;rhi;rhi_internal;renderer;assets;scene;simulation" CACHE INTERNAL "")
 
 # Third-party libraries permitted in a module's PUBLIC headers. Everything else must be a
 # private implementation detail. Each entry needs an ADR.

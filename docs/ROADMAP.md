@@ -82,7 +82,7 @@ zones and validation; lifetime, shutdown, and the shader ADR.
 
 The triangle is verified by reading the swapchain back and checking pixels, not by looking
 at a screenshot: the apex must be red-dominant, the lower corners green and blue, and the
-background the clear colour. The same readback carries integer-ID picking in M7.
+background the clear colour. Picking in M7 does not reuse this: it has its own deferred readback that never waits on a fence.
 
 Direct3D 12 is not supported. The shader toolchain produces SPIR-V and Metal Shading
 Language but not DXIL, because the compiler that produces DXIL has no macOS build; Windows
@@ -331,6 +331,54 @@ benchmark CLI; the profiler counter UI.
 - Synthetic coloured cell field, map-mode changes, panning and zooming, ID picking, chunk
   culling hooks, mock data-oriented systems, speed controls, replay, and profiling UI.
 - The headless simulation benchmark runs independently of rendering.
+
+### Gate 1 — engine capability, done before any lab code
+
+Planning M7 began with a re-examination of M0 to M6 that found fourteen things, the largest
+being that nothing outside the tests had ever driven the M6 kernel, and that the quad batcher
+had stalled on a graphics fence once per flush since M3 with the evidence already in the
+committed benchmark baseline: ten times the quads moved the p99 by minus eight percent, a tail
+flat in the payload, which is a fixed cost. The owner chose two gates so that the engine work
+could be proven and reported before the lab depended on it.
+
+What Gate 1 built, each with tests:
+
+- **Offscreen colour targets, `R32Uint`, and a blend mode** (`TextureUsage`,
+  `ColourTargetDesc::texture`, `BlendMode`, `RenderPass::target_extent/target_format`).
+  Spiked on Metal and llvmpipe first, because an integer target through the shader
+  cross-compiler was the one unknown. Two backend disagreements were measured and shaped the
+  API; ADR-0002 records both.
+- **Deferred bounded readback**, polled through `SDL_QueryGPUFence`, at most four outstanding,
+  the pixel storage sized at request so the poll is genuinely allocation-free. A 1x1 readback
+  returns exactly four bytes, which is what picking needs. Capture was rebuilt on the same path,
+  which fixed its assumption that every texture has the swapchain's format.
+- **Streaming buffer upload** through SDL's cycling, with the prediction written down first:
+  a fixed wait should collapse the p99 toward the p90. The committed baseline did not reproduce
+  (a ninety percent spread across runs), so per the plan the comparison stopped there and the
+  fence was measured directly at about 460 microseconds per flush, which is the cost removed.
+  The test that matters is two flushes in one frame with both groups asserted present in the
+  picture; the capacity test alone would have passed while the first draw showed the second
+  flush's data.
+- **`TickAccumulator::set_tick`**, so a load cannot leave the two tick counters diverged.
+- **The cooked-artifact cache.** Built as the charter requires, measured, and found wanting in
+  its first form: hashing the source bytes for the key cost 15.3 milliseconds against an
+  8.25 millisecond decode. Reported, and re-keyed on the owner's decision to size plus
+  modification time plus importer version, after which a warm import at 2048² is 2.26
+  milliseconds against 8.46 cold. Both numbers and the rejected design are in
+  `docs/PERFORMANCE.md`. A cache entry is untrusted input: dimensions, byte count and file
+  size are all checked before a byte is trusted, and a corrupt entry is discarded, tested.
+- **`apps/common`** instead of the `runtime` module: the roughly 195 lines the two applications
+  would have duplicated, none of which had a test, now a static library with thirteen test
+  cases. The sandbox lost 196 lines and its eleven integration cases still pass unchanged.
+- **A documentation truth pass**: the ten-versus-twelve CI count, three places that promised
+  capture carries picking, a backwards `tools → runtime` edge in the module graph, the read-set
+  wording in `schedule.hpp`, the shader loader's "stopgap" note, and a claim in
+  `docs/PERFORMANCE.md` about a field that does not exist.
+
+Two designs were changed by measurement rather than argument: an integer clear value was
+removed from the descriptor because the backends do not agree on it, and the cache key was
+changed because the content hash cost more than the work it saved. Gate 2, the lab itself,
+starts only after this gate has been reported.
 
 ## M8 — Performance hardening and parallel simulation
 

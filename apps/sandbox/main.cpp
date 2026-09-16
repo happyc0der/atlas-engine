@@ -8,6 +8,11 @@
 // makes startup and shutdown ordering visible rather than implicit. A runtime module takes
 // over this role in M5, when a second application needs the same composition.
 
+#include <atlas/app/frame_counters.hpp>
+#include <atlas/app/log_options.hpp>
+#include <atlas/app/main_guard.hpp>
+#include <atlas/app/ppm.hpp>
+#include <atlas/app/run_bounds.hpp>
 #include <atlas/assets/registry.hpp>
 #include <atlas/core/args.hpp>
 #include <atlas/core/build_info.hpp>
@@ -31,17 +36,14 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <exception>
 #include <filesystem>
 #include <format>
-#include <fstream>
 #include <optional>
 #include <ranges>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <variant>
-#include <vector>
 
 namespace {
 
@@ -84,34 +86,6 @@ struct Options {
     std::uint64_t inspect = 0;  ///< 0 means no entity is selected to begin with.
 };
 
-[[nodiscard]] atlas::Result<atlas::log::Severity> parse_severity(std::string_view name) {
-    using atlas::log::Severity;
-    if (name == "trace") {
-        return Severity::Trace;
-    }
-    if (name == "debug") {
-        return Severity::Debug;
-    }
-    if (name == "info") {
-        return Severity::Info;
-    }
-    if (name == "warning" || name == "warn") {
-        return Severity::Warning;
-    }
-    if (name == "error") {
-        return Severity::Error;
-    }
-    if (name == "fatal") {
-        return Severity::Fatal;
-    }
-
-    return std::unexpected(atlas::Error(
-        atlas::ErrorCode::InvalidArgument,
-        std::format("unknown log level '{}'; expected one of: trace, debug, info, warning, "
-                    "error, fatal",
-                    name)));
-}
-
 void print_usage() {
     std::puts(R"(Atlas sandbox — engine acceptance harness.
 
@@ -145,36 +119,6 @@ Options:
   --help                 Print this message and exit.
 
 In a window, Escape or the close button quits.)");
-}
-
-/// Tears down the process-wide logging configuration when the run ends.
-class LogSession {
-  public:
-    LogSession() = default;
-    LogSession(const LogSession&) = delete;
-    LogSession& operator=(const LogSession&) = delete;
-    LogSession(LogSession&&) = delete;
-    LogSession& operator=(LogSession&&) = delete;
-
-    ~LogSession() { atlas::log::shutdown(); }
-};
-
-[[nodiscard]] atlas::Status configure_logging(const Options& options) {
-    const auto severity = parse_severity(options.log_level);
-    if (!severity) {
-        return std::unexpected(severity.error());
-    }
-    atlas::log::set_min_severity(*severity);
-    atlas::log::add_sink(atlas::log::make_console_sink());
-
-    if (!options.log_file.empty()) {
-        auto sink = atlas::log::make_file_sink(std::string{options.log_file});
-        if (!sink) {
-            return std::unexpected(std::move(sink).error().context("configuring logging"));
-        }
-        atlas::log::add_sink(std::move(*sink));
-    }
-    return atlas::ok();
 }
 
 [[nodiscard]] atlas::Result<Options> read_options(const atlas::Args& args) {
@@ -236,130 +180,13 @@ class LogSession {
 
     // A headless run has no window and therefore no close button: without a limit it would
     // never stop. Saying so is better than inventing a stop condition that does not exist.
-    if (options.headless && options.max_frames == 0 && options.max_ticks == 0) {
-        return std::unexpected(
-            atlas::Error(atlas::ErrorCode::InvalidArgument,
-                         "a headless run has no way to be asked to quit; pass --frames or "
-                         "--ticks to bound it"));
+    if (auto bound = atlas::app::validate_headless_bound(options.headless, options.max_frames,
+                                                         options.max_ticks);
+        !bound) {
+        return std::unexpected(std::move(bound).error());
     }
 
     return options;
-}
-
-/// Rolling timing counters.
-///
-/// Median and tails rather than a mean: a mean hides exactly the stalls that make an
-/// application feel bad. See docs/PERFORMANCE.md.
-///
-/// The samples are a fixed-size ring. A headless run can produce millions of frames a
-/// second, and keeping every one of them would grow without bound while answering a
-/// question nobody asked: what matters is recent behaviour, not the whole history. Totals
-/// are counted separately and are exact.
-class FrameCounters {
-  public:
-    /// Enough samples for stable tail estimates, small enough to stay in cache.
-    static constexpr std::size_t kWindow = 4096;
-
-    FrameCounters() { m_frame_times.resize(kWindow, 0); }
-
-    void record(std::uint64_t frame_ns, std::uint64_t tick_ns, std::uint32_t ticks,
-                std::uint32_t dropped) noexcept {
-        m_frame_times[m_next] = frame_ns;
-        m_next = (m_next + 1) % kWindow;
-        m_samples = std::min(m_samples + 1, kWindow);
-
-        m_total_tick_ns += tick_ns;
-        m_total_ticks += ticks;
-        m_dropped_ticks += dropped;
-        ++m_frames;
-    }
-
-    void report() const {
-        if (m_frames == 0) {
-            ATLAS_LOG_INFO(kApp, "no frames ran");
-            return;
-        }
-
-        ATLAS_LOG_INFO(kApp, "frames={} ticks={} dropped={} tick time total us={}", m_frames,
-                       m_total_ticks, m_dropped_ticks, m_total_tick_ns / 1000);
-
-        std::vector<std::uint64_t> samples(
-            m_frame_times.begin(), m_frame_times.begin() + static_cast<std::ptrdiff_t>(m_samples));
-        std::ranges::sort(samples);
-
-        const auto at = [&samples](double quantile) {
-            const auto index =
-                static_cast<std::size_t>(static_cast<double>(samples.size() - 1) * quantile);
-            return samples[index];
-        };
-
-        ATLAS_LOG_INFO(kApp,
-                       "frame time ns over the last {} frames: median={} p90={} p99={} max={}",
-                       samples.size(), at(0.50), at(0.90), at(0.99), samples.back());
-
-        if (m_dropped_ticks > 0) {
-            ATLAS_LOG_WARN(kApp,
-                           "{} ticks were dropped: the simulation did not keep up with the "
-                           "requested speed",
-                           m_dropped_ticks);
-        }
-    }
-
-  private:
-    std::vector<std::uint64_t> m_frame_times;
-    std::size_t m_next = 0;
-    std::size_t m_samples = 0;
-    std::uint64_t m_total_tick_ns = 0;
-    std::uint64_t m_frames = 0;
-    std::uint64_t m_total_ticks = 0;
-    std::uint64_t m_dropped_ticks = 0;
-};
-
-/// Write a captured frame to a Portable Pixmap.
-///
-/// PPM because it needs no library and every image viewer reads it. The capture is whatever
-/// the swapchain format is, which is usually blue-green-red-alpha rather than the
-/// red-green-blue PPM wants, so the channels are reordered here.
-[[nodiscard]] atlas::Status write_ppm(const std::filesystem::path& path,
-                                      const atlas::rhi::Device::Capture& capture) {
-    if (capture.pixels.empty() || capture.extent.width == 0 || capture.extent.height == 0) {
-        return std::unexpected(
-            atlas::Error(atlas::ErrorCode::InvalidArgument, "nothing was captured"));
-    }
-
-    const bool bgra = capture.format == atlas::rhi::TextureFormat::Bgra8Unorm ||
-                      capture.format == atlas::rhi::TextureFormat::Bgra8UnormSrgb;
-
-    std::ofstream stream(path, std::ios::binary);
-    if (!stream) {
-        return std::unexpected(
-            atlas::Error(atlas::ErrorCode::PermissionDenied,
-                         std::format("cannot open '{}' for writing", path.string())));
-    }
-
-    stream << "P6\n" << capture.extent.width << ' ' << capture.extent.height << "\n255\n";
-
-    const std::size_t pixel_count =
-        static_cast<std::size_t>(capture.extent.width) * capture.extent.height;
-    std::string rows;
-    rows.resize(pixel_count * 3);
-
-    for (std::size_t i = 0; i < pixel_count; ++i) {
-        const auto* pixel = &capture.pixels[i * 4];
-        const auto r = static_cast<unsigned char>(pixel[bgra ? 2 : 0]);
-        const auto g = static_cast<unsigned char>(pixel[1]);
-        const auto b = static_cast<unsigned char>(pixel[bgra ? 0 : 2]);
-        rows[(i * 3) + 0] = static_cast<char>(r);
-        rows[(i * 3) + 1] = static_cast<char>(g);
-        rows[(i * 3) + 2] = static_cast<char>(b);
-    }
-
-    stream.write(rows.data(), static_cast<std::streamsize>(rows.size()));
-    if (!stream) {
-        return std::unexpected(atlas::Error(atlas::ErrorCode::Internal,
-                                            std::format("writing '{}' failed", path.string())));
-    }
-    return atlas::ok();
 }
 
 /// One simulation tick.
@@ -391,8 +218,9 @@ void step_simulation(atlas::Tick tick) {
         return std::unexpected(options.error());
     }
 
-    const LogSession logging;
-    if (const auto status = configure_logging(*options); !status) {
+    const atlas::app::LogSession logging;
+    if (const auto status = atlas::app::configure_logging(options->log_level, options->log_file);
+        !status) {
         return status;
     }
 
@@ -499,7 +327,7 @@ void step_simulation(atlas::Tick tick) {
                    options->max_frames, options->max_ticks);
 
     atlas::SteadyClock clock;
-    FrameCounters counters;
+    atlas::app::FrameCounters counters;
     std::uint64_t frame_index = 0;
     bool quit = false;
     bool captured = false;
@@ -577,18 +405,10 @@ void step_simulation(atlas::Tick tick) {
         const auto tick_start = std::chrono::steady_clock::now();
         const auto plan = accumulator->advance(frame_ns);
 
-        // Clamped to the requested bound so that --ticks N means exactly N in every mode.
-        // Without this, unbounded mode runs whole batches and overshoots by up to the batch
-        // size, so the same flag would mean "exactly N" when pacing against the clock and
-        // "N rounded up" when not. A benchmark dividing by N would then be quietly wrong.
-        std::uint32_t ticks_to_run = plan.ticks_to_run;
-        if (options->max_ticks != 0) {
-            const std::uint64_t done = accumulator->current_tick();
-            const std::uint64_t remaining =
-                done >= options->max_ticks ? 0 : options->max_ticks - done;
-            ticks_to_run =
-                static_cast<std::uint32_t>(std::min<std::uint64_t>(ticks_to_run, remaining));
-        }
+        // The clamp lives in apps/common with its own test, because getting it wrong once
+        // already cost a real defect.
+        const std::uint32_t ticks_to_run = atlas::app::clamp_ticks(
+            plan.ticks_to_run, accumulator->current_tick(), options->max_ticks);
 
         for (std::uint32_t i = 0; i < ticks_to_run; ++i) {
             const atlas::Tick tick = accumulator->current_tick() + i;
@@ -732,7 +552,7 @@ void step_simulation(atlas::Tick tick) {
     if (!options->screenshot.empty() && device.has_value()) {
         if (auto capture = device->take_capture()) {
             const std::filesystem::path path{options->screenshot};
-            if (const auto status = write_ppm(path, *capture); !status) {
+            if (const auto status = atlas::app::write_ppm(path, *capture); !status) {
                 ATLAS_LOG_ERROR(kApp, "writing the screenshot failed: {}", status.error());
             } else {
                 ATLAS_LOG_INFO(kApp, "screenshot written to '{}' ({}x{})", path.string(),
@@ -782,24 +602,5 @@ void step_simulation(atlas::Tick tick) {
 
 // NOLINTNEXTLINE(misc-const-correctness): the signature of main is fixed by the standard.
 int main(int argc, char** argv) {
-    // The outermost boundary. ADR-0005 forbids exceptions crossing module or thread
-    // boundaries and treats allocation failure as fatal; this catch exists so that such a
-    // failure exits with a diagnostic rather than through std::terminate.
-    try {
-        const auto status = run(argc, argv);
-
-        if (!status) {
-            const std::string message = status.error().to_string();
-            std::fprintf(stderr, "atlas_sandbox: %s\n", message.c_str());
-            ATLAS_LOG_ERROR(kApp, "exiting with failure: {}", message);
-            return 1;
-        }
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "atlas_sandbox: unhandled exception: %s\n", error.what());
-        return 1;
-    } catch (...) {
-        std::fprintf(stderr, "atlas_sandbox: unhandled exception of unknown type\n");
-        return 1;
-    }
+    return atlas::app::guarded_main("atlas_sandbox", [&] { return run(argc, argv); });
 }

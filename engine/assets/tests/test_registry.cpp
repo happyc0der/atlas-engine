@@ -499,17 +499,20 @@ TEST_CASE("a cold import populates the cache and a warm one reads it", "[assets]
     REQUIRE_FALSE(warm_pixels.empty());
 }
 
-TEST_CASE("the cache is keyed by content, so a moved file still hits", "[assets][cache]") {
+TEST_CASE("the cache is keyed by path, so an identical file elsewhere misses", "[assets][cache]") {
+    // The deliberate trade. Content keying would let this hit, and content keying cost more
+    // than the decode it bypassed; see the header. Two files, identical bytes, two entries.
     const TempTree tree;
     tree.write_png("textures/one.png");
-    tree.write_png("textures/two.png");  // identical bytes, different path
+    tree.write_png("textures/two.png");
     const auto cache_dir = tree.root() / "cache";
 
     (void)load_once(tree, cache_dir, "textures/one.png");
     const auto second = load_once(tree, cache_dir, "textures/two.png");
 
-    CHECK(second.cache_hits == 1);
-    CHECK(entries_in(cache_dir) == 1);
+    CHECK(second.cache_hits == 0);
+    CHECK(second.cache_misses == 1);
+    CHECK(entries_in(cache_dir) == 2);
 }
 
 TEST_CASE("a changed source misses the cache", "[assets][cache]") {
@@ -538,13 +541,18 @@ TEST_CASE("a changed source misses the cache", "[assets][cache]") {
     CHECK(registry->stats().cache_hits == 0);
 }
 
-TEST_CASE("the key changes with the importer version", "[assets][cache]") {
-    // So a new importer invalidates everything the old one produced, rather than serving
-    // output that happens to parse.
-    const std::array<std::byte, 4> source{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
-    CHECK(ArtifactCache::key_for(source, 1) != ArtifactCache::key_for(source, 2));
-    CHECK(ArtifactCache::key_for(source, kTextureImporterVersion) ==
-          ArtifactCache::key_for(source, kTextureImporterVersion));
+TEST_CASE("the key changes with every input it is built from", "[assets][cache]") {
+    // A new importer invalidates everything the old one produced; a different size or time
+    // means a different file. Each input must move the key on its own.
+    const auto when = std::filesystem::file_time_type{} + std::chrono::seconds{1'000};
+    const auto later = when + std::chrono::seconds{1};
+    const auto base = ArtifactCache::key_for("a.png", 100, when, 1);
+
+    CHECK(base == ArtifactCache::key_for("a.png", 100, when, 1));
+    CHECK(base != ArtifactCache::key_for("a.png", 100, when, 2));
+    CHECK(base != ArtifactCache::key_for("b.png", 100, when, 1));
+    CHECK(base != ArtifactCache::key_for("a.png", 101, when, 1));
+    CHECK(base != ArtifactCache::key_for("a.png", 100, later, 1));
 }
 
 TEST_CASE("a corrupt cache entry is discarded rather than trusted", "[assets][cache]") {

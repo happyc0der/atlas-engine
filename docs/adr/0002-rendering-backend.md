@@ -51,6 +51,8 @@ frame-indexed deletion queue is added only if a future backend needs one.
 
 **No render graph.** Two real multi-pass features must exist first. If resource lifetime or
 pass ordering then justifies a graph, that is a new ADR and a minimum implementation.
+*Amended in M7:* the two features now exist, capture and identifier picking; the question is
+recorded as live in `docs/DEFERRED.md` and is taken up in M8.
 
 ## Alternatives
 
@@ -90,9 +92,23 @@ engine should be structured than Atlas wants to inherit. Rejected.
   blitting that to the swapchain, which `rhi` does whenever a capture is pending. This was
   found by the Metal validation layer, which aborts on the illegal copy; without validation
   the copy appeared to work, which is the more dangerous outcome and the reason the GPU test
-  presets turn validation on rather than leaving it optional. The offscreen target is also
-  what M7's integer-identifier picking needs, so the constraint pushed the design toward
-  where it had to go anyway.
+  presets turn validation on rather than leaving it optional.
+
+  *Amended in M7.* Offscreen colour targets became public API: `TextureUsage::colour_target`,
+  `ColourTargetDesc::texture` where null means this frame's swapchain image, an `R32Uint`
+  format for identifiers with `BlendMode::Replace` required on it, and a deferred bounded
+  readback (`request_readback`, `readback_ready`, `take_readback`, at most four outstanding)
+  polled through a fence rather than waited on. Capture kept its signature and was rebuilt on
+  those same internals, so there is one target-selection rule rather than a capture special
+  case: a named texture, else the pending capture target, else the swapchain; and a capture
+  can never hijack a pass that names its own target, which has its own test. With that shape
+  the framebuffer-only drawable stops being a limitation to work around and becomes a
+  property the API cannot express: a readback takes a `TextureHandle`, the swapchain image has
+  none, so the illegal copy cannot be written. Two backend disagreements were measured on the
+  way and are why the descriptors look as they do: Metal aborts on blending into an integer
+  target where Vulkan silently blends, hence the required blend mode rather than a default;
+  and the two backends disagree on how a clear value reaches an integer target, hence integer
+  targets always clear to zero and identifiers start at one.
 
 ## Rollback cost
 
