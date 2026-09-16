@@ -141,8 +141,12 @@ TEST_CASE("a consumer never sees a torn snapshot", "[sim][snapshot]") {
     });
 
     // Bounded by iterations rather than by a clock, so the test takes the same work on every
-    // machine and cannot hang.
-    while (channel.published() < 2000) {
+    // machine. It also waits for the consumer to have seen at least one frame: on a
+    // two-processor runner the producer published two thousand frames before the consumer
+    // thread was ever scheduled, and the torn check then passed over nothing, which is what
+    // the seen check below exists to catch. Waiting on it makes both assertions meaningful
+    // rather than one of them a statement about the scheduler.
+    while (channel.published() < 2000 || seen.load(std::memory_order_relaxed) == 0) {
         std::this_thread::yield();
     }
     stop.store(true, std::memory_order_relaxed);
