@@ -125,16 +125,23 @@ std::optional<ImportedTexture> ArtifactCache::load_texture(std::uint64_t key) co
         return std::nullopt;
     }
 
+    // Declared before the discard lambda so the lambda can close it. Windows refuses to
+    // delete a file that is still open, where POSIX unlinks it regardless; removing the entry
+    // with the stream open left a corrupt entry in place on Windows to be discarded again on
+    // every load. Found by the Windows continuous-integration lane, not by the local tests.
+    std::ifstream stream;
+
     // Anything wrong from here on is a corrupt entry: present, and not to be trusted.
     const auto discard = [&](std::string_view why) -> std::optional<ImportedTexture> {
         ATLAS_LOG_WARN(kAssets, "discarding cache entry '{}': {}", path.filename().string(), why);
+        stream.close();
         std::error_code remove_ec;
         std::filesystem::remove(path, remove_ec);
         m_discarded->fetch_add(1, std::memory_order_relaxed);
         return std::nullopt;
     };
 
-    std::ifstream stream(path, std::ios::binary);
+    stream.open(path, std::ios::binary);
     if (!stream) {
         return discard("cannot be opened");
     }
@@ -251,6 +258,9 @@ Status ArtifactCache::store_texture(std::uint64_t key, const ImportedTexture& te
         stream.write(reinterpret_cast<const char*>(texture.pixels.data()),
                      static_cast<std::streamsize>(texture.pixels.size()));
         if (!stream) {
+            // Closed first for the same reason as in load_texture: Windows will not delete
+            // an open file, and a failed write must not leave its temporary behind.
+            stream.close();
             std::error_code ec;
             std::filesystem::remove(temporary, ec);
             return std::unexpected(

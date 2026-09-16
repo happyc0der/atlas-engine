@@ -16,6 +16,7 @@
 #include <exception>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace atlas::app {
 
@@ -25,7 +26,7 @@ namespace atlas::app {
 /// on stderr, so a person running several Atlas binaries can tell which one spoke.
 template <typename Run> [[nodiscard]] int guarded_main(std::string_view program, Run&& run) {
     try {
-        const Status status = run();
+        const Status status = std::forward<Run>(run)();
         if (!status) {
             const std::string message = status.error().to_string();
             std::fprintf(stderr, "%.*s: %s\n", static_cast<int>(program.size()), program.data(),
