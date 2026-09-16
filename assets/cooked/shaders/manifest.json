@@ -7,6 +7,57 @@
   },
   "shaders": [
     {
+      "name": "cell_id",
+      "stage": "fragment",
+      "source": "cell_id.frag.hlsl",
+      "source_hash": "3113990a4703d6db",
+      "resources": {
+        "samplers": 0,
+        "storage_textures": 0,
+        "storage_buffers": 0,
+        "uniform_buffers": 0,
+        "inputs": [
+          {
+            "location": 0,
+            "type": "uint"
+          }
+        ]
+      },
+      "outputs": {
+        "spirv": {
+          "file": "cell_id.frag.spv",
+          "entry_point": "main"
+        },
+        "msl": {
+          "file": "cell_id.frag.msl",
+          "entry_point": "main0"
+        }
+      }
+    },
+    {
+      "name": "cell_id",
+      "stage": "vertex",
+      "source": "cell_id.vert.hlsl",
+      "source_hash": "532f0849c6beae69",
+      "resources": {
+        "samplers": 0,
+        "storage_textures": 0,
+        "storage_buffers": 0,
+        "uniform_buffers": 1,
+        "inputs": []
+      },
+      "outputs": {
+        "spirv": {
+          "file": "cell_id.vert.spv",
+          "entry_point": "main"
+        },
+        "msl": {
+          "file": "cell_id.vert.msl",
+          "entry_point": "main0"
+        }
+      }
+    },
+    {
       "name": "sprite",
       "stage": "fragment",
       "source": "sprite.frag.hlsl",

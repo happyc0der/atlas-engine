@@ -51,11 +51,22 @@ graph TD
   apps --> tools
 ```
 
-`atlas::runtime` does not exist yet. The plan created it in M5 on the assumption that a
-second application would need the same composition; scene inspection went into the existing
-overlay instead, so there is still one composition root in `apps/sandbox/main.cpp` and a
-`runtime` module would be an abstraction with a single call site. Until it exists, `tools`
-and `apps` depend on the engine modules directly, which is what the graph above shows.
+`atlas::runtime` does not exist. The plan created it in M5 on the assumption that a second
+application would need the same composition. M7 brought that second application, the
+Strategy Lab, and the assumption was tested line by line: what the two shared was about two
+hundred lines of pure utilities (argument plumbing, a frame-time ring, a PPM writer, the run
+bounds, the process boundary) and not the frame loop, because the sandbox drives a scene graph
+and the lab drives the simulation kernel. The utilities became `apps/common`, a static library
+with tests; a `runtime` module remains deferred until a third application, or the two loops
+converging in shape rather than in ingredients. `tools` and `apps` therefore depend on the
+engine modules directly, which is what the graph above shows.
+
+The lab itself is three targets, and the split is load-bearing: `atlas::lab_sim` holds the
+tables, systems, command and snapshot and may link only `atlas::simulation`, which CMake
+refuses to let it exceed, so the headless benchmark is independent of rendering by
+construction; `atlas::lab_view` holds the cell field and the identifier pass, so the GPU tests
+draw with the application's own code; and `apps/lab/main.cpp` is the composition root that
+puts a window, a device and an overlay around them.
 
 Third-party libraries are private to exactly one module: SDL3 to `platform` and `rhi`,
 EnTT and nlohmann-json to `scene`, Dear ImGui to `tools`, Tracy to `core` behind

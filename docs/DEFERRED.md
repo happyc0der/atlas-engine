@@ -110,6 +110,42 @@ integration ran for the first time. What it found is recorded in
 - **Worker-count invariance.** M8 by plan. M6 proves single-threaded replay determinism and
   ships the contract M8 needs; doing both at once would double the debugging surface.
 
+### M7 — Strategy Lab
+
+- **Column-level read and write sets.** The schedule's granularity is the table, so the lab's
+  two writers of `cells` (one touches `region_value`, the other `owner_index`) land in separate
+  batches: three batches for four systems, observed and asserted in the lab's tests. Column
+  sets would let them share one. Recorded from a single observation rather than acted on; M8's
+  parallel scheduling is where it earns a decision.
+- **The world hash's cost.** Hashing a million-cell world takes 11.8 ms of a 33 ms tick, one
+  FNV step per byte over eleven bytes per cell. Every tick pays it, because the tick's contract
+  is drain, compute, commit, hash. Two ways out, both M8 work: hash only tables a batch wrote
+  (the schedule knows), or a faster function behind `kHashAlgorithmVersion`, which exists so a
+  change of algorithm invalidates replays and saves rather than silently mismatching them.
+- **A single-threaded tick at a million cells is 33 ms.** So 60 ticks a second is out of
+  reach at that size until M8's parallel simulation. Meanwhile the lab caps catch-up at two
+  ticks per frame (`--max-ticks-per-frame`) and drops and counts the rest, because a frame
+  that ran eight of them would take a quarter of a second and rendering would not be
+  interactive, which is the milestone's requirement; the tick rate is reported, not promised.
+- **Instance compaction for the cell field.** Each drawn cell is a 48-byte quad instance
+  rebuilt from the snapshot every frame: 48 MB a frame at a million visible cells, 61 streamed
+  flushes, 8.3 ms. The identifier pass already derives every cell's rectangle in the shader
+  from its instance index and a per-chunk uniform, with no vertex buffer at all; the colour
+  pass could do the same with one byte per cell. Deferred because 8.3 ms met the requirement
+  and M8 is where draw submission is measured again.
+- **Snapshot pooling.** Building the snapshot costs 1.44 ms at a million cells, once per frame
+  after the last tick, and allocates a fresh one each time. The counter is in the overlay; the
+  pool is built when the counter says the allocation, not the fill, is what costs.
+- **Widgets in the overlay.** The lab's controls are keyboard only. That satisfies M7 and adds
+  no engine surface for one caller; widgets arrive with M9's command and undo work, so that no
+  widget becomes a second unvalidated path into state, the same reasoning that kept M5's scene
+  panel read-only.
+- **The sandbox's zoom anchor on a high-density display.** `DemoScene` hands the pointer's
+  logical coordinates to a camera whose viewport is in pixels, so a wheel zoom anchors at half
+  the intended point on a two-times display. The lab converts; the sandbox should too. Found
+  while making the lab's pick agree with its own analytic inverse, which is the kind of thing
+  a cross-check exists to find.
+
 ## Deferred by the charter, until a recorded limitation justifies the work
 
 The `tasks` module and its worker pool, created with the first parallel benchmark in M8. A

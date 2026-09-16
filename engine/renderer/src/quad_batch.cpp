@@ -3,8 +3,7 @@
 #include <atlas/core/log.hpp>
 #include <atlas/core/profile.hpp>
 #include <atlas/renderer/quad_batch.hpp>
-
-#include "shader_loader.hpp"
+#include <atlas/renderer/shader_loader.hpp>
 
 #include <array>
 #include <cstring>
@@ -51,7 +50,7 @@ Result<QuadBatch> QuadBatch::create(rhi::Device& device, const Config& config) {
     batch.m_device = &device;
     batch.m_capacity = config.capacity;
 
-    auto shaders = detail::load_shader_pair(device, config.shader_directory, "sprite");
+    auto shaders = load_shader_pair(device, config.shader_directory, "sprite");
     if (!shaders) {
         return std::unexpected(std::move(shaders).error().context("loading the sprite shaders"));
     }

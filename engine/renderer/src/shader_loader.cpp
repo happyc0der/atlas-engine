@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "shader_loader.hpp"
-
 #include <atlas/core/log.hpp>
+#include <atlas/renderer/shader_loader.hpp>
 
 #include "shader_manifest.hpp"
 
@@ -11,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace atlas::renderer::detail {
+namespace atlas::renderer {
 namespace {
 
 // maybe_unused because the only use in this file is a debug log, and debug logging compiles
@@ -136,4 +135,4 @@ Result<ShaderPair> load_shader_pair(rhi::Device& device, std::string_view direct
     return ShaderPair{.vertex = *vertex, .fragment = *fragment};
 }
 
-}  // namespace atlas::renderer::detail
+}  // namespace atlas::renderer

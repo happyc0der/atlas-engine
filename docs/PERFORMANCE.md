@@ -210,6 +210,67 @@ The first attempt is left in this history on purpose. A cache that was slower th
 passed every functional test; only the benchmark caught it, which is the argument for the
 measurement policy in one paragraph.
 
+## The Strategy Lab, M7: a million cells
+
+The lab is the first program to drive the simulation kernel, and the first to draw a million
+of anything. Both halves were measured separately, because the milestone's requirement is
+that a million cells stay *interactive*, and interactivity is a property of the frame, not of
+the tick.
+
+Recorded on the machine described above, RelWithDebInfo, `atlas_bench --filter simulation`,
+no device anywhere near the measurement: `atlas::lab_sim` cannot link one.
+
+| Scenario | Parameters | Median | p90 | p99 |
+|---|---|---|---|---|
+| Kernel tick | 10k cells | 128 us | 130 us | 138 us |
+| Kernel tick | 100k cells | 1.30 ms | 1.31 ms | 1.32 ms |
+| Kernel tick | 1M cells | 13.4 ms | 13.4 ms | 13.4 ms |
+| World hash alone | 1M cells | 11.8 ms | 11.8 ms | 11.8 ms |
+| step region value alone | 1M cells | 167 us | 171 us | 172 us |
+| accumulate population alone | 1M cells | 1.30 ms | 1.31 ms | 1.31 ms |
+| drift owner index alone | 1M cells | 3.7 us | 3.8 us | 3.8 us |
+| Deterministic run, 2 commands per tick | 1k, 10k, 100k ticks at 256 cells | 3.6 us per tick, all three |
+| Snapshot build | 100k cells | 138 us | 141 us | 143 us |
+| Snapshot build | 1M cells | 1.43 ms | 1.44 ms | 1.45 ms |
+
+The attribution is the finding. **The world hash is 88% of a million-cell tick**: one FNV
+step per byte over eleven bytes per cell, paid every tick because the tick's contract is
+drain, compute, commit, hash. The systems themselves cost 1.5 ms between them, and the two
+that use a random stream are negligible because they touch a thousandth of the cells. The
+lab first observed 33 ms per tick, not 13, because the kernel was also recording per-system
+hashes, which walk the written tables again; those exist to attribute a replay divergence,
+so the lab now records them only while recording. Hashing strategy is M8's first question and
+`docs/DEFERRED.md` records the two candidate answers.
+
+The frame, measured with the application itself (`atlas_lab`, Release, `--no-overlay`, the
+window fitted to the whole grid, frame times from `FrameCounters` over 120 frames):
+
+| Configuration | Median frame | p90 | p99 | Ticks per second achieved |
+|---|---|---|---|---|
+| 1M cells, paused (draw only) | 8.3 ms | 8.5 ms | 20.8 ms | - |
+| 1M cells, 30 tps | 8.9 ms | 21.4 ms | 23.4 ms | 29 (none dropped) |
+| 1M cells, 60 tps, catch-up limit 2 | 33.2 ms | 33.6 ms | 35.0 ms | 59 (1 dropped in 120 frames) |
+| 1M cells, headless, unbounded | - | - | - | 82 |
+| 100k cells, 60 tps | 8.5 ms | 8.8 ms | 9.2 ms | 60 (none dropped) |
+
+Drawing a million cells costs 8.3 ms: 61 flushes of the quad batch, 48 MB of instance data
+streamed per frame through the path Gate 1 made non-blocking. That is the requirement met.
+At 60 ticks a second the frame is two ticks plus the draw, which is what the catch-up limit
+is for: before it, the accumulator's default of eight catch-up ticks produced 270 ms frames.
+The limit does not make the simulation faster, it keeps the picture responsive while the
+simulation runs at what it can do and reports what it dropped.
+
+**Picking.** A click draws the identifier pass into an `R32Uint` target the size of the
+window, one draw per visible chunk with no vertex buffer, and requests a 1x1 readback after
+the frame is submitted. The readback is collected **two frames later** on this machine, polled
+through a fence; nothing waits on it. Every pick is cross-checked against the analytic inverse
+of the projection and a disagreement is logged; none has been observed, including at cell
+edges and chunk boundaries in the GPU tests, and through the integration check that
+reimplements the chunk-major index formula in Python.
+
+All of these numbers are processor-side. Graphics-processor time is not measurable through
+SDL_GPU and is not reported.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:

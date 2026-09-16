@@ -1,0 +1,26 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Chunk
+{
+    float4x4 view_projection;
+    float4 origin_and_cell;
+    uint4 _layout;
+};
+
+struct main0_out
+{
+    uint _entryPointOutput_id [[user(locn0)]];
+    float4 gl_Position [[position]];
+};
+
+vertex main0_out main0(constant Chunk& _32 [[buffer(0)]], uint gl_VertexIndex [[vertex_id]], uint gl_InstanceIndex [[instance_id]])
+{
+    main0_out out = {};
+    out._entryPointOutput_id = (_32._layout.y + gl_InstanceIndex) + 1u;
+    out.gl_Position = _32.view_projection * float4(_32.origin_and_cell.xy + ((float2(float(gl_InstanceIndex % _32._layout.x), float(gl_InstanceIndex / _32._layout.x)) + float2(float(gl_VertexIndex & 1u), float(gl_VertexIndex >> 1u))) * _32.origin_and_cell.z), 0.0, 1.0);
+    return out;
+}
+

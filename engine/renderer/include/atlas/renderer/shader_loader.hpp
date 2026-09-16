@@ -15,7 +15,7 @@
 
 #include <string_view>
 
-namespace atlas::renderer::detail {
+namespace atlas::renderer {
 
 struct ShaderPair {
     rhi::ShaderHandle vertex;
@@ -29,4 +29,4 @@ struct ShaderPair {
 [[nodiscard]] Result<ShaderPair> load_shader_pair(rhi::Device& device, std::string_view directory,
                                                   std::string_view name);
 
-}  // namespace atlas::renderer::detail
+}  // namespace atlas::renderer

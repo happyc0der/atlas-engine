@@ -378,7 +378,78 @@ What Gate 1 built, each with tests:
 Two designs were changed by measurement rather than argument: an integer clear value was
 removed from the descriptor because the backends do not agree on it, and the cache key was
 changed because the content hash cost more than the work it saved. Gate 2, the lab itself,
-starts only after this gate has been reported.
+started only after this gate was reported.
+
+### Gate 2 — the Strategy Lab
+
+`apps/lab` is three targets. `atlas::lab_sim` (tables, systems, command, snapshot) may link
+only `atlas::simulation`, and CMake refuses anything more, so the headless benchmark is
+independent of rendering by construction. `atlas::lab_view` (the cell field, the identifier
+pass) exists so the GPU tests draw with the application's own code. `main.cpp` composes them.
+
+What it proves, with no game rules anywhere:
+
+- **A seeded synthetic grid**, chunk-major, so a visible chunk is one contiguous range, a
+  cell's identifier is derivable from an instance index plus a per-chunk base, and M8 gets
+  disjoint ranges for free. Five tables with neutral names; adjacency is a compressed-sparse-row
+  structure whose five invariants are each checked with their own message and corruption test.
+- **A million cells drawn** at 8.3 ms a frame, culled per chunk, through the streaming path
+  Gate 1 built. Pan, zoom, and four map modes that switch by reading a different band of the
+  same snapshot: geometry is built once and a mode switch rebuilds nothing, tested directly.
+- **Picking through an integer-identifier target** with a deferred readback that arrives two
+  frames later and is never waited on. Every pick is cross-checked against the analytic inverse
+  of the projection; the GPU tests check 676 sampled pixels plus cell edges and chunk
+  boundaries; the integration check reimplements the index formula in Python.
+- **Four mock systems**, one per access pattern, all integer arithmetic. The schedule's
+  batching was observed and then asserted: three batches, the two writers of `cells`
+  serialised because write sets are table-granular. Recorded for M8, not redesigned.
+- **The kernel's tick is authoritative.** The accumulator only decides how many ticks to run,
+  is committed with what the kernel ran through the shared clamp, is re-synchronised after a
+  load, and is compared against the kernel every frame under a debug assertion. A save at 200
+  ticks, loaded and run 100 more, matches an uninterrupted 300, with commands on the way.
+- **Time controls, replay, save and load, hashes.** Pause, single step, four speeds,
+  unbounded; a replay that plays back clean, refuses the wrong starting state up front, and on
+  a semantic tamper (one command's colour byte, kept in range) names the tick it diverged at.
+  A failed load changes nothing, at the application level too: the state is serialised before
+  a load and restored if the cross-table check refuses what `sim::load` accepted.
+- **Snapshot publication** once per frame after the last tick, never headless: 1.43 ms at a
+  million cells, in the overlay as a counter.
+- **Profiler counters**: a stats panel with the state hash, speed, mode, visible chunks, batch
+  figures and a processor-side phase breakdown with the largest phase marked, plus profiling
+  zones around every phase.
+- **A headless benchmark independent of rendering**: `atlas_lab --headless` is the acceptance
+  path and prints an observation clearly labelled as one; `atlas_bench --filter simulation` is
+  the measurement path. Its first finding is that the world hash is 88% of a million-cell tick.
+
+Tests: 36 cases in the simulation library including a pinned golden scenario that a
+one-constant mutation fails; 4 GPU cases; 22 integration cases, of which `seed_changes_hash`,
+`load_continues`, `replay_detects_tampering` and `pick_returns_expected_cell` are the ones
+designed to fail without a specific piece of the design. The golden hashes match on macOS
+arm64, Linux x86_64 and Windows x64 through continuous integration.
+
+What the lab found about the engine, which is what it is for: the world hash dominates the
+tick (M8's first question); table-granular write sets serialise systems that touch different
+columns (M8 candidate); a million 48-byte instances a frame is 48 MB the identifier pass shows
+how to avoid (M8 candidate); and the sandbox's zoom anchors in logical units against a pixel
+viewport (recorded). All in `docs/DEFERRED.md`.
+
+### Engine v0.1, against the charter
+
+| Charter requirement | Status |
+|---|---|
+| Reproducible build and test workflow on all three tier-one platforms | **Met.** Four workflows, six jobs, green on every push; presets, pinned vcpkg baseline, containers for Linux and llvmpipe from the development machine. |
+| Window, input, events, clocks, clean startup and shutdown | **Met.** Two composition roots, both with lifecycle integration tests. |
+| Engine-owned renderer boundary over SDL_GPU: buffers, textures, samplers, shaders, pipelines, render passes, uploads, and integer-ID readback | **Met.** Offscreen targets, `R32Uint`, blend modes, streaming uploads and deferred readback arrived in Gate 1; the lab picks through them. |
+| Asset system: virtual paths, stable IDs, async CPU loading, cooked-artifact caching, fallbacks, hot reload, for shaders and textures | **Met for textures; shaders are loaded by path from the cooked manifest, not through the registry.** The deferral and its reason are recorded; the loader became public renderer API in M7 when the lab became its second caller. |
+| Scene layer with transform hierarchy and versioned serialization using stable IDs | **Met** (M5). |
+| Simulation kernel: fixed integer ticks, commands, deterministic system ordering, seeded RNG streams, canonical state hashing, replay, save/load, snapshot publication | **Met** (M6), and now driven by a real program. |
+| Strategy laboratory: synthetic cell field, map modes, pan and zoom, ID picking, mock data-oriented systems, speed controls including unbounded headless execution, replay, profiler counters | **Met**, as above. Controls are keyboard only; widgets wait for M9's command infrastructure, deliberately. |
+| Documentation and ADRs that match the implementation | **Met** as of this commit; the E7 truth pass and this section are the evidence, and the next divergence will be found the same way. |
+
+One requirement is met with a stated qualification (shaders bypass the registry) and none is
+unmet. Not claimed, because not measured: bit-identical simulation across compilers beyond the
+golden scenario on three platforms; graphics-processor time; and anything about
+multi-threaded execution, which is M8.
 
 ## M8 — Performance hardening and parallel simulation
 

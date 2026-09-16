@@ -17,6 +17,13 @@ add_executable(atlas_bench
 
 target_link_libraries(atlas_bench PRIVATE atlas::renderer atlas::platform atlas::simulation atlas::assets)
 
+# The simulation benchmark drives the lab's world. Applications and benchmarks are gated
+# separately, so it is only built when the lab's simulation library exists.
+if(TARGET atlas_lab_sim)
+    target_sources(atlas_bench PRIVATE src/bench_simulation.cpp)
+    target_link_libraries(atlas_bench PRIVATE atlas::lab_sim)
+endif()
+
 # The asset benchmark encodes its own test image with the header-only stb writer. SYSTEM,
 # for the same reason the assets module includes the decoder that way.
 find_path(STB_INCLUDE_DIR NAMES stb_image_write.h REQUIRED)
