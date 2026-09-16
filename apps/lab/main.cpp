@@ -379,8 +379,11 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
     if (!result) {
         return std::unexpected(std::move(result).error().context("playing the replay"));
     }
-    if (result->divergence.has_value()) {
-        const auto& d = *result->divergence;
+    // Bound to a local before the check: the older clang-tidy on the lint lane does not
+    // follow has_value() through the expected's operator->, and it is clearer this way.
+    const std::optional<atlas::sim::Divergence>& divergence = result->divergence;
+    if (divergence.has_value()) {
+        const atlas::sim::Divergence& d = *divergence;
         return std::unexpected(atlas::Error(
             atlas::ErrorCode::IntegrityCheckFailed,
             std::format("replay diverged at tick {}: expected {:#018x}, got {:#018x}{}", d.tick,
