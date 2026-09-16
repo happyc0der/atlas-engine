@@ -134,6 +134,17 @@ class TickAccumulator {
 
     [[nodiscard]] Tick current_tick() const noexcept { return m_tick; }
 
+    /// Move the counter to a tick this accumulator never counted.
+    ///
+    /// For a load, which puts the simulation at a tick the accumulator knows nothing about.
+    /// Without this the two counters drift apart permanently after the first load and
+    /// nothing notices, because each is correct about its own history.
+    ///
+    /// The kernel's tick is the authoritative one; this exists so the accumulator can be
+    /// told about a jump rather than quietly disagreeing. Accumulated fractional time is
+    /// discarded, because it belonged to the tick that was abandoned.
+    void set_tick(Tick tick) noexcept;
+
     [[nodiscard]] const TickAccumulatorConfig& config() const noexcept { return m_config; }
 
     /// Nanoseconds of simulated time one tick represents, rounded down.

@@ -160,6 +160,42 @@ with the first group missing entirely, which was confirmed by doing it.
 **The allocation counts are unchanged** at eight per frame for both scene sizes, so the reused
 staging buffer did not trade one cost for another.
 
+## The artifact cache, M7: measured and found wanting
+
+The charter lists cooked-artifact caching under v0.1 and M4 deferred it on the grounds that
+nothing took long enough to import to justify one. M7 built it and measured it, and the
+measurement says the M4 reasoning was right and the M7 design was wrong.
+
+Decoded textures are cached on disk, keyed by a hash of the source bytes plus the importer
+version. Content rather than path, so a moved file still hits. The benchmark generates a
+noise PNG so the decode has real work to do, and reports the decode, the cache read, and the
+cost of computing the key on their own.
+
+| 2048x2048 noise PNG (16 MB) | Median |
+|---|---|
+| Cold: decode | 8.25 ms |
+| Warm: read the cached entry | 2.09 ms |
+| Compute the cache key (hash the source) | **15.3 ms** |
+
+The key is paid on every lookup, hits and misses alike, because there is no way to know
+whether an entry exists without it. So the warm path costs 15.3 + 2.1 = 17.4 ms against a cold
+decode of 8.25 ms. **The cache as keyed makes a texture load slower.** At 512x512 the same holds:
+1.02 ms of hashing plus 0.15 ms of reading against a 0.50 ms decode.
+
+The cause is the hash. The canonical hash is FNV-1a a byte at a time, chosen for determinism
+and cross-platform stability of *state* hashes, where its speed does not matter. At about one
+gigabyte a second it is slower than the PNG decoder it was meant to bypass. Reusing it for
+bulk content was a mistake of convenience.
+
+The cache is committed, off by default, correct, and tested, because the infrastructure is
+right and only the key strategy is wrong. What replaces the key is an owner decision, recorded
+in the roadmap, because the three candidates trade different things: a faster hash is a new
+dependency, keying by size and modification time is the industry standard but weaker, and a
+first-party word-at-a-time hash is neither.
+
+Until that is settled, `--cache-dir` exists and should not be used for anything but the
+measurement above.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:

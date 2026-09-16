@@ -12,9 +12,15 @@ add_executable(atlas_bench
     src/bench_quads.cpp
     src/bench_math.cpp
     src/bench_allocations.cpp
+    src/bench_assets.cpp
 )
 
-target_link_libraries(atlas_bench PRIVATE atlas::renderer atlas::platform atlas::simulation)
+target_link_libraries(atlas_bench PRIVATE atlas::renderer atlas::platform atlas::simulation atlas::assets)
+
+# The asset benchmark encodes its own test image with the header-only stb writer. SYSTEM,
+# for the same reason the assets module includes the decoder that way.
+find_path(STB_INCLUDE_DIR NAMES stb_image_write.h REQUIRED)
+target_include_directories(atlas_bench SYSTEM PRIVATE ${STB_INCLUDE_DIR})
 target_include_directories(atlas_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 set_target_properties(atlas_bench PROPERTIES

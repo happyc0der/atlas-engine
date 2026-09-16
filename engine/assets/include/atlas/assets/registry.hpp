@@ -50,6 +50,10 @@ struct RegistryStats {
     std::size_t total = 0;
     std::size_t ready = 0;
     std::size_t failed = 0;
+    /// Loads served from the artifact cache rather than decoded. Zero without a cache.
+    std::size_t cache_hits = 0;
+    /// Loads that decoded because the cache had no valid entry.
+    std::size_t cache_misses = 0;
     std::size_t in_progress = 0;
     /// Assets waiting for the main thread to finish them.
     std::size_t awaiting_finalisation = 0;
@@ -62,6 +66,10 @@ class Registry {
         /// without turning a background job into a scheduling problem; the number becomes
         /// worth measuring when there is something to measure.
         std::uint32_t worker_count = 2;
+
+        /// Where decoded assets are kept between runs. Empty means no cache, which is what
+        /// every run before M7 had.
+        std::filesystem::path cache_directory;
     };
 
     [[nodiscard]] static Result<Registry> create(FileSystem& filesystem, const Config& config);

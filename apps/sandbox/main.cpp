@@ -76,6 +76,7 @@ struct Options {
     bool no_render = false;
     bool no_overlay = false;
     bool hot_reload = false;
+    std::string_view cache_dir;
     std::uint32_t grid = 100;
     std::string_view assets_dir = "assets/source";
     bool scene_graph = false;
@@ -138,6 +139,8 @@ Options:
   --no-overlay           Do not create the debug overlay.
   --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
   --hot-reload           Re-read assets whose files change while running.
+  --cache-dir PATH       Keep decoded assets here between runs, so a repeated import is a
+                         read rather than a decode. Default: no cache.
   --version              Print build identity and exit.
   --help                 Print this message and exit.
 
@@ -186,6 +189,7 @@ class LogSession {
     options.no_render = args.has("no-render");
     options.no_overlay = args.has("no-overlay");
     options.hot_reload = args.has("hot-reload");
+    options.cache_dir = args.value_or("cache-dir", std::string_view{});
     options.scene_graph = args.has("scene");
     options.scene_file = args.value_or("scene-file", std::string_view{"build/sandbox-scene.json"});
     options.inspect = args.value_or("inspect", std::uint64_t{0}).value_or(0);
@@ -401,7 +405,8 @@ void step_simulation(atlas::Tick tick) {
         return std::unexpected(std::move(status).error().context("mounting the asset root"));
     }
 
-    auto registry = atlas::assets::Registry::create(filesystem, {});
+    auto registry = atlas::assets::Registry::create(
+        filesystem, {.cache_directory = std::filesystem::path{options->cache_dir}});
     if (!registry) {
         return std::unexpected(std::move(registry).error().context("starting the asset registry"));
     }
@@ -740,8 +745,9 @@ void step_simulation(atlas::Tick tick) {
 
     {
         const auto asset_stats = registry->stats();
-        ATLAS_LOG_INFO(kApp, "assets: {} total, {} ready, {} failed", asset_stats.total,
-                       asset_stats.ready, asset_stats.failed);
+        ATLAS_LOG_INFO(kApp, "assets: {} total, {} ready, {} failed, cache hits={} misses={}",
+                       asset_stats.total, asset_stats.ready, asset_stats.failed,
+                       asset_stats.cache_hits, asset_stats.cache_misses);
         for (const auto& info : registry->all()) {
             if (info.state == atlas::assets::AssetState::Failed) {
                 ATLAS_LOG_WARN(kApp, "  '{}' failed: {}", info.path.text(), info.error);

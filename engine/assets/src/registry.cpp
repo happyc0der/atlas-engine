@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <atlas/assets/artifact_cache.hpp>
 #include <atlas/assets/registry.hpp>
 #include <atlas/core/assert.hpp>
 #include <atlas/core/log.hpp>
@@ -49,12 +50,19 @@ struct Completion {
     std::optional<std::filesystem::file_time_type> modified_at;
     std::string error;
     std::uint64_t bytes = 0;
+    /// Whether the decoded data came from the artifact cache.
+    bool from_cache = false;
 };
 
 }  // namespace
 
 struct Registry::Impl {
     FileSystem* filesystem = nullptr;
+    /// Shared with the workers by value: the cache is a directory and a counter, and copying
+    /// the handle is how each worker gets its own view without a lock.
+    std::optional<ArtifactCache> cache;
+    std::size_t cache_hits = 0;
+    std::size_t cache_misses = 0;
 
     /// Guards the entry table. Held briefly: never across a file read or a decode.
     mutable std::mutex entries_mutex;
@@ -111,12 +119,33 @@ struct Registry::Impl {
 
         switch (job.type) {
         case AssetType::Texture: {
+            // The cache first, keyed by what is about to be decoded and by the importer that
+            // would decode it. A hit is a read instead of a decode; a miss decodes and then
+            // stores, so the next run hits.
+            const std::uint64_t key =
+                cache.has_value() ? ArtifactCache::key_for(*bytes, kTextureImporterVersion) : 0;
+            if (cache.has_value()) {
+                if (auto cached = cache->load_texture(key)) {
+                    completion.texture = std::move(*cached);
+                    completion.from_cache = true;
+                    break;
+                }
+            }
+
             auto imported = import_texture(*bytes, job.path.text());
             if (!imported) {
                 completion.error = imported.error().to_string();
-            } else {
-                completion.texture = std::move(*imported);
+                break;
             }
+            if (cache.has_value()) {
+                // A failed store is logged and otherwise ignored: the decode succeeded, and
+                // the only consequence is decoding again next time.
+                if (auto status = cache->store_texture(key, *imported); !status) {
+                    ATLAS_LOG_WARN(kAssets, "could not cache '{}': {}", job.path.text(),
+                                   status.error());
+                }
+            }
+            completion.texture = std::move(*imported);
             break;
         }
         case AssetType::Shader: {
@@ -192,6 +221,16 @@ Result<Registry> Registry::create(FileSystem& filesystem, const Config& config) 
     Registry registry;
     registry.m_impl = std::make_unique<Impl>();
     registry.m_impl->filesystem = &filesystem;
+
+    // Opened before the workers start, so a cache that cannot be written is refused here,
+    // once, with the path in the message, rather than failing on every store from a worker.
+    if (!config.cache_directory.empty()) {
+        auto cache = ArtifactCache::open(config.cache_directory);
+        if (!cache) {
+            return std::unexpected(std::move(cache).error().context("opening the artifact cache"));
+        }
+        registry.m_impl->cache = std::move(*cache);
+    }
 
     registry.m_impl->workers.reserve(config.worker_count);
     for (std::uint32_t i = 0; i < config.worker_count; ++i) {
@@ -318,6 +357,13 @@ std::size_t Registry::pump() {
         entry.info.bytes = completion.bytes;
         entry.info.error.clear();
         entry.loaded_at = completion.modified_at;
+        if (completion.texture.has_value()) {
+            if (completion.from_cache) {
+                ++m_impl->cache_hits;
+            } else if (m_impl->cache.has_value()) {
+                ++m_impl->cache_misses;
+            }
+        }
         entry.texture = std::move(completion.texture);
         entry.shader = std::move(completion.shader);
 
@@ -453,6 +499,8 @@ RegistryStats Registry::stats() const {
     if (m_impl == nullptr) {
         return stats;
     }
+    stats.cache_hits = m_impl->cache_hits;
+    stats.cache_misses = m_impl->cache_misses;
 
     const std::scoped_lock lock{m_impl->entries_mutex};
     stats.total = m_impl->entries.size();

@@ -69,6 +69,14 @@ void TickAccumulator::commit(std::uint32_t ticks_executed) noexcept {
     m_tick += ticks_executed;
 }
 
+void TickAccumulator::set_tick(Tick tick) noexcept {
+    m_tick = tick;
+    // The partial tick belonged to where the simulation used to be. Carrying it across a
+    // load would make the first tick after one arrive early by an arbitrary fraction.
+    m_accumulated = 0;
+    m_carry = 0;
+}
+
 void TickAccumulator::reset() noexcept {
     m_accumulated = 0;
     m_carry = 0;

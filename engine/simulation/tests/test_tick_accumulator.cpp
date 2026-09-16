@@ -330,3 +330,44 @@ TEST_CASE("total ticks match the closed form whenever the clamp never engages",
 
     CHECK(run(accumulator, frames) == expected);
 }
+
+TEST_CASE("the tick can be moved to one the accumulator never counted", "[sim][accumulator]") {
+    // What a load needs. The kernel's tick is authoritative and a load moves it; without a
+    // way to tell the accumulator, the two counters disagree from then on and each is
+    // correct about its own history, so nothing catches it.
+    auto accumulator = TickAccumulator::create({.ticks_per_second = 60});
+    REQUIRE(accumulator.has_value());
+
+    const auto plan = accumulator->advance(kFrame60Hz * 10);  // ten ticks' worth
+    accumulator->commit(plan.ticks_to_run);
+    REQUIRE(accumulator->current_tick() > 0);
+
+    accumulator->set_tick(5000);
+    CHECK(accumulator->current_tick() == 5000);
+
+    // Counting continues from there rather than from where it was.
+    const auto next = accumulator->advance(kFrame60Hz);
+    accumulator->commit(next.ticks_to_run);
+    CHECK(accumulator->current_tick() == 5000 + next.ticks_to_run);
+}
+
+TEST_CASE("moving the tick discards the partial tick", "[sim][accumulator]") {
+    // The fraction belonged to the tick that was abandoned. Carrying it across a load would
+    // make the first tick afterwards arrive early by an arbitrary amount, which is exactly
+    // the kind of difference a replay would later fail to reproduce.
+    auto accumulator = TickAccumulator::create({.ticks_per_second = 60});
+    REQUIRE(accumulator.has_value());
+
+    // Most of a tick, but not a whole one.
+    const auto partial = accumulator->advance(kFrame60Hz * 9 / 10);
+    accumulator->commit(partial.ticks_to_run);
+    REQUIRE(partial.ticks_to_run == 0);
+
+    accumulator->set_tick(100);
+
+    // A tenth of a tick would complete the one that was in progress, if the fraction had
+    // been kept. It must not.
+    const auto after = accumulator->advance(kFrame60Hz / 10);
+    CHECK(after.ticks_to_run == 0);
+    CHECK(accumulator->current_tick() == 100);
+}

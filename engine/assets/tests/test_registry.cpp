@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <atlas/assets/artifact_cache.hpp>
 #include <atlas/assets/registry.hpp>
 #include <atlas/core/assert.hpp>
 
@@ -432,4 +433,215 @@ TEST_CASE("a registry with work still in flight shuts down cleanly", "[assets][r
         // Destroyed here, with work still queued.
     }
     SUCCEED("the registry shut down with work outstanding");
+}
+
+// --- the artifact cache ---------------------------------------------------------------------
+
+namespace {
+
+using atlas::assets::ArtifactCache;
+using atlas::assets::kTextureImporterVersion;
+
+/// Load one texture through a registry backed by `cache_dir`, and return its stats.
+[[nodiscard]] atlas::assets::RegistryStats load_once(const TempTree& tree,
+                                                     const std::filesystem::path& cache_dir,
+                                                     std::string_view relative,
+                                                     std::vector<std::byte>* pixels_out = nullptr) {
+    FileSystem filesystem;
+    REQUIRE(filesystem.mount("base", tree.root()).has_value());
+    auto registry = Registry::create(filesystem, {.cache_directory = cache_dir});
+    REQUIRE(registry.has_value());
+
+    const auto id = registry->request(path_of(relative), AssetType::Texture);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until_settled(*registry, *id));
+    REQUIRE(registry->state(*id) == AssetState::Decoded);
+
+    if (pixels_out != nullptr) {
+        auto texture = registry->take_texture(*id);
+        REQUIRE(texture.has_value());
+        *pixels_out = std::move(texture->pixels);
+    }
+    return registry->stats();
+}
+
+[[nodiscard]] std::size_t entries_in(const std::filesystem::path& dir) {
+    std::size_t count = 0;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (entry.path().extension() == ".texture") {
+            ++count;
+        }
+    }
+    return count;
+}
+
+}  // namespace
+
+TEST_CASE("a cold import populates the cache and a warm one reads it", "[assets][cache]") {
+    const TempTree tree;
+    tree.write_png("textures/pixel.png");
+    const auto cache_dir = tree.root() / "cache";
+
+    std::vector<std::byte> cold_pixels;
+    const auto cold = load_once(tree, cache_dir, "textures/pixel.png", &cold_pixels);
+    CHECK(cold.cache_misses == 1);
+    CHECK(cold.cache_hits == 0);
+    CHECK(entries_in(cache_dir) == 1);
+
+    // A second registry, as a second run of the program would be. The decode must not
+    // happen again, and the pixels must be the same ones.
+    std::vector<std::byte> warm_pixels;
+    const auto warm = load_once(tree, cache_dir, "textures/pixel.png", &warm_pixels);
+    CHECK(warm.cache_hits == 1);
+    CHECK(warm.cache_misses == 0);
+    CHECK(warm_pixels == cold_pixels);
+    REQUIRE_FALSE(warm_pixels.empty());
+}
+
+TEST_CASE("the cache is keyed by content, so a moved file still hits", "[assets][cache]") {
+    const TempTree tree;
+    tree.write_png("textures/one.png");
+    tree.write_png("textures/two.png");  // identical bytes, different path
+    const auto cache_dir = tree.root() / "cache";
+
+    (void)load_once(tree, cache_dir, "textures/one.png");
+    const auto second = load_once(tree, cache_dir, "textures/two.png");
+
+    CHECK(second.cache_hits == 1);
+    CHECK(entries_in(cache_dir) == 1);
+}
+
+TEST_CASE("a changed source misses the cache", "[assets][cache]") {
+    // Content, not path, is the key. A file rewritten with different bytes under the same
+    // name must not be served the old decode.
+    const TempTree tree;
+    tree.write_png("textures/pixel.png");
+    const auto cache_dir = tree.root() / "cache";
+    (void)load_once(tree, cache_dir, "textures/pixel.png");
+
+    // A different valid image under the same name: the same PNG with one byte of pixel data
+    // altered would break its checksum, so write recognisably different content instead.
+    tree.write("textures/pixel.png", "not a png any more");
+
+    FileSystem filesystem;
+    REQUIRE(filesystem.mount("base", tree.root()).has_value());
+    auto registry = Registry::create(filesystem, {.cache_directory = cache_dir});
+    REQUIRE(registry.has_value());
+    const auto id = registry->request(path_of("textures/pixel.png"), AssetType::Texture);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until_settled(*registry, *id));
+
+    // It fails to decode, which is correct for that content. The point is that it was not
+    // served the cached pixels of the file that used to be there.
+    CHECK(registry->state(*id) == AssetState::Failed);
+    CHECK(registry->stats().cache_hits == 0);
+}
+
+TEST_CASE("the key changes with the importer version", "[assets][cache]") {
+    // So a new importer invalidates everything the old one produced, rather than serving
+    // output that happens to parse.
+    const std::array<std::byte, 4> source{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+    CHECK(ArtifactCache::key_for(source, 1) != ArtifactCache::key_for(source, 2));
+    CHECK(ArtifactCache::key_for(source, kTextureImporterVersion) ==
+          ArtifactCache::key_for(source, kTextureImporterVersion));
+}
+
+TEST_CASE("a corrupt cache entry is discarded rather than trusted", "[assets][cache]") {
+    const TempTree tree;
+    tree.write_png("textures/pixel.png");
+    const auto cache_dir = tree.root() / "cache";
+
+    std::vector<std::byte> good_pixels;
+    (void)load_once(tree, cache_dir, "textures/pixel.png", &good_pixels);
+    REQUIRE(entries_in(cache_dir) == 1);
+
+    // Truncate the entry so its header promises more pixels than the file holds.
+    std::filesystem::path entry;
+    for (const auto& item : std::filesystem::directory_iterator(cache_dir)) {
+        if (item.path().extension() == ".texture") {
+            entry = item.path();
+        }
+    }
+    REQUIRE_FALSE(entry.empty());
+    std::filesystem::resize_file(entry, std::filesystem::file_size(entry) - 3);
+
+    auto cache = ArtifactCache::open(cache_dir);
+    REQUIRE(cache.has_value());
+    CHECK(cache->discarded() == 0);
+
+    // The registry must still produce the right pixels, by decoding, and the bad entry must
+    // be gone afterwards so it cannot keep being read.
+    std::vector<std::byte> pixels;
+    const auto stats = load_once(tree, cache_dir, "textures/pixel.png", &pixels);
+    CHECK(stats.cache_hits == 0);
+    CHECK(stats.cache_misses == 1);
+    CHECK(pixels == good_pixels);
+
+    // Re-stored by the decode that replaced it, so exactly one entry, and it is now valid.
+    CHECK(entries_in(cache_dir) == 1);
+    const auto warm = load_once(tree, cache_dir, "textures/pixel.png");
+    CHECK(warm.cache_hits == 1);
+}
+
+TEST_CASE("an entry claiming an absurd size is refused before allocating", "[assets][cache]") {
+    // A header is untrusted. One claiming a huge image on a short file must be refused
+    // without the allocation, not after it.
+    const TempTree tree;
+    const auto cache_dir = tree.root() / "cache";
+    auto cache = ArtifactCache::open(cache_dir);
+    REQUIRE(cache.has_value());
+
+    // Store a real entry, then overwrite its header's dimensions.
+    atlas::assets::ImportedTexture small;
+    small.width = 2;
+    small.height = 2;
+    small.pixels.assign(16, std::byte{7});
+    REQUIRE(cache->store_texture(42, small).has_value());
+
+    std::filesystem::path entry;
+    for (const auto& item : std::filesystem::directory_iterator(cache_dir)) {
+        entry = item.path();
+    }
+    {
+        std::fstream stream(entry, std::ios::in | std::ios::out | std::ios::binary);
+        // Width sits after the 8-byte magic and two 4-byte versions.
+        stream.seekp(16);
+        const std::array<char, 4> huge{'\xFF', '\xFF', '\x00', '\x00'};  // 65535 wide
+        stream.write(huge.data(), 4);
+    }
+
+    CHECK_FALSE(cache->load_texture(42).has_value());
+    CHECK(cache->discarded() == 1);
+    CHECK(entries_in(cache_dir) == 0);
+}
+
+TEST_CASE("a cache directory that cannot be written is refused up front", "[assets][cache]") {
+    // Once, with the path in the message, rather than on every store from a worker.
+    const TempTree tree;
+    tree.write("not-a-directory", "a file where a directory was expected");
+
+    FileSystem filesystem;
+    REQUIRE(filesystem.mount("base", tree.root()).has_value());
+    const auto registry =
+        Registry::create(filesystem, {.cache_directory = tree.root() / "not-a-directory"});
+    REQUIRE_FALSE(registry.has_value());
+}
+
+TEST_CASE("without a cache directory nothing is cached", "[assets][cache]") {
+    // The default, and what every run before M7 had.
+    const TempTree tree;
+    tree.write_png("textures/pixel.png");
+
+    FileSystem filesystem;
+    REQUIRE(filesystem.mount("base", tree.root()).has_value());
+    auto registry = Registry::create(filesystem, {});
+    REQUIRE(registry.has_value());
+    const auto id = registry->request(path_of("textures/pixel.png"), AssetType::Texture);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until_settled(*registry, *id));
+
+    const auto stats = registry->stats();
+    CHECK(stats.cache_hits == 0);
+    CHECK(stats.cache_misses == 0);
 }

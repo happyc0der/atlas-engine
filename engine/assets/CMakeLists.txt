@@ -14,8 +14,10 @@ atlas_add_module(assets
         src/asset_id.cpp
         src/importer.cpp
         src/registry.cpp
+        src/artifact_cache.cpp
         src/filesystem.cpp
     HEADERS
+        include/atlas/assets/artifact_cache.hpp
         include/atlas/assets/asset_id.hpp
         include/atlas/assets/asset_state.hpp
         include/atlas/assets/filesystem.hpp
