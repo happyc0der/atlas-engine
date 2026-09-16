@@ -106,6 +106,13 @@ class QuadBatch {
 
     [[nodiscard]] std::uint32_t capacity() const noexcept { return m_capacity; }
 
+    /// The colour format this batch's pipeline was built for.
+    ///
+    /// A pass drawing into a different format cannot use it, and the batch refuses rather
+    /// than letting the graphics library decide. Worth being able to ask, now that a pass
+    /// can target a texture the caller chose instead of always the swapchain.
+    [[nodiscard]] rhi::TextureFormat target_format() const noexcept { return m_target_format; }
+
     /// Quads queued but not yet drawn.
     [[nodiscard]] std::uint32_t pending() const noexcept {
         return static_cast<std::uint32_t>(m_instances.size());
@@ -130,6 +137,9 @@ class QuadBatch {
     rhi::ShaderHandle m_vertex_shader;
     rhi::ShaderHandle m_fragment_shader;
     rhi::GraphicsPipelineHandle m_pipeline;
+    /// The colour format m_pipeline was built for. Declared beside it because it describes
+    /// it, and because the move operations must carry both or the guard misfires.
+    rhi::TextureFormat m_target_format = rhi::TextureFormat::Unknown;
     rhi::BufferHandle m_corner_buffer;
     rhi::BufferHandle m_instance_buffer;
 

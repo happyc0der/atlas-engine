@@ -87,6 +87,7 @@ Result<QuadBatch> QuadBatch::create(rhi::Device& device, const Config& config) {
         return std::unexpected(std::move(pipeline).error());
     }
     batch.m_pipeline = *pipeline;
+    batch.m_target_format = device.swapchain_format();
 
     auto corner_buffer = device.create_buffer({
         .size = sizeof(kCorners),
@@ -148,6 +149,7 @@ QuadBatch::QuadBatch(QuadBatch&& other) noexcept
       m_vertex_shader(std::exchange(other.m_vertex_shader, {})),
       m_fragment_shader(std::exchange(other.m_fragment_shader, {})),
       m_pipeline(std::exchange(other.m_pipeline, {})),
+      m_target_format(std::exchange(other.m_target_format, rhi::TextureFormat::Unknown)),
       m_corner_buffer(std::exchange(other.m_corner_buffer, {})),
       m_instance_buffer(std::exchange(other.m_instance_buffer, {})),
       m_texture(std::exchange(other.m_texture, {})), m_sampler(std::exchange(other.m_sampler, {})),
@@ -163,6 +165,7 @@ QuadBatch& QuadBatch::operator=(QuadBatch&& other) noexcept {
         m_vertex_shader = std::exchange(other.m_vertex_shader, {});
         m_fragment_shader = std::exchange(other.m_fragment_shader, {});
         m_pipeline = std::exchange(other.m_pipeline, {});
+        m_target_format = std::exchange(other.m_target_format, rhi::TextureFormat::Unknown);
         m_corner_buffer = std::exchange(other.m_corner_buffer, {});
         m_instance_buffer = std::exchange(other.m_instance_buffer, {});
         m_texture = std::exchange(other.m_texture, {});
@@ -179,6 +182,22 @@ QuadBatch& QuadBatch::operator=(QuadBatch&& other) noexcept {
 void QuadBatch::begin(rhi::RenderPass& pass, const math::Mat4& view_projection) {
     ATLAS_ASSERT_MAIN_THREAD();
     ATLAS_ASSERT_MSG(!m_active, "begin called on a batch that is already active");
+
+    // A pipeline is built for one colour format. Before offscreen targets existed every
+    // pass drew into the swapchain and this could not be wrong; now a caller can hand over
+    // a pass aimed at a texture of a different format. Metal aborts the process on that, so
+    // it is caught here with a message naming both formats.
+    if (m_pipeline.valid() && pass.target_format() != m_target_format) {
+        ATLAS_LOG_ERROR(kRenderer,
+                        "this batch draws into {} and the pass targets {}; nothing will be "
+                        "drawn. Create a batch for the pass's format.",
+                        rhi::to_string(m_target_format), rhi::to_string(pass.target_format()));
+        m_pass = nullptr;
+        m_stats = BatchStats{};
+        m_instances.clear();
+        m_active = true;
+        return;
+    }
 
     m_pass = &pass;
     m_view_projection = view_projection;
@@ -241,7 +260,7 @@ void QuadBatch::flush() {
     const std::size_t bytes = m_instances.size() * sizeof(Instance);
 
     if (const auto status =
-            m_device->upload_buffer(m_instance_buffer, as_bytes(m_instances.data(), bytes));
+            m_device->stream_buffer(m_instance_buffer, as_bytes(m_instances.data(), bytes));
         !status) {
         ATLAS_LOG_ERROR(kRenderer, "uploading {} quads failed: {}", m_instances.size(),
                         status.error());

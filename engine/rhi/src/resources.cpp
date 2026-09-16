@@ -159,6 +159,100 @@ Status Device::upload_buffer(BufferHandle buffer, std::span<const std::byte> dat
     return ok();
 }
 
+Status Device::stream_buffer(BufferHandle buffer, std::span<const std::byte> data) {
+    ATLAS_ZONE_NAMED("Device::stream_buffer");
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    if (m_impl == nullptr) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument, "stream_buffer on an invalid device"));
+    }
+    if (m_impl->health.lost()) {
+        return std::unexpected(m_impl->already_lost("stream into a buffer"));
+    }
+    if (data.empty()) {
+        return ok();
+    }
+
+    BufferResource* resource = m_impl->buffers.get(buffer);
+    if (resource == nullptr) {
+        return std::unexpected(Error(ErrorCode::InvalidArgument,
+                                     "the buffer to stream into does not resolve; it was "
+                                     "destroyed, or the handle is from another device"));
+    }
+    if (data.size() > resource->size) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("streaming {} bytes into buffer '{}', which holds {}", data.size(),
+                              resource->debug_name, resource->size)));
+    }
+
+    const auto wanted = static_cast<std::uint32_t>(data.size());
+
+    // The staging buffer is kept and reused. Creating and releasing one per call was a pair
+    // of allocations per frame in the path this function exists to make cheap.
+    if (resource->stream_transfer != nullptr && resource->stream_transfer_size < wanted) {
+        SDL_ReleaseGPUTransferBuffer(m_impl->device, resource->stream_transfer);
+        resource->stream_transfer = nullptr;
+        resource->stream_transfer_size = 0;
+    }
+    if (resource->stream_transfer == nullptr) {
+        SDL_GPUTransferBufferCreateInfo info{};
+        info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        info.size = static_cast<std::uint32_t>(resource->size);
+
+        resource->stream_transfer = SDL_CreateGPUTransferBuffer(m_impl->device, &info);
+        if (resource->stream_transfer == nullptr) {
+            return std::unexpected(m_impl->fail(
+                ErrorCode::ResourceCreationFailed,
+                std::format("creating staging memory for buffer '{}'", resource->debug_name)));
+        }
+        resource->stream_transfer_size = static_cast<std::uint32_t>(resource->size);
+    }
+
+    // Cycling on both the map and the upload is the whole mechanism: it rotates to storage
+    // nothing in flight is reading, so a draw recorded against the previous contents still
+    // sees them.
+    void* mapped = SDL_MapGPUTransferBuffer(m_impl->device, resource->stream_transfer, true);
+    if (mapped == nullptr) {
+        return std::unexpected(
+            m_impl->fail(ErrorCode::Internal, std::format("mapping staging memory for buffer '{}'",
+                                                          resource->debug_name)));
+    }
+    std::memcpy(mapped, data.data(), data.size());
+    SDL_UnmapGPUTransferBuffer(m_impl->device, resource->stream_transfer);
+
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(m_impl->device);
+    if (commands == nullptr) {
+        return std::unexpected(
+            m_impl->fail(ErrorCode::Internal, "acquiring a command buffer for a streamed upload"));
+    }
+
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+
+    SDL_GPUTransferBufferLocation source{};
+    source.transfer_buffer = resource->stream_transfer;
+    source.offset = 0;
+
+    SDL_GPUBufferRegion destination{};
+    destination.buffer = resource->buffer;
+    destination.offset = 0;
+    destination.size = wanted;
+
+    SDL_UploadToGPUBuffer(copy, &source, &destination, true);
+    SDL_EndGPUCopyPass(copy);
+
+    // Submitted and not waited on. Command buffers execute in submission order, and this one
+    // goes in while the frame's is still recording, so the copy lands before the draws that
+    // read it.
+    if (!SDL_SubmitGPUCommandBuffer(commands)) {
+        return std::unexpected(m_impl->fail(
+            ErrorCode::Internal,
+            std::format("submitting a streamed upload to buffer '{}'", resource->debug_name)));
+    }
+    return ok();
+}
+
 void Device::destroy_buffer(BufferHandle buffer) {
     if (m_impl == nullptr) {
         return;
@@ -173,6 +267,9 @@ void Device::destroy_buffer(BufferHandle buffer) {
     // SDL defers the release until the graphics processor has finished with the resource,
     // so there is no deletion queue here. ADR-0002 records that reliance; a backend without
     // it would need one.
+    if (resource->stream_transfer != nullptr) {
+        SDL_ReleaseGPUTransferBuffer(m_impl->device, resource->stream_transfer);
+    }
     SDL_ReleaseGPUBuffer(m_impl->device, resource->buffer);
     m_impl->buffers.destroy(buffer);
 }
@@ -503,13 +600,21 @@ Result<ReadbackHandle> Device::request_readback(TextureHandle texture, Rect2D re
         return std::unexpected(std::move(error));
     }
 
+    // The destination is sized here, where running out of memory is a Result the caller can
+    // act on, rather than inside the noexcept poll that collects it.
+    Device::Readback result;
+    result.region = region;
+    result.format = resource->format;
+    result.pixels.resize(byte_count);
+
     auto ticket = m_impl->readbacks.insert(PendingReadback{
         .fence = fence,
         .transfer = transfer,
         .region = region,
         .format = resource->format,
         .byte_count = byte_count,
-        .result = std::nullopt,
+        .result = std::move(result),
+        .collected = false,
         .debug_name = resource->debug_name,
     });
     if (!ticket) {
@@ -528,7 +633,7 @@ bool Device::readback_ready(ReadbackHandle ticket) noexcept {
     if (pending == nullptr) {
         return false;
     }
-    if (pending->result.has_value()) {
+    if (pending->collected) {
         return true;
     }
     if (pending->fence == nullptr) {
@@ -541,7 +646,7 @@ bool Device::readback_ready(ReadbackHandle ticket) noexcept {
     // Signalled. Copy the pixels out now and give the staging memory and the fence back,
     // rather than holding them until the caller happens to take the result.
     detail::collect_readback(*m_impl, *pending);
-    return pending->result.has_value();
+    return pending->collected;
 }
 
 Result<Device::Readback> Device::take_readback(ReadbackHandle ticket) {
@@ -557,7 +662,7 @@ Result<Device::Readback> Device::take_readback(ReadbackHandle ticket) {
                                      "this readback ticket does not resolve; it was already "
                                      "taken, or it is from another device"));
     }
-    if (!pending->result.has_value() && !readback_ready(ticket)) {
+    if (!pending->collected && !readback_ready(ticket)) {
         return std::unexpected(Error(ErrorCode::Unavailable,
                                      "this readback has not finished yet; ask readback_ready "
                                      "first, or wait_idle to force it"));
@@ -565,12 +670,12 @@ Result<Device::Readback> Device::take_readback(ReadbackHandle ticket) {
     // readback_ready may have reallocated nothing, but re-resolve anyway rather than relying
     // on the pointer surviving a call that can mutate the pool.
     pending = m_impl->readbacks.get(ticket);
-    if (pending == nullptr || !pending->result.has_value()) {
+    if (pending == nullptr || !pending->collected) {
         return std::unexpected(
             Error(ErrorCode::Internal, "a readback signalled but produced no pixels"));
     }
 
-    Readback taken = std::move(*pending->result);
+    Readback taken = std::move(pending->result);
     m_impl->readbacks.destroy(ticket);
     return taken;
 }
@@ -603,7 +708,7 @@ void record_texture_download(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* sou
     SDL_EndGPUCopyPass(copy);
 }
 
-void collect_readback(Device::Impl& device, PendingReadback& pending) {
+void collect_readback(const Device::Impl& device, PendingReadback& pending) noexcept {
     if (pending.fence != nullptr) {
         SDL_ReleaseGPUFence(device.device, pending.fence);
         pending.fence = nullptr;
@@ -612,18 +717,17 @@ void collect_readback(Device::Impl& device, PendingReadback& pending) {
         return;
     }
 
-    void* mapped = SDL_MapGPUTransferBuffer(device.device, pending.transfer, false);
+    // Nothing here allocates: the destination was sized when the readback was asked for, so
+    // this is a copy into storage that already exists. That is what lets the poll that calls
+    // it be genuinely noexcept rather than noexcept by assertion.
+    const void* mapped = SDL_MapGPUTransferBuffer(device.device, pending.transfer, false);
     if (mapped != nullptr) {
-        Device::Readback readback;
-        readback.region = pending.region;
-        readback.format = pending.format;
-        readback.pixels.resize(pending.byte_count);
-        std::memcpy(readback.pixels.data(), mapped, pending.byte_count);
+        std::memcpy(pending.result.pixels.data(), mapped, pending.byte_count);
         SDL_UnmapGPUTransferBuffer(device.device, pending.transfer);
-        pending.result = std::move(readback);
+        pending.collected = true;
     } else {
-        ATLAS_LOG_ERROR(kRhi, "mapping the pixels read back from '{}' failed: {}",
-                        pending.debug_name, SDL_GetError());
+        std::fprintf(stderr, "atlas rhi: mapping the pixels read back from '%s' failed\n",
+                     pending.debug_name.c_str());
         SDL_ClearError();
     }
 

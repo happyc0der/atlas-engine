@@ -96,9 +96,11 @@ queries, and is therefore not reported.
 | Allocations per frame, 1k quads | 8 | | |
 | Allocations per frame, 50k quads | 8 | | |
 
-The tail is much worse than the median, by a factor of ten at the smaller size. That is
-expected on a machine with other things running and is the reason tails are reported at all,
-but it is also the first thing to look at if these numbers ever need to improve.
+The tail is much worse than the median, by a factor of ten at the smaller size. Two things
+turned out to be true about that. Part of it was a real fixed cost, a fence wait, which the
+section below removes. The rest is machine noise large enough that the p99 is not a usable
+signal here at all: four runs of an unchanged binary spread it by 90%. Tails are still worth
+reporting, but on this machine they are worth investigating rather than comparing.
 
 The allocation counts are the evidence for M3's "no unbounded per-frame allocation" exit
 criterion. Eight is not zero; what matters is that fifty times the quads does not mean fifty
@@ -109,6 +111,54 @@ including presentation and reported 8.3 milliseconds for every scene size, becau
 the display's refresh interval on this machine. A benchmark that measures the monitor is
 worse than no benchmark, because it looks like data. Presentation is now outside the timed
 section, and the scales differ as they should.
+
+## Streaming buffer uploads, M7
+
+The first optimisation this project has made, and the first time the measurement policy was
+applied end to end.
+
+**What was wrong.** `QuadBatch::flush` updated its instance buffer through
+`Device::upload_buffer`, which submits a command buffer and then waits on a graphics fence
+before returning. The comment directly above that wait said a non-stalling path "belongs with
+the first thing that updates a buffer every frame, and does not exist yet". The batcher was
+that first thing, and had used the blocking path since M3.
+
+**How it was measured, and what went wrong with the first attempt.** The plan was to watch the
+p99 collapse, on the theory that a tail flat in the payload is a fixed cost. That turned out not
+to be measurable here: four runs of the *unchanged* binary gave 10k p99 values from 788
+microseconds to 1.49 milliseconds, a spread of 90%. Any effect would have been smaller than the
+noise, and the recorded baseline's 4.75 millisecond p99 was outside even that spread, so it had
+been recorded under different conditions and was not a usable comparison.
+
+So the wait was measured directly instead, by timing `SDL_WaitForGPUFences` itself across 600
+calls: **mean 454 to 505 microseconds, maximum 2.3 milliseconds**. Against medians of roughly
+600 microseconds at 10k quads and 1.7 milliseconds at 100k, the wait was about three quarters
+of the cost at the smaller size and a quarter at the larger.
+
+**The prediction, written down before the change.** Removing the wait should take the 10k median
+to roughly 150 microseconds and the 100k median to roughly 1.25 milliseconds, with no fence
+waits from the batcher at all. If the 10k median did not at least halve, the wait was not the
+cost and the change would be reverted rather than kept on faith. The p99 was explicitly not
+predicted, because it is not a usable signal on this machine.
+
+**The result.**
+
+| Scenario | Before (median) | After (median) | Predicted |
+|---|---|---|---|
+| 10k quads submitted | 573 to 673 us | 154 to 244 us | ~150 us |
+| 100k quads submitted | 1.59 to 1.84 ms | 1.26 to 1.50 ms | ~1.25 ms |
+
+Throughput went from about 15 million to about 41 million quads per second at 10k, and from 59
+to 67 million at 100k. The prediction held at both sizes.
+
+**What it costs.** `stream_buffer` cycles the buffer, so a draw already recorded keeps the
+contents it was recorded against. That is a guarantee from the graphics library rather than
+something Atlas can check, so it has a test: two flushes in one frame drawing two separated
+groups in different colours, both required to appear. Disabling cycling makes that test fail
+with the first group missing entirely, which was confirmed by doing it.
+
+**The allocation counts are unchanged** at eight per frame for both scene sizes, so the reused
+staging buffer did not trade one cost for another.
 
 ## Optimisation candidates
 

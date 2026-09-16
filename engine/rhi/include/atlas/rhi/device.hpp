@@ -239,6 +239,30 @@ class Device {
     [[nodiscard]] Status upload_buffer(BufferHandle buffer, std::span<const std::byte> data,
                                        std::uint64_t offset = 0);
 
+    /// Replace a buffer's contents for the draws recorded after this call, without stalling.
+    ///
+    /// Unlike `upload_buffer` this does not wait for the copy. It cycles the buffer, so
+    /// draws already recorded keep the contents they were recorded against and later draws
+    /// read the new ones. That is what makes it safe to call every frame with two frames in
+    /// flight, and it is why there is no offset: cycling leaves the whole buffer undefined
+    /// until written, so a caller must supply the entire range it intends to read. Patching
+    /// part of a buffer is `upload_buffer`'s job, and still stalls.
+    ///
+    /// Measured before it was written: the wait inside `upload_buffer` averages around 460
+    /// microseconds per call, which is roughly three quarters of the cost of submitting ten
+    /// thousand quads.
+    ///
+    /// Ownership: `data` is copied before this returns, so the caller may reuse its storage
+    /// immediately. The staging memory belongs to the buffer and goes with it.
+    ///
+    /// Thread affinity: main thread.
+    ///
+    /// Failure: `InvalidArgument` for a stale handle or data larger than the buffer;
+    /// `ResourceCreationFailed` if staging memory cannot be had; `Internal` if the
+    /// submission is refused; `DeviceLost` as everywhere. An empty span is a no-op success,
+    /// matching `upload_buffer`.
+    [[nodiscard]] Status stream_buffer(BufferHandle buffer, std::span<const std::byte> data);
+
     void destroy_buffer(BufferHandle buffer);
 
     [[nodiscard]] Result<TextureHandle> create_texture(const TextureDesc& desc);

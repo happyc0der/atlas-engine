@@ -25,6 +25,12 @@
 namespace atlas::rhi {
 
 struct BufferResource {
+    /// Staging memory for stream_buffer, created on first use and reused afterwards.
+    /// Cycled on every write, so the graphics library rotates its own copies and nothing
+    /// here has to track which frames are still in flight.
+    SDL_GPUTransferBuffer* stream_transfer = nullptr;
+    std::uint32_t stream_transfer_size = 0;
+
     SDL_GPUBuffer* buffer = nullptr;
     std::uint64_t size = 0;
     std::string debug_name;
@@ -63,9 +69,14 @@ struct PendingReadback {
     Rect2D region;
     TextureFormat format = TextureFormat::Unknown;
     std::uint32_t byte_count = 0;
-    /// Filled the first time the fence is seen signalled, so the staging memory can go back
-    /// at the first opportunity rather than being held until the caller gets round to it.
-    std::optional<Device::Readback> result;
+    /// The result, with its pixel storage allocated when the readback was asked for rather
+    /// than when it completes. Allocating at request time means a failure is reported through
+    /// a Result, where the caller can see it; allocating at collection time would put it
+    /// inside a noexcept poll, where the only options are terminating or lying.
+    Device::Readback result;
+    /// Whether `result` has been filled. Separate from the storage, which exists from the
+    /// start.
+    bool collected = false;
     std::string debug_name;
 };
 
@@ -152,7 +163,7 @@ void record_texture_download(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* sou
 
 /// Copy a finished download out of its staging buffer into the pending record, and release
 /// the fence and the staging buffer.
-void collect_readback(Device::Impl& device, PendingReadback& pending);
+void collect_readback(const Device::Impl& device, PendingReadback& pending) noexcept;
 
 /// Copy a readable colour texture back to memory and store it on the device.
 ///

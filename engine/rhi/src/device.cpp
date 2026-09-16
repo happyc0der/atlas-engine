@@ -565,11 +565,11 @@ Device::~Device() {
     // fence has signalled, so this is releasing memory rather than abandoning work in
     // flight. Named for the same reason a leaked resource is: asking and not collecting is
     // the same class of mistake, and it is invisible otherwise.
-    if (m_impl->readbacks.size() > 0) {
+    if (!m_impl->readbacks.empty()) {
         std::fprintf(stderr, "atlas rhi: %zu readback(s) were asked for and never collected\n",
                      m_impl->readbacks.size());
     }
-    m_impl->readbacks.for_each_live([this](ReadbackHandle, PendingReadback& pending) {
+    m_impl->readbacks.for_each_live([this](ReadbackHandle, PendingReadback& pending) noexcept {
         if (pending.fence != nullptr) {
             SDL_ReleaseGPUFence(m_impl->device, pending.fence);
             pending.fence = nullptr;
@@ -579,7 +579,10 @@ Device::~Device() {
             pending.transfer = nullptr;
         }
     });
-    m_impl->readbacks.clear();
+    // Deliberately not cleared: the pool goes with the implementation a few lines below, and
+    // clearing it rebuilds a free list, which allocates. An allocation failure inside a
+    // destructor ends the process during unwinding, so the only work here is releasing the
+    // graphics handles, which cannot fail.
 
     // Report anything still live before tearing it down. A resource the application forgot
     // to destroy is a leak in the application, and naming it is more useful than silently
@@ -597,16 +600,16 @@ Device::~Device() {
                      counts.total(), counts.buffers, counts.textures, counts.samplers,
                      counts.shaders, counts.pipelines);
 
-        m_impl->buffers.for_each_live([](BufferHandle, const BufferResource& resource) {
+        m_impl->buffers.for_each_live([](BufferHandle, const BufferResource& resource) noexcept {
             std::fprintf(stderr, "  leaked buffer '%s'\n", resource.debug_name.c_str());
         });
-        m_impl->textures.for_each_live([](TextureHandle, const TextureResource& resource) {
+        m_impl->textures.for_each_live([](TextureHandle, const TextureResource& resource) noexcept {
             std::fprintf(stderr, "  leaked texture '%s'\n", resource.debug_name.c_str());
         });
-        m_impl->samplers.for_each_live([](SamplerHandle, const SamplerResource& resource) {
+        m_impl->samplers.for_each_live([](SamplerHandle, const SamplerResource& resource) noexcept {
             std::fprintf(stderr, "  leaked sampler '%s'\n", resource.debug_name.c_str());
         });
-        m_impl->shaders.for_each_live([](ShaderHandle, const ShaderResource& resource) {
+        m_impl->shaders.for_each_live([](ShaderHandle, const ShaderResource& resource) noexcept {
             std::fprintf(stderr, "  leaked shader '%s'\n", resource.debug_name.c_str());
         });
         m_impl->pipelines.for_each_live(

@@ -380,3 +380,120 @@ TEST_CASE("statistics reset each frame", "[renderer][batch][gpu]") {
     CHECK(first->quads == 1);
     CHECK(second->quads == 0);
 }
+
+TEST_CASE("two flushes in one frame both survive to the picture", "[renderer][batch][gpu]") {
+    // The test that gates streaming uploads.
+    //
+    // Streaming replaces the instance buffer's contents without waiting for the graphics
+    // processor. When a frame flushes twice, the second write happens before the first
+    // draw has executed, so the whole approach rests on the library rotating to storage
+    // nothing in flight is reading. If it does not, the first draw renders the second
+    // flush's data.
+    //
+    // The existing capacity test would not notice: it checks the batch statistics, and the
+    // counts are identical either way. Only the pixels tell the truth, so this draws two
+    // groups far apart in different colours, with a capacity that forces a flush between
+    // them, and requires both to be there.
+    auto harness = make_harness();
+    if (!harness) {
+        SKIP("no graphics device available on this machine");
+    }
+
+    // Offscreen, so this needs no swapchain image and cannot flake on the window system.
+    constexpr std::uint32_t kSize = 128;
+    const auto target = harness->device.create_texture({
+        .width = kSize,
+        .height = kSize,
+        // The swapchain's format, because the batch's pipeline was built for that one and a
+        // pipeline must match its target. Asking the device rather than naming a format is
+        // what makes this test work on any backend.
+        .format = harness->device.swapchain_format(),
+        .usage = {.sampled = false, .colour_target = true},
+        .debug_name = "two flushes",
+    });
+    REQUIRE(target.has_value());
+
+    // A capacity of one forces a flush between the two quads.
+    auto batch = QuadBatch::create(harness->device, {.capacity = 1});
+    REQUIRE(batch.has_value());
+
+    atlas::math::OrthoCamera camera;
+    camera.set_viewport(static_cast<float>(kSize), static_cast<float>(kSize));
+    camera.set_centre({0.0F, 0.0F});
+    camera.set_zoom(1.0F);
+
+    const auto visible = camera.visible_bounds();
+    const float half = visible.size.x * 0.5F;
+
+    // Red on the left, green on the right. Different colours so a swap is visible, and far
+    // apart so neither can be mistaken for the other.
+    const Quad left{
+        .bounds = {.position = {visible.left(), visible.top()}, .size = {half, visible.size.y}},
+        .uv = {.position = {0.0F, 0.0F}, .size = {1.0F, 1.0F}},
+        .colour = {.r = 1.0F, .g = 0.0F, .b = 0.0F, .a = 1.0F},
+    };
+    const Quad right{
+        .bounds = {.position = {visible.left() + half, visible.top()},
+                   .size = {half, visible.size.y}},
+        .uv = {.position = {0.0F, 0.0F}, .size = {1.0F, 1.0F}},
+        .colour = {.r = 0.0F, .g = 1.0F, .b = 0.0F, .a = 1.0F},
+    };
+
+    {
+        auto frame = harness->device.begin_frame();
+        REQUIRE(frame.has_value());
+        auto pass = frame->begin_render_pass({
+            .colour = {.texture = *target,
+                       .load = atlas::rhi::LoadOp::Clear,
+                       .clear_colour = {.r = 0.0F, .g = 0.0F, .b = 1.0F, .a = 1.0F}},
+        });
+        REQUIRE(pass.has_value());
+
+        batch->begin(*pass, camera.view_projection());
+        batch->set_texture(harness->texture, harness->sampler);
+        batch->add(left);
+        batch->add(right);  // capacity 1, so adding this flushes the first
+        const auto stats = batch->end();
+        pass->end();
+
+        CHECK(stats.quads == 2);
+        CHECK(stats.capacity_flushes >= 1);
+
+        REQUIRE(harness->device.end_frame(std::move(*frame)).has_value());
+    }
+
+    auto ticket = harness->device.request_readback(
+        *target, atlas::rhi::Rect2D{.x = 0, .y = 0, .extent = {kSize, kSize}});
+    REQUIRE(ticket.has_value());
+    REQUIRE(harness->device.wait_idle().has_value());
+    const auto pixels = harness->device.take_readback(*ticket);
+    REQUIRE(pixels.has_value());
+
+    // The channel order depends on the format, which is the swapchain's here.
+    const bool bgra = pixels->format == atlas::rhi::TextureFormat::Bgra8Unorm ||
+                      pixels->format == atlas::rhi::TextureFormat::Bgra8UnormSrgb;
+    const auto channel = [&](std::uint32_t x, std::uint32_t y, std::size_t offset) {
+        const std::size_t index = ((static_cast<std::size_t>(y) * kSize) + x) * 4;
+        return std::to_integer<int>(pixels->pixels[index + offset]);
+    };
+    const auto red = [&](std::uint32_t x, std::uint32_t y) { return channel(x, y, bgra ? 2 : 0); };
+    const auto green = [&](std::uint32_t x, std::uint32_t y) { return channel(x, y, 1); };
+
+    const std::uint32_t mid_y = kSize / 2;
+    const std::uint32_t left_x = kSize / 4;
+    const std::uint32_t right_x = (kSize * 3) / 4;
+
+    INFO("left  red=" << red(left_x, mid_y) << " green=" << green(left_x, mid_y));
+    INFO("right red=" << red(right_x, mid_y) << " green=" << green(right_x, mid_y));
+
+    // Both groups present, each its own colour. If the second flush had overwritten the
+    // first before it drew, the left half would be the clear colour instead.
+    CHECK(red(left_x, mid_y) > 200);
+    CHECK(green(left_x, mid_y) < 80);
+    CHECK(red(right_x, mid_y) < 80);
+    CHECK(green(right_x, mid_y) > 200);
+
+    // The batch holds graphics resources the device owns, so it goes before the texture.
+    *batch = QuadBatch{};
+    harness->device.destroy_texture(*target);
+}
