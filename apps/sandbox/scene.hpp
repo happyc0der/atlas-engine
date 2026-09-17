@@ -47,7 +47,13 @@ class DemoScene {
     DemoScene& operator=(DemoScene&& other) noexcept;
 
     /// Apply input to the camera: drag to pan, wheel to zoom.
-    void update(const platform::InputState& input, std::span<const platform::Event> events);
+    /// Pan and zoom from the pointer.
+    ///
+    /// `display_scale` converts the platform's logical pointer coordinates into the pixels
+    /// the camera's viewport is measured in. They differ on a high-density display, where
+    /// omitting it pans at half speed and anchors a zoom to the wrong point.
+    void update(const platform::InputState& input, std::span<const platform::Event> events,
+                float display_scale);
 
     void resize(std::uint32_t pixel_width, std::uint32_t pixel_height);
 

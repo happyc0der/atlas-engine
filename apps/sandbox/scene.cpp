@@ -143,7 +143,8 @@ void DemoScene::resize(std::uint32_t pixel_width, std::uint32_t pixel_height) {
     m_camera.set_viewport(static_cast<float>(pixel_width), static_cast<float>(pixel_height));
 }
 
-void DemoScene::update(const platform::InputState& input, std::span<const platform::Event> events) {
+void DemoScene::update(const platform::InputState& input, std::span<const platform::Event> events,
+                       float display_scale) {
     ATLAS_ZONE_NAMED("scene update");
 
     if (input.was_pressed(platform::MouseButton::Left)) {
@@ -157,7 +158,8 @@ void DemoScene::update(const platform::InputState& input, std::span<const platfo
     // subtracted: the camera goes the other way from the content.
     if (m_dragging) {
         const float zoom = m_camera.zoom();
-        m_camera.pan({-input.mouse_delta_x() / zoom, -input.mouse_delta_y() / zoom});
+        m_camera.pan({-input.mouse_delta_x() * display_scale / zoom,
+                      -input.mouse_delta_y() * display_scale / zoom});
     }
 
     for (const auto& event : events) {
@@ -172,9 +174,12 @@ void DemoScene::update(const platform::InputState& input, std::span<const platfo
 
         // The platform reports a pointer position in its own type, because the platform
         // module does not depend on math and should not. Converting here is the cost of that
-        // boundary, and it is one line.
+        // boundary. The scale is part of the conversion: the pointer is logical and the
+        // camera's viewport is in pixels, which are the same number only on an ordinary
+        // display.
         const auto pointer = input.mouse_position();
-        m_camera.zoom_about(factor, math::Vec2{pointer.x, pointer.y});
+        m_camera.zoom_about(factor,
+                            math::Vec2{pointer.x * display_scale, pointer.y * display_scale});
     }
 }
 

@@ -20,6 +20,13 @@
 
 namespace atlas::app {
 
+/// Exit code for a graphics device that stopped working underneath the process.
+///
+/// Distinct from the general failure code so that an operator, or a script running a headless
+/// job, can tell "the graphics processor went away" from "the arguments were wrong" without
+/// reading the log. Atlas never recovers from device loss; it reports it and stops.
+inline constexpr int kExitDeviceLost = 2;
+
 /// Run `run`, report its Status, and turn anything that escapes into an exit code.
 ///
 /// Returns 0 on success and 1 on any failure. `program` is what appears before the message
@@ -32,7 +39,7 @@ template <typename Run> [[nodiscard]] int guarded_main(std::string_view program,
             std::fprintf(stderr, "%.*s: %s\n", static_cast<int>(program.size()), program.data(),
                          message.c_str());
             ATLAS_LOG_ERROR(log::category::kApp, "exiting with failure: {}", message);
-            return 1;
+            return status.error().code() == ErrorCode::DeviceLost ? kExitDeviceLost : 1;
         }
         return 0;
     } catch (const std::exception& error) {

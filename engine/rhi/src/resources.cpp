@@ -506,12 +506,14 @@ void Device::destroy_graphics_pipeline(GraphicsPipelineHandle pipeline) {
 }
 
 void Device::request_capture() noexcept {
+    ATLAS_ASSERT_MAIN_THREAD();
     if (m_impl != nullptr) {
         m_impl->capture_requested = true;
     }
 }
 
 std::optional<Device::Capture> Device::take_capture() noexcept {
+    ATLAS_ASSERT_MAIN_THREAD();
     if (m_impl == nullptr) {
         return std::nullopt;
     }
@@ -626,6 +628,7 @@ Result<ReadbackHandle> Device::request_readback(TextureHandle texture, Rect2D re
 }
 
 bool Device::readback_ready(ReadbackHandle ticket) noexcept {
+    ATLAS_ASSERT_MAIN_THREAD();
     if (m_impl == nullptr) {
         return false;
     }
@@ -681,6 +684,7 @@ Result<Device::Readback> Device::take_readback(ReadbackHandle ticket) {
 }
 
 std::size_t Device::pending_readbacks() const noexcept {
+    ATLAS_ASSERT_MAIN_THREAD();
     return m_impl != nullptr ? m_impl->readbacks.size() : 0;
 }
 

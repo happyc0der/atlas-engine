@@ -322,3 +322,29 @@ TEST_CASE("waiting for idle succeeds on a live device", "[rhi][device][gpu]") {
     }
     CHECK(harness->device.wait_idle().has_value());
 }
+
+TEST_CASE("the public device-loss accessors answer on a healthy and a moved-from device",
+          "[rhi][device][gpu]") {
+    // The two accessors both applications call when a frame fails. Nothing exercised them
+    // before M9: every device-loss test went through the internal DeviceHealth, so this pair
+    // could have dereferenced a null implementation and no test would have noticed. The
+    // moved-from case matters because the failure path that asks is reached exactly when
+    // things are going wrong, and a moved-from device must answer rather than crash.
+    auto harness = make_harness();
+    if (!harness) {
+        SKIP("no graphics device available");
+    }
+
+    CHECK_FALSE(harness->device.is_lost());
+    CHECK(harness->device.loss_reason().empty());
+
+    const Device moved = std::move(harness->device);
+    CHECK(moved.valid());
+    CHECK_FALSE(moved.is_lost());
+
+    // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move) deliberate: the
+    // moved-from device is the inert state the accessors must survive.
+    CHECK_FALSE(harness->device.is_lost());
+    // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+    CHECK(harness->device.loss_reason().empty());
+}

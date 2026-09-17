@@ -30,6 +30,30 @@ namespace atlas::app {
     return remaining < planned ? static_cast<std::uint32_t>(remaining) : planned;
 }
 
+/// Upper bound on a single headless wait, so that a very low tick rate still checks its
+/// stop conditions promptly.
+inline constexpr std::uint64_t kMaxHeadlessSleepNs = 5'000'000;  // 5 ms
+
+/// How long a headless frame should wait before the next tick is due.
+///
+/// With no window there is no vsync and nothing to draw, so a realtime headless run would
+/// otherwise spin the processor flat out producing millions of empty frames a second to
+/// deliver sixty ticks. Waiting until the next tick is due costs nothing and is what a
+/// headless server would do. Unbounded mode does not call this at all: throughput is the
+/// whole point there.
+///
+/// `alpha` is the accumulator's fraction of the way to the next tick. Clamped to
+/// `kMaxHeadlessSleepNs` so a one-tick-per-second run still notices a stop condition within
+/// five milliseconds. Both applications call this rather than each keeping its own copy:
+/// they had drifted to different bounds, and only one of them carried the explanation.
+[[nodiscard]] constexpr std::uint64_t headless_wait_ns(std::uint64_t tick_length_ns,
+                                                       float alpha) noexcept {
+    const auto elapsed = static_cast<std::uint64_t>(static_cast<double>(tick_length_ns) *
+                                                    static_cast<double>(alpha));
+    const std::uint64_t remaining = elapsed >= tick_length_ns ? 0 : tick_length_ns - elapsed;
+    return remaining < kMaxHeadlessSleepNs ? remaining : kMaxHeadlessSleepNs;
+}
+
 /// A headless run has no window to close, so it must be bounded or it never returns.
 ///
 /// Failure: InvalidArgument explaining which flag to pass.

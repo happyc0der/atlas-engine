@@ -352,7 +352,8 @@ renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
     return m_batch.end();
 }
 
-void SceneDemo::update(const platform::InputState& input, std::span<const platform::Event> events) {
+void SceneDemo::update(const platform::InputState& input, std::span<const platform::Event> events,
+                       float display_scale) {
     ATLAS_ZONE_NAMED("scene demo update");
 
     if (input.was_pressed(platform::MouseButton::Left)) {
@@ -364,7 +365,8 @@ void SceneDemo::update(const platform::InputState& input, std::span<const platfo
 
     if (m_dragging) {
         const float zoom = m_camera.zoom();
-        m_camera.pan({-input.mouse_delta_x() / zoom, -input.mouse_delta_y() / zoom});
+        m_camera.pan({-input.mouse_delta_x() * display_scale / zoom,
+                      -input.mouse_delta_y() * display_scale / zoom});
     }
 
     for (const auto& event : events) {
@@ -374,7 +376,8 @@ void SceneDemo::update(const platform::InputState& input, std::span<const platfo
         }
         const float factor = std::pow(1.15F, wheel->delta_y);
         const auto pointer = input.mouse_position();
-        m_camera.zoom_about(factor, math::Vec2{pointer.x, pointer.y});
+        m_camera.zoom_about(factor,
+                            math::Vec2{pointer.x * display_scale, pointer.y * display_scale});
     }
 }
 

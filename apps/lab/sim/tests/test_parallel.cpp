@@ -12,6 +12,7 @@
 #include "lab_harness.hpp"
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -61,11 +62,16 @@ struct Outcome {
 }
 
 [[nodiscard]] std::vector<std::size_t> worker_counts() {
-    std::vector<std::size_t> counts{1, 2, 4};
-    const std::size_t machine = WorkerPool::default_worker_count();
-    if (machine > 4) {
-        counts.push_back(machine);
-    }
+    // 1, 2, 4 and hardware concurrency minus one, which is what M8's exit criterion names.
+    // The machine count is included whatever it is, not only when it exceeds four: on a
+    // four-core runner it is three, and skipping it there would quietly drop the one count
+    // the criterion cares about on exactly the machines where the pool is most cramped.
+    // Deduplicated rather than conditionally appended, so a two-core machine tests {1, 2, 4}
+    // and says so by running three cases instead of four.
+    std::vector<std::size_t> counts{1, 2, 4, WorkerPool::default_worker_count()};
+    std::ranges::sort(counts);
+    const auto duplicates = std::ranges::unique(counts);
+    counts.erase(duplicates.begin(), duplicates.end());
     return counts;
 }
 

@@ -35,3 +35,24 @@ TEST_CASE("a headless run must be bounded", "[app][bounds]") {
     // A windowed run can always be closed, so it needs no bound.
     CHECK(validate_headless_bound(false, 0, 0).has_value());
 }
+
+TEST_CASE("a headless wait never exceeds its bound", "[app][bounds]") {
+    // A one-second tick at the very start of its period: the whole second is remaining, and
+    // the bound is what stops a run from ignoring its stop conditions for that long.
+    CHECK(atlas::app::headless_wait_ns(1'000'000'000, 0.0F) == atlas::app::kMaxHeadlessSleepNs);
+}
+
+TEST_CASE("a headless wait shrinks as the tick approaches", "[app][bounds]") {
+    // A 16 ms tick, three quarters elapsed: 4 ms remains, which is under the bound and so is
+    // returned whole. Waiting the bound instead would overshoot the tick.
+    const std::uint64_t waited = atlas::app::headless_wait_ns(16'000'000, 0.75F);
+    CHECK(waited == 4'000'000);
+    CHECK(waited < atlas::app::kMaxHeadlessSleepNs);
+}
+
+TEST_CASE("a headless wait at or past the tick is zero", "[app][bounds]") {
+    // Alpha reaching or passing one means the tick is already due. Subtracting without this
+    // guard would wrap the unsigned remaining into an enormous wait.
+    CHECK(atlas::app::headless_wait_ns(16'000'000, 1.0F) == 0);
+    CHECK(atlas::app::headless_wait_ns(16'000'000, 1.5F) == 0);
+}

@@ -49,10 +49,6 @@ namespace {
 
 constexpr atlas::log::Category kApp = atlas::log::category::kApp;
 
-/// Upper bound on a single headless wait, so that a very low tick rate still checks its
-/// stop conditions promptly.
-constexpr std::uint64_t kMaxHeadlessSleepNs = 5'000'000;  // 5 ms
-
 /// How often to look for changed asset files when hot reload is on.
 constexpr std::uint64_t kReloadIntervalNs = 1'000'000'000;  // 1 s
 
@@ -368,10 +364,10 @@ void step_simulation(atlas::Tick tick) {
         // The scene is not updated while the overlay has the pointer, for the same reason.
         if (!(overlay.has_value() && overlay->wants_mouse())) {
             if (scene.has_value()) {
-                scene->update(platform->input(), events);
+                scene->update(platform->input(), events, window.display_scale());
             }
             if (scene_demo.has_value()) {
-                scene_demo->update(platform->input(), events);
+                scene_demo->update(platform->input(), events, window.display_scale());
             }
         }
 
@@ -432,6 +428,14 @@ void step_simulation(atlas::Tick tick) {
 
             auto frame = device->begin_frame();
             if (!frame) {
+                // A failed frame is where device loss surfaces: every later call fails too,
+                // so the first failure is the only one that names the cause. Atlas does not
+                // recover, by charter; it reports the reason and stops with its own code.
+                if (device->is_lost()) {
+                    return atlas::fail(
+                        atlas::ErrorCode::DeviceLost,
+                        std::format("the graphics device was lost: {}", device->loss_reason()));
+                }
                 ATLAS_LOG_ERROR(kApp, "begin_frame failed: {}", frame.error());
                 quit = true;
             } else {
@@ -533,12 +537,8 @@ void step_simulation(atlas::Tick tick) {
         // a headless server would do. Unbounded mode deliberately does not wait: throughput
         // is the entire point there.
         if (options->headless && !options->unbounded && ticks_to_run == 0) {
-            const auto remaining =
-                accumulator->tick_length_ns() -
-                static_cast<std::uint64_t>(static_cast<double>(accumulator->tick_length_ns()) *
-                                           static_cast<double>(plan.alpha));
-            std::this_thread::sleep_for(
-                std::chrono::nanoseconds{std::min<std::uint64_t>(remaining, kMaxHeadlessSleepNs)});
+            std::this_thread::sleep_for(std::chrono::nanoseconds{
+                atlas::app::headless_wait_ns(accumulator->tick_length_ns(), plan.alpha)});
         }
 
         if (options->max_frames != 0 && frame_index >= options->max_frames) {
@@ -581,9 +581,16 @@ void step_simulation(atlas::Tick tick) {
                        last_batch.bytes_uploaded / 1024);
     }
 
-    // Both the overlay and the scene hold resources the device owns, so they go first.
-    // Destroying them in the wrong order is the kind of mistake that only shows up in the
-    // leak report.
+    // Wait for the device to finish before destroying anything it owns. The graphics library
+    // defers destruction until work completes, so this is belt and braces today; it stops
+    // being belt and braces the moment a backend is less forgiving, and the lab has always
+    // done it. Two composition roots that shut down differently is one of them being wrong.
+    if (device.has_value()) {
+        if (const auto status = device->wait_idle(); !status) {
+            ATLAS_LOG_WARN(kApp, "wait_idle at shutdown: {}", status.error());
+        }
+    }
+
     // Order matters and is explicit rather than left to scope: every one of these holds
     // graphics resources the device owns, and the device reports anything still live when it
     // shuts down. Forgetting one here is caught by that report, not by a crash.

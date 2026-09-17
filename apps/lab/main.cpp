@@ -62,8 +62,6 @@ constexpr bool kDebugBuild = false;
 constexpr bool kDebugBuild = true;
 #endif
 
-constexpr std::uint64_t kMaxHeadlessSleepNs = 4'000'000;
-
 struct Options {
     bool headless = false;
     bool unbounded = false;
@@ -866,6 +864,14 @@ struct Phases {
             auto frame = device->begin_frame();
             std::uint64_t present_us = micros_since(acquire_start);
             if (!frame) {
+                // A failed frame is where device loss surfaces: every later call fails too,
+                // so the first failure is the only one that names the cause. Atlas does not
+                // recover, by charter; it reports the reason and stops with its own code.
+                if (device->is_lost()) {
+                    return atlas::fail(
+                        atlas::ErrorCode::DeviceLost,
+                        std::format("the graphics device was lost: {}", device->loss_reason()));
+                }
                 ATLAS_LOG_ERROR(kApp, "begin_frame failed: {}", frame.error());
                 quit = true;
             } else {
@@ -976,12 +982,8 @@ struct Phases {
         ATLAS_FRAME_MARK();
 
         if (options->headless && !options->unbounded && ticks_run == 0) {
-            const auto remaining =
-                accumulator->tick_length_ns() -
-                static_cast<std::uint64_t>(static_cast<double>(accumulator->tick_length_ns()) *
-                                           static_cast<double>(plan.alpha));
-            std::this_thread::sleep_for(
-                std::chrono::nanoseconds{std::min<std::uint64_t>(remaining, kMaxHeadlessSleepNs)});
+            std::this_thread::sleep_for(std::chrono::nanoseconds{
+                atlas::app::headless_wait_ns(accumulator->tick_length_ns(), plan.alpha)});
         }
         if (options->max_frames != 0 && frame_index >= options->max_frames) {
             quit = true;

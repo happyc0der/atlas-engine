@@ -85,6 +85,8 @@ bool Window::is_minimized() const noexcept {
     if (m_handle == nullptr) {
         return false;
     }
+    ATLAS_ASSERT_MAIN_THREAD();
+
     // Queried rather than tracked from events. Tracked state can drift out of sync with
     // reality if an event is missed; a query cannot.
     return (SDL_GetWindowFlags(as_sdl(m_handle)) & SDL_WINDOW_MINIMIZED) != 0;
@@ -94,6 +96,8 @@ bool Window::has_focus() const noexcept {
     if (m_handle == nullptr) {
         return false;
     }
+    ATLAS_ASSERT_MAIN_THREAD();
+
     return (SDL_GetWindowFlags(as_sdl(m_handle)) & SDL_WINDOW_INPUT_FOCUS) != 0;
 }
 
@@ -101,6 +105,8 @@ bool Window::is_hidden() const noexcept {
     if (m_handle == nullptr) {
         return true;
     }
+    ATLAS_ASSERT_MAIN_THREAD();
+
     return (SDL_GetWindowFlags(as_sdl(m_handle)) & SDL_WINDOW_HIDDEN) != 0;
 }
 
