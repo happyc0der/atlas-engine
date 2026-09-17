@@ -38,7 +38,7 @@ integration ran for the first time. What it found is recorded in
 | Continuous integration | Runs, on every push. It found twelve distinct problems in its first seven attempts, across six corrective pushes. None could have been found locally: they are properties of the runner images, the checkout action, the triplets, and compilers this machine does not have. |
 | macOS and Linux x86_64 | Both build and pass, in Debug and Release. Linux x86_64 is verified for the first time; the local container is arm64. |
 | Windows | Compiles for the first time. It found two genuine portability bugs in code that had never been compiled by MSVC. |
-| x86_64 determinism | Measured. The golden hashes are identical on macOS arm64, Linux arm64 and Linux x86_64. MSVC is still unmeasured, and the scenario is integer-only, so floating point in authoritative state remains an open question rather than an answered one. |
+| Cross-platform determinism | Measured, and since continuous integration began it is re-measured on every push: the golden scenarios run in `ctest` on all six jobs, so their exact hashes are checked on macOS arm64, Linux x86_64 and Windows x64 MSVC, plus Linux arm64 in the local container. MSVC is therefore no longer unmeasured — the row said so for longer than it was true. The scenarios are integer-only, so floating point in authoritative state remains an open question rather than an answered one. |
 | A decision the plan asked for | The plan said the owner would decide by M3 whether to acquire Windows hardware or a virtual machine. M3 passed without the question being put. Continuous integration reduces the urgency; it does not answer the question, because the graphics path on Windows still has nothing verifying it. |
 
 ## Deferred with a reason, by milestone
@@ -79,7 +79,13 @@ integration ran for the first time. What it found is recorded in
   summary, and a panel would be a second place for the same three numbers to be wrong.
 - **Shader loading through the registry.** Shaders still come from the generated manifest. The
   registry has nothing to add to a shader whose resource counts are compile-time constants.
-- **Cooked-artifact caching.** Nothing yet takes long enough to import to justify a cache.
+- **Cooked-artifact caching.** ~~Nothing yet takes long enough to import to justify a cache.~~
+  **Built in M7 Gate 1**, because the charter lists it under v0.1. The M4 reasoning turned out
+  to be half right: the first design, keyed on a content hash, cost more to key than to decode
+  (15.3 ms against 8.25 ms at 2048²) and was reported rather than kept. Re-keyed on the owner's
+  decision to size plus modification time plus importer version, a warm import at 2048² is
+  2.26 ms against 8.46 ms cold. Both designs and both sets of numbers are in
+  `docs/PERFORMANCE.md`.
 - **An asset dependency graph.** With one asset type, nothing depends on anything.
 
 ### M5 — scene
