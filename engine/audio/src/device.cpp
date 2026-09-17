@@ -12,7 +12,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <format>
+#include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
