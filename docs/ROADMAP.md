@@ -210,11 +210,11 @@ Deferred with reasons rather than silently:
   overlay instead, so there is still exactly one composition root. Extracting it now would
   produce an abstraction with one call site, which this project's own rules forbid. It is
   created when a second application genuinely needs it.
-- **No command or undo infrastructure, and so no editing.** The scene panel takes the scene by
-  const reference, which means the compiler enforces the restriction rather than discipline
-  doing it. Mutation arrives in M9 together with the infrastructure that makes every change go
-  through one validated path; adding widgets first would create a second way into the scene
-  that bypasses the checks `Scene` performs.
+- ~~**No command or undo infrastructure, and so no editing.**~~ **Resolved in M9.** The panel
+  now takes an `edit::History`, which exposes its scene as const and has no method yielding a
+  mutable one, so the compiler still enforces that a widget cannot bypass validation — the
+  guarantee is kept rather than traded away. Adding widgets first would have created a second
+  way into the scene that bypasses the checks `Scene` performs.
 
 ## Closing two gaps found by auditing M0 to M4
 
@@ -444,7 +444,7 @@ viewport (recorded). All in `docs/DEFERRED.md`.
 | Asset system: virtual paths, stable IDs, async CPU loading, cooked-artifact caching, fallbacks, hot reload, for shaders and textures | **Met for textures; shaders are loaded by path from the cooked manifest, not through the registry.** The deferral and its reason are recorded; the loader became public renderer API in M7 when the lab became its second caller. |
 | Scene layer with transform hierarchy and versioned serialization using stable IDs | **Met** (M5). |
 | Simulation kernel: fixed integer ticks, commands, deterministic system ordering, seeded RNG streams, canonical state hashing, replay, save/load, snapshot publication | **Met** (M6), and now driven by a real program. |
-| Strategy laboratory: synthetic cell field, map modes, pan and zoom, ID picking, mock data-oriented systems, speed controls including unbounded headless execution, replay, profiler counters | **Met**, as above. Controls are keyboard only; widgets wait for M9's command infrastructure, deliberately. |
+| Strategy laboratory: synthetic cell field, map modes, pan and zoom, ID picking, mock data-oriented systems, speed controls including unbounded headless execution, replay, profiler counters | **Met**, as above. Controls were keyboard only at v0.1 and deliberately so; M9 added the widgets once the command infrastructure existed to make them safe. |
 | Documentation and ADRs that match the implementation | **Met** as of this commit; the E7 truth pass and this section are the evidence, and the next divergence will be found the same way. |
 
 One requirement is met with a stated qualification (shaders bypass the registry) and none is
@@ -629,7 +629,8 @@ the panel's render path under the `gpu` label on two backends.
 ### What this milestone deliberately did not build
 
 Rename, rotation, scale, sprite and camera widgets, reparent by drag, multi-selection, a
-clipboard, memory counters, record and play as buttons, a reset button, and dock persistence.
+clipboard, memory counters, a renderer resource view, record and play as buttons, a reset
+button, and dock persistence.
 Each has its reason in [DEFERRED.md](DEFERRED.md). The commands behind several of them exist
 and are tested, which is recorded there so that "a command with no widget" reads as intended
 rather than as a gap.

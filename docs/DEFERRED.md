@@ -135,6 +135,18 @@ integration ran for the first time. What it found is recorded in
   set when the kernel is built. A setter would let a recording begin mid-run, and a replay that
   does not start at tick zero cannot reproduce the run it came from. The status rows are the
   useful half; the buttons would be a trap.
+- **A renderer resource and debug view.** The blueprint lists it among the editor's eight
+  panels, and it is the one of the eight that M9 neither built nor recorded until this review
+  caught the omission. The material exists: `rhi::Device::resource_counts()` reports buffers,
+  textures, samplers and pipelines, and is currently called only by the device's own leak
+  report and by tests. Five numbers do not need a panel; they need five rows, and adding them
+  to the applications' statistics panels is the cheap version that would satisfy most of what
+  the blueprint wanted. What a real debug view would add is per-resource detail — which
+  texture, which pipeline, how large — and the registry to support that does not exist, because
+  nothing has needed to ask. The condition is a resource leak or a memory figure nobody can
+  account for, at which point per-resource detail is the thing that answers it and a count is
+  not.
+
 - **A simulation reset button.** F9 reloads from a file, which is the existing lifecycle path
   and is what the panel's Load does. Regenerating a world from its seed without a file is a new
   path, and nothing has asked for one.

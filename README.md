@@ -9,9 +9,29 @@ configure, build, test run, and a runnable demonstration before the next one sta
 
 ## Current status
 
-**Milestone M0 — architecture and reproducible skeleton.** The engine currently starts,
-logs, and exits. There is no window, renderer, asset system, scene, or simulation yet.
-See [docs/ROADMAP.md](docs/ROADMAP.md) for what arrives when.
+**All ten planned milestones are done, M0 through M9.** Engine v0.1 was declared at M7 against
+the charter item by item.
+
+What exists: a windowing and input layer; a renderer over SDL_GPU with offscreen targets,
+integer-identifier picking and non-stalling streaming uploads; an asset pipeline with virtual
+paths, background loading, hot reload and a cooked-artifact cache; a scene layer with a
+transform hierarchy and versioned serialization; a deterministic simulation kernel with fixed
+integer ticks, commands, seeded random streams, canonical state hashing, replay, and save and
+load; a worker pool the simulation's compute phase runs on; an undoable edit layer; and an
+engineering overlay with scene, log, asset, timing and control panels.
+
+Two applications drive it. `atlas_sandbox` is the lifecycle and scene demonstration.
+`atlas_lab` is the Strategy Laboratory: a synthetic million-cell grid with map modes, picking,
+time controls and replay, which exists to test the architecture rather than to be a game.
+
+**What is not done.** The renderer has been verified on one graphics processor and one software
+rasteriser; Direct3D 12 and non-Apple hardware are unverified, and that is the largest untested
+surface in the project. There is no audio, no gamepad input, no networking, and no scripting —
+see [ADR-0009](docs/adr/0009-scripting-decision.md) for why the last of those is a decision
+rather than an omission. Everything consciously not built is listed with its reason in
+[docs/DEFERRED.md](docs/DEFERRED.md).
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for what each milestone did and what it cost.
 
 ## Quick start
 
@@ -27,7 +47,15 @@ cmake --preset macos-debug          # or linux-clang-debug, windows-msvc-debug
 cmake --build --preset macos-debug
 ctest --preset macos-debug
 
-./build/macos-debug/bin/atlas_sandbox --headless --iterations 100
+./build/macos-debug/bin/atlas_sandbox --headless --ticks 100
+```
+
+Something to look at:
+
+```sh
+./build/macos-debug/bin/atlas_sandbox --scene            # a scene, an overlay; Escape quits
+./build/macos-debug/bin/atlas_lab --grid 512             # the Strategy Laboratory
+./build/macos-debug/bin/atlas_lab --headless --grid 1024 --ticks 1000   # no window at all
 ```
 
 `cmake --workflow --preset ci-macos-debug` runs configure, build, and test in one step.
