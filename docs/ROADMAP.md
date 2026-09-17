@@ -18,9 +18,9 @@ Status legend: **done**, *in progress*, planned.
 | M7 | Strategy Lab (engine v0.1) | L | **done** |
 | M8 | Performance hardening and parallel simulation | L | **done** |
 | M9 | Tooling and scripting decision | S–M | **done** |
-| M10 | Charter amendment (ADR-0010) | S | next |
-| M11 | Input: text, IME, gamepad | M | planned |
-| M12 | Audio | M | planned |
+| M10 | Charter amendment (ADR-0010) | S | **done** |
+| M11 | Input: text, IME, gamepad | M | **done** |
+| M12 | Audio | M | next |
 | M13 | Animation | M–L | planned |
 | M14 | Networking: lockstep design and loopback proof | M | planned |
 | M15 | Sandboxed mods | L | planned |
@@ -703,6 +703,122 @@ Slices: [ADR-0010](adr/0010-charter-amendment.md), and the five documents it cha
 - ADR-0009 carries a dated forward pointer rather than an edit that hides the change of mind.
 - `tools/precheck.sh` clean. No code changes; no test result changes.
 - Stop and report, so the amended charter is read before a line of feature code exists.
+
+### Exit criteria, against what was done
+
+**All met**, at `2a2b1d0`. Five documents changed exactly as the ADR tabled them in advance;
+ADR-0009 carries a dated forward pointer under its status rather than a rewritten decision, and
+the index legend gained "Superseded in part by NNNN" so that a partial change of mind has
+somewhere to be recorded; `precheck` clean at 554 tests, none of which moved because no code
+did.
+
+The record says plainly what it cost. The charter has now been amended **by decision rather
+than by evidence**, and the next amendment will cite this one as precedent. That is the real
+price of the second series and it was written into the record rather than argued away.
+
+## M11 — Input: text, IME, gamepad
+
+Full report: [reports/M11.md](reports/M11.md).
+
+Slices: text input and the rename widget; input-method candidate positioning; the gamepad in
+the platform; the consumers, which is one camera controller and one binding table.
+
+**Exit criteria**
+- `Event` carries text and gamepad alternatives, with its name table, its positional
+  assertions and its coverage test moving together, and with its trivial copyability asserted
+  rather than narrated.
+- Typing into a real panel works end to end, proven by a GPU test rather than by inspection.
+- Text input is on only while something is focused, in both applications.
+- A controller pans and zooms everywhere the mouse does, with no anchor drift.
+- What cannot be automated is written down as such, not glossed.
+
+### The gap this closes
+
+M9 shipped an editor that could not rename anything, and said so in its own report. The reason
+was three layers down: the platform had no text event, so it forwarded no characters; the
+overlay's key table covered twenty-two navigation keys and no letters, so no shortcut inside a
+text field could ever fire; and nothing called into the window system to switch text input on,
+so on most platforms no character was produced in the first place.
+
+**There was already a broken call site.** The log console's category filter has been a real
+text field since M9 and could not receive a single character. It started working in the same
+commit as the rename widget, which is the difference between building a feature and repairing
+one.
+
+### The three shapes input takes
+
+The milestone's one structural idea is that events, level state and window state answer
+different questions and must not be confused.
+
+**Committed text is a stream.** It arrives as its own event, because a key is a position on a
+keyboard and a character is what an input method decided the person meant, and neither is
+derivable from the other. The bytes are inline — sixty-three of them — because a string would
+allocate inside `pump()`, which the header promises it does not, and a view into scratch memory
+would dangle the moment a consumer kept an event. The price is that a longer commit arrives as
+several consecutive events, each cut on a character boundary, which is lossless because every
+consumer appends in order. The cutting is the only part that can be wrong, so it lives in a
+free function with no window system anywhere near it and nine tests around it.
+
+**A composition is state.** An input method's in-progress text replaces itself on every
+keystroke, so it truncates rather than splitting, and says that it truncated.
+
+**An axis is level.** There is deliberately no axis event: an axis has no transition worth
+naming, a resting stick would be the first thing to exhaust the event reserve, and both
+consumers poll. Buttons get edges; axes get a value that survives the frame boundary.
+
+### The decisions that were made to be reversed cheaply
+
+**Text input is off unless something is focused.** Always-on is not a smaller amount of code,
+it is a different behaviour: with an input method active every key routes through the method,
+so the space bar stops pausing the simulation and starts confirming a candidate, and every key
+produces a character *and* a key event, so a shortcut key types as well. The overlay already
+knows when a field is focused. The application asks it once a frame.
+
+**A gamepad identifier is a slot, not a device.** The window system's own identifier is not
+stable across runs, so exposing it would eventually put it in a saved binding. Four slots,
+lowest free one on connect, released on disconnect. Face buttons are named by position, because
+the button in the south position is "A" on one vendor's pad and "B" on another's, and the two
+vendors disagree about which of them means confirm.
+
+**The subsystem is off by default.** Video defaults on because without it there is no
+application; a gamepad is a peripheral that every application works without, so a composition
+root opts in. Some thirty headless tests therefore enumerate no devices and behave exactly as
+they did before.
+
+### One camera, one table
+
+Three character-identical copies of drag-pan and wheel-zoom were each about to grow a gamepad
+branch, and M9 had already fixed one bug in four places because of that duplication. That is
+the project's own bar for generalising, met three times over, so the arithmetic moved to
+`apps/common` behind a plain input struct — which is what makes it testable at all, since only
+the platform may write an `InputState`.
+
+**The regression test that never existed now does**: a wheel zoom leaves the world point under
+the pointer unchanged. That is the exact property M9's bug broke, and nothing had been asserting
+it.
+
+The gamepad's missing pointer turned out not to be a problem. The camera's centre *is* the
+world point under the viewport centre, so a stick zoom needs no anchor, while the wheel keeps
+zooming about the pointer.
+
+The lab's key switch became a table where a key and the gamepad button that mean the same
+action sit on the same row, so the two cannot drift apart. Two new actions, faster and slower,
+step a speed ladder and stop at its ends rather than wrapping.
+
+### Exit criteria, against what was done
+
+| Criterion | Status |
+|---|---|
+| `Event` grows correctly, with the enforcement moving with it | **Met.** Twenty alternatives, twenty names, twenty positional assertions and a new `static_assert` that every alternative is trivially copyable. The last of those was previously a comment describing a property nothing checked, which is what made the inline text buffer a constraint rather than an intention. |
+| Typing into a real panel proven end to end | **Met for the automated half.** GPU tests click the log filter through a rectangle the panel reports back, send text, and assert the shown and hidden counts changed; the same recipe renames an entity and asserts one undoable step. **The manual half is outstanding:** no runner has an input method installed, so a real composition committing and a candidate window following the caret have not been observed by anyone. Listed as the first risk in the report rather than waved through. |
+| Text input on only while focused | **Met**, in both applications, synced once a frame from the overlay and queried from the window system rather than remembered. |
+| A controller pans and zooms with no anchor drift | **Met by test, not by hand.** Virtual joysticks drive real connect, button and axis events through the ordinary path on macOS and in the Linux container, and the camera arithmetic is unit-tested including the wheel-zoom invariant. **No physical controller has ever been plugged in**, so a real pad's mapping database and a wireless disconnection mid-frame are unverified, and the report says so. |
+| What cannot be automated written down as such | **Met, and it is the honest part of this milestone.** Three properties are documented as untestable at the line where someone would delete them: the byte that keeps a character split from reading past the end of a view, the release of held gamepad state on disconnect, and the placement of a candidate list. Three mutation checks survived, and each survival is explained rather than reported as coverage. |
+| `precheck` clean, containers green, four workflows green | **Met.** 594 tests on macOS and in the Linux container, 652 including the GPU label, 58 on the software rasteriser with the new overlay tests running rather than skipping, and six CI jobs green on each of the four commits. |
+
+**Corrections this milestone made to earlier work.** A deferral entry claiming the sandbox's
+zoom anchor was still broken had been fixed in M9 and never struck. A comment described an
+implementation that does not exist. And `event.cpp` stated a property it did not enforce.
 
 ## First continuous integration
 

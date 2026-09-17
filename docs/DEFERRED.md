@@ -274,6 +274,27 @@ integration ran for the first time. What it found is recorded in
   as well as zoom. The entry was left standing by mistake and is struck here; M11's shared
   camera controller is what stops the next such fix needing four edits.
 
+- **Gamepad features beyond pan, zoom and the lab's controls.** M11 built the slots, the
+  buttons, the axes and the dead zone against the two consumers that exist. What it did not
+  build, each for the same reason — nothing asks for it:
+
+  - **Gamepad navigation of the overlay.** The library has a navigation mode that wants a pad
+    wired into it. A person using a pad today can drive the camera and the lab's controls but
+    cannot reach a panel. Picked up when a build is meant to be usable without a keyboard,
+    which no application here is.
+  - **Radial or configurable dead zones.** The dead zone is per-axis with fixed constants,
+    which is the right default and is wrong for a stick pushed diagonally: each axis clears
+    its threshold separately, so the corners are slightly favoured. A radial zone treats the
+    stick as one vector. Picked up when someone with a controller in hand says the diagonals
+    feel wrong, which is the only way that judgement can honestly be made, and it needs the
+    constants to become configuration at the same time.
+  - **More than four gamepads.** Four is what local multiplayer and every console convention
+    assume. A fifth pad is refused with a warning rather than silently dropped, so the limit
+    is visible when it is reached.
+  - **Rumble, sensors, touchpads, paddles and battery state.** The window system exposes all
+    of them. None has a consumer, and each would be another thing to keep working across three
+    platforms for no user.
+
 ## Decided by ADR-0010, planned as milestones
 
 Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.

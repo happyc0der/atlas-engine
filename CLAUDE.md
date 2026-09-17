@@ -102,6 +102,19 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   at every entry point.
 - Query window state such as minimised or focused; do not track it from events, which
   drifts when an event is missed.
+- `platform::Event` is trivially copyable, and a `static_assert` says so. A payload that would
+  allocate inside `pump()` or dangle after the next one does not belong in an event: copy it
+  inline, and split it across several events if it does not fit.
+- Text input is switched on only while something is focused, and the window is asked whether
+  it is on rather than told and remembered. Always-on routes every key through an input method
+  and makes every shortcut key type as well.
+- A `GamepadId` is a slot, not a device. The window system's own device identifier never
+  leaves `engine/platform/src`: it is not stable across runs and would end up in a saved
+  binding. Face buttons are named by position, never by letter.
+- A dead zone is applied once, in the platform, with a rescale so full deflection still reads
+  exactly one. Applied a second time by a consumer it is a bug.
+- A key and the gamepad button that mean the same action live on the same row of one table, so
+  they cannot drift apart.
 - SDL types stay in `engine/platform/src` and `engine/rhi/src`. The native window handle
   reaches the renderer only through `atlas::platform_internal`.
 - Shaders are authored in HLSL and cooked to SPIR-V and MSL. Commit the cooked outputs.

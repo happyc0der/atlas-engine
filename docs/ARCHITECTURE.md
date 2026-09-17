@@ -189,6 +189,66 @@ published as `shared_ptr<const Snapshot>` with latest-wins semantics; a renderer
 snapshot for a whole frame. This is the one place shared ownership is permitted, and it is
 what allows the simulation to move to its own thread later without changing the renderer.
 
+## Input
+
+Three kinds of input reach an application, and they are deliberately shaped differently
+because they answer different questions.
+
+**Events are transitions.** A key going down, a button going up, a window being resized, a
+character being committed. They arrive in a `std::vector<Event>` from `pump()`, in the order
+the window system delivered them, and a consumer that misses one has missed something that
+happened. `Event` is a `std::variant` and is **trivially copyable**, asserted rather than
+merely intended, so a copy is a memcpy and `pump()` allocates nothing after warm-up.
+
+**`InputState` is level.** Which keys are down now, where the pointer is, how far a stick is
+pushed. A consumer that reads it every frame needs no history. Only `Platform` may write it;
+every accessor is public and every mutator is private with `Platform` a friend, which is what
+makes a frame of input reproducible from a struct in a test without a window system.
+
+**Window state is queried, never tracked.** Minimised, focused, size. Tracked state drifts
+when an event is missed; a query cannot.
+
+### Text, and why it is not keys
+
+A key is a position on a keyboard; a character is what an input method decided the person
+meant. They are not the same and one is not derivable from the other, so committed text
+arrives as its own event carrying UTF-8 bytes.
+
+The bytes are **inline, 63 of them plus a terminator**. A `std::string` would allocate inside
+`pump()` and cost `Event` its trivial copyability; a view into a scratch arena would dangle
+the moment a consumer kept an event past the next pump. The cost of the inline buffer is that
+a longer commit arrives as **several consecutive events, each cut on a code-point boundary**,
+which is lossless because committed text is a stream that every consumer appends in order.
+
+An input method's **in-progress composition** is a different thing again: it is state, not a
+stream, because each update replaces the last. So it truncates rather than splitting, and
+says that it did.
+
+**Text input is off unless something is focused.** Nothing but a focused field wants it: with
+an input method active every key routes through the method, so a space bar stops pausing the
+simulation and starts confirming a candidate, and every key would produce a character *and* a
+key event, so a shortcut key would also type. The overlay knows when a field is focused, so
+the application asks it once a frame and tells the window.
+
+### Gamepads are slots, not devices
+
+`GamepadId` names one of four slots. The platform assigns the lowest free slot on connect and
+releases it on disconnect; the window system's own device identifier never leaves
+`platform/src`, because it is not stable across runs and would end up in a saved binding if
+it were exposed. Face buttons are named by position rather than by letter, because the button
+in the south position is "A" on one vendor's pad and "B" on another's.
+
+There is **no axis event**. An axis is level state with no transition worth naming, a resting
+stick would be the first thing to exhaust the event reserve, and every consumer polls. The
+dead zone is applied once, in the platform, with a rescale so that full deflection still
+reads exactly one — applied twice it is a bug, and the window system's raw range is
+asymmetric, so normalising belongs where that type lives.
+
+The subsystem is **off by default**. Without video there is no application, so video defaults
+on; without a gamepad every application still works, so it is a peripheral a composition root
+opts into. It initialises as its own subsystem, so a failure is a warning rather than a
+refusal to run.
+
 ## Threading model
 
 v0.1 was single-threaded by design, and since M8 the simulation's compute phase runs on
