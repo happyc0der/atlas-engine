@@ -19,6 +19,14 @@ TEST_CASE("error domain is derived from the code block", "[core][error]") {
     CHECK(atlas::error_domain(ErrorCode::GpuUnavailable) == ErrorDomain::Gpu);
     CHECK(atlas::error_domain(ErrorCode::AssetNotFound) == ErrorDomain::Asset);
     CHECK(atlas::error_domain(ErrorCode::VersionMismatch) == ErrorDomain::Serialization);
+    CHECK(atlas::error_domain(ErrorCode::AudioInitFailed) == ErrorDomain::Audio);
+
+    // The ladder is open-ended at the top, so the newest block is the one that can be wrong:
+    // before M12 a 500 code answered "serialization", because the 400 rung had no ceiling.
+    // The boundaries either side of each rung are what a new block gets wrong.
+    CHECK(atlas::error_domain(static_cast<ErrorCode>(499)) == ErrorDomain::Serialization);
+    CHECK(atlas::error_domain(static_cast<ErrorCode>(500)) == ErrorDomain::Audio);
+    CHECK(atlas::error_domain(static_cast<ErrorCode>(9999)) == ErrorDomain::Audio);
 }
 
 TEST_CASE("every error code has a name", "[core][error]") {
@@ -30,6 +38,18 @@ TEST_CASE("every error code has a name", "[core][error]") {
     CHECK(atlas::to_string(ErrorCode::DeviceLost) == "DeviceLost");
     CHECK(atlas::to_string(ErrorCode::AssetDecodeFailed) == "AssetDecodeFailed");
     CHECK(atlas::to_string(ErrorCode::MalformedData) == "MalformedData");
+    CHECK(atlas::to_string(ErrorCode::AudioFormatUnsupported) == "AudioFormatUnsupported");
+}
+
+TEST_CASE("every error domain has a name", "[core][error]") {
+    // A domain added without its name prints as nothing at all, which is worse than a
+    // number: the log line simply loses a word and reads as if it were complete.
+    CHECK(atlas::to_string(ErrorDomain::Generic) == "generic");
+    CHECK(atlas::to_string(ErrorDomain::Platform) == "platform");
+    CHECK(atlas::to_string(ErrorDomain::Gpu) == "gpu");
+    CHECK(atlas::to_string(ErrorDomain::Asset) == "asset");
+    CHECK(atlas::to_string(ErrorDomain::Serialization) == "serialization");
+    CHECK(atlas::to_string(ErrorDomain::Audio) == "audio");
 }
 
 TEST_CASE("an error carries code, message, and source location", "[core][error]") {

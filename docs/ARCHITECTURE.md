@@ -10,7 +10,7 @@ five ways before M9, so it is now compared rather than trusted.
 
 ```mermaid
 graph TD
-  core[atlas::core<br/>Result/Error, Log, Assert,<br/>Handle/SlotMap, Hash, profile macros]
+  core[atlas::core<br/>Result/Error, Log, Assert,<br/>Handle/HandlePool, Hash, profile macros]
   math[atlas::math<br/>vectors, matrices, camera]
   platform[atlas::platform<br/>window, events, input, clocks]
   platform_internal[atlas::platform_internal<br/>native window handle, for rhi only]
@@ -19,6 +19,7 @@ graph TD
   rhi_internal[atlas::rhi_internal<br/>native device handle, for tools only]
   renderer[atlas::renderer<br/>camera, batching, ID target]
   assets[atlas::assets<br/>VFS, asset IDs, import, hot reload]
+  audio[atlas::audio<br/>output device, mixer, voices]
   scene[atlas::scene<br/>presentation entities, transforms,<br/>hierarchy, serialization]
   edit[atlas::edit<br/>undoable scene commands, history]
   simulation[atlas::simulation<br/>ticks, commands, systems, hashing]
@@ -43,6 +44,8 @@ graph TD
   renderer --> rhi
   assets --> core
   assets --> platform
+  audio --> core
+  audio --> platform
   scene --> assets
   scene --> core
   scene --> math

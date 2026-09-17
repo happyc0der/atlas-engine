@@ -68,6 +68,14 @@ Result<Platform> Platform::create(const PlatformConfig& config) {
         }
     }
 
+    if (!config.audio_driver.empty()) {
+        const std::string driver{config.audio_driver};
+        if (!SDL_SetHint(SDL_HINT_AUDIO_DRIVER, driver.c_str())) {
+            ATLAS_LOG_WARN(kPlatform, "could not request audio driver '{}'; using the default",
+                           driver);
+        }
+    }
+
     // SDL's default response to a failed internal assertion is a modal dialog with Retry,
     // Break, Abort and Ignore. In an automated run there is nobody to click it, so the
     // process hangs until something times out, which is a far worse failure than a crash:
@@ -106,6 +114,17 @@ Result<Platform> Platform::create(const PlatformConfig& config) {
             ATLAS_LOG_WARN(kPlatform, "the gamepad subsystem did not start: {}", SDL_GetError());
         }
     }
+
+    if (config.audio) {
+        // Separate for the same reason as the gamepad: a machine with no sound card, or a
+        // container with no sound server, still gets its window. Everything an application
+        // does apart from making a noise carries on working.
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+            platform.m_audio = true;
+        } else {
+            ATLAS_LOG_WARN(kPlatform, "the audio subsystem did not start: {}", SDL_GetError());
+        }
+    }
     platform.m_video = config.video;
     platform.m_events.reserve(kEventReserve);
 
@@ -116,14 +135,16 @@ Result<Platform> Platform::create(const PlatformConfig& config) {
     // platform, so none of them observes what a composition root asked for. This line is what
     // an integration check reads.
     const std::string_view gamepad = platform.m_gamepad ? "on" : "off";
+    const std::string_view audio = platform.m_audio ? "on" : "off";
     if (config.video) {
         const char* driver = SDL_GetCurrentVideoDriver();
         platform.m_video_driver = (driver != nullptr) ? driver : "";
-        ATLAS_LOG_INFO(kPlatform, "platform ready: video driver '{}', gamepad {}",
-                       platform.m_video_driver, gamepad);
+        ATLAS_LOG_INFO(kPlatform, "platform ready: video driver '{}', gamepad {}, audio {}",
+                       platform.m_video_driver, gamepad, audio);
     } else {
-        ATLAS_LOG_INFO(kPlatform, "platform ready: headless, no video subsystem, gamepad {}",
-                       gamepad);
+        ATLAS_LOG_INFO(kPlatform,
+                       "platform ready: headless, no video subsystem, gamepad {}, audio {}",
+                       gamepad, audio);
     }
 
     return platform;
@@ -153,8 +174,8 @@ Platform::Platform(Platform&& other) noexcept
       m_video(std::exchange(other.m_video, false)),
       m_quit_requested(std::exchange(other.m_quit_requested, false)),
       m_gamepad(std::exchange(other.m_gamepad, false)),
-      m_video_driver(std::move(other.m_video_driver)), m_events(std::move(other.m_events)),
-      m_input(other.m_input),
+      m_audio(std::exchange(other.m_audio, false)), m_video_driver(std::move(other.m_video_driver)),
+      m_events(std::move(other.m_events)), m_input(other.m_input),
       // Taken, not copied: two platforms holding the same open pad would close it twice.
       m_gamepad_instance(std::exchange(other.m_gamepad_instance, {})),
       m_gamepad_handle(std::exchange(other.m_gamepad_handle, {})) {}
@@ -175,6 +196,7 @@ Platform& Platform::operator=(Platform&& other) noexcept {
         m_quit_requested = std::exchange(other.m_quit_requested, false);
         m_video_driver = std::move(other.m_video_driver);
         m_gamepad = std::exchange(other.m_gamepad, false);
+        m_audio = std::exchange(other.m_audio, false);
         m_events = std::move(other.m_events);
         m_input = other.m_input;
         m_gamepad_instance = std::exchange(other.m_gamepad_instance, {});

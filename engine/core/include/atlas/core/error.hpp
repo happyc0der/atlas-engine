@@ -56,13 +56,28 @@ enum class ErrorCode : std::uint32_t {
     VersionMismatch = 401,
     IntegrityCheckFailed = 402,
     MalformedData = 403,
+
+    /// The audio subsystem could not start at all.
+    AudioInitFailed = 500,
+    /// There is no output device, or the one there is refused to open.
+    AudioDeviceUnavailable = 501,
+    /// Audio data the engine cannot represent: too many channels, an impossible rate, a
+    /// sample format with no conversion.
+    AudioFormatUnsupported = 502,
 };
 
 /// Coarse domain of an error, derived from its code rather than stored separately.
-enum class ErrorDomain : std::uint8_t { Generic, Platform, Gpu, Asset, Serialization };
+enum class ErrorDomain : std::uint8_t { Generic, Platform, Gpu, Asset, Serialization, Audio };
 
+/// The ladder is open-ended at the top, so **a new block must add its rung above the previous
+/// one**. Before M12 the top rung was `>= 400`, which meant a 500 code reported itself as a
+/// serialization error: numerically free, semantically wrong, and silent. Adding a block is
+/// three edits — the codes, an enumerator here, a rung, and the two `to_string` cases.
 [[nodiscard]] constexpr ErrorDomain error_domain(ErrorCode code) noexcept {
     const auto value = static_cast<std::uint32_t>(code);
+    if (value >= 500) {
+        return ErrorDomain::Audio;
+    }
     if (value >= 400) {
         return ErrorDomain::Serialization;
     }

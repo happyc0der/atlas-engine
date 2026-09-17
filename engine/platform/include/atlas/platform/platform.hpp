@@ -53,6 +53,28 @@ struct PlatformConfig {
     /// Failing to initialise it is a warning, not a refusal: an application that cannot find
     /// a gamepad should still open its window.
     bool gamepad = false;
+
+    /// Initialise the audio subsystem.
+    ///
+    /// **Off by default, for the same reason as the gamepad**: every application works
+    /// without sound, so it is something a composition root opts into rather than something
+    /// it has to opt out of. Off also means a headless test opens no output device.
+    ///
+    /// The platform owns this rather than `atlas::audio` because the platform owns SDL's
+    /// lifetime: its destructor shuts every subsystem down at once, so a second module
+    /// starting one would be sharing a lifetime with no way to see the other half of it.
+    /// The audio module opens a device on a subsystem someone else brought up, exactly as
+    /// the renderer opens a graphics device on a window someone else created.
+    ///
+    /// Failing to initialise it is a warning, not a refusal: an application that cannot
+    /// make a sound should still open its window.
+    bool audio = false;
+
+    /// Ask for a specific audio driver. Empty lets the system choose.
+    ///
+    /// The value that matters is "dummy", which accepts audio and discards it. That is how
+    /// the audio path is exercised in continuous integration, where there is no sound card.
+    std::string_view audio_driver;
 };
 
 class Platform {
@@ -94,6 +116,10 @@ class Platform {
     /// was asked for and the window system refused.
     [[nodiscard]] bool has_gamepad_support() const noexcept { return m_gamepad; }
 
+    /// Whether the audio subsystem started. False when it was not asked for, and false when
+    /// it was asked for and refused; the log line says which.
+    [[nodiscard]] bool has_audio_support() const noexcept { return m_audio; }
+
   private:
     Platform() = default;
 
@@ -104,6 +130,7 @@ class Platform {
     bool m_video = false;
     bool m_quit_requested = false;
     bool m_gamepad = false;
+    bool m_audio = false;
     std::string m_video_driver;
     std::vector<Event> m_events;
     InputState m_input;

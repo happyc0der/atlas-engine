@@ -23,6 +23,7 @@ set(ATLAS_MODULES
     rhi
     renderer
     assets
+    audio
     scene
     edit
     simulation
@@ -38,6 +39,12 @@ set(ATLAS_MODULE_DEPS_tasks             "core" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_rhi               "core;platform;platform_internal" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_renderer          "core;math;rhi;assets" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_assets            "core;platform" CACHE INTERNAL "")
+# audio: the output device, the mixer and the voices. Depends on platform because the platform
+# owns SDL's lifetime and brings the audio subsystem up; this module opens a device on it, the
+# way rhi opens a graphics device on a window it did not create. It does not depend on renderer,
+# scene or simulation, and must not: a sound is triggered by whoever observes state, never by
+# state itself, and that separation is what keeps audio out of every hash.
+set(ATLAS_MODULE_DEPS_audio             "core;platform" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_scene             "core;math;assets;rhi" CACHE INTERNAL "")
 # edit: undoable commands over the scene and the history that applies them. Between scene and
 # tools so the command layer is testable without a UI library, and so a panel can be handed a

@@ -123,6 +123,14 @@ if(TARGET atlas_lab)
         LABELS "display;integration"
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
+    add_test(NAME "lab_audio_follows_the_window"
+             COMMAND "${Python3_EXECUTABLE}" "${_atlas_lab_checks}"
+                     --binary "$<TARGET_FILE:atlas_lab>"
+                     --case audio_follows_the_window)
+    set_tests_properties("lab_audio_follows_the_window" PROPERTIES
+        LABELS "display;integration"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
     # Needs a real device: it draws the identifier pass and reads a pixel back.
     add_test(NAME "lab_pick_returns_expected_cell"
              COMMAND "${Python3_EXECUTABLE}" "${_atlas_lab_checks}"

@@ -41,6 +41,9 @@ std::string_view to_string(ErrorCode code) noexcept {
     case ErrorCode::VersionMismatch: return "VersionMismatch";
     case ErrorCode::IntegrityCheckFailed: return "IntegrityCheckFailed";
     case ErrorCode::MalformedData: return "MalformedData";
+    case ErrorCode::AudioInitFailed: return "AudioInitFailed";
+    case ErrorCode::AudioDeviceUnavailable: return "AudioDeviceUnavailable";
+    case ErrorCode::AudioFormatUnsupported: return "AudioFormatUnsupported";
     }
     // No default case above, so that adding a code without a name is a compiler warning
     // (and therefore an error). This is reached only for a value cast from an integer.
@@ -54,6 +57,7 @@ std::string_view to_string(ErrorDomain domain) noexcept {
     case ErrorDomain::Gpu: return "gpu";
     case ErrorDomain::Asset: return "asset";
     case ErrorDomain::Serialization: return "serialization";
+    case ErrorDomain::Audio: return "audio";
     }
     return "unrecognised";
 }

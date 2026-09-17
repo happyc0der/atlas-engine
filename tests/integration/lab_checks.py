@@ -330,8 +330,13 @@ def chunk_major_index(x: int, y: int, width: int, chunk: int) -> int:
 def check_pick_returns_expected_cell(binary: str) -> None:
     grid, chunk, cell_size = 64, 16, 8.0
     logical = (500.0, 300.0)
+    # The dummy audio driver is asked for explicitly. A machine with no sound server does not
+    # silently fall back to it: the subsystem fails to start, no device is opened, and the
+    # audio assertion below would then be testing the runner rather than the engine. That is
+    # exactly what happened the first time this case ran in the software-rasteriser container.
     result = run(binary, ["--grid", str(grid), "--chunk", str(chunk), "--frames", "12",
-                          "--no-overlay", "--pick", f"{logical[0]:.0f},{logical[1]:.0f}"])
+                          "--no-overlay", "--audio-driver", "dummy",
+                          "--pick", f"{logical[0]:.0f},{logical[1]:.0f}"])
     expect_exit(result, 0, "pick run")
     text = output_of(result)
     window = re.search(r"pixels=(\d+)x(\d+) scale=(\d+(?:\.\d+)?)", text)
@@ -351,6 +356,10 @@ def check_pick_returns_expected_cell(binary: str) -> None:
     expect_contains(text, f"identifier pass={expected} analytic={expected}", "pick agrees")
     expect_contains(text, "pick disagreements=0", "no disagreements")
     expect_contains(text, f"picked cell {expected}", "the pick became a command")
+    # And the pick made a sound. This is the whole audio path through its real call site: a
+    # device opened, a generated clip created, a voice started where a person clicked, and the
+    # mixer advanced it without the queue running dry.
+    expect_contains(text, "audio: 1 voices peak, 0 underruns", "the pick made a sound")
 
 
 
@@ -376,6 +385,33 @@ def check_gamepad_follows_the_window(binary: str) -> None:
     expect_contains(output_of(opted_out), "gamepad off", "--no-gamepad turns it off")
 
 
+
+def check_audio_follows_the_window(binary: str) -> None:
+    # Audio follows the window for the same reason the gamepad does: a run with no window has
+    # nobody to hear it, and opening an output device on a build machine is work with no
+    # consumer. What this reads is the one line that says what was brought up, plus the
+    # device's own line, plus the summary that proves the device was still there at the end.
+    windowed = run(binary, [*SMALL, "--video-driver", "dummy", "--audio-driver", "dummy",
+                            "--frames", "5", "--no-render"])
+    expect_exit(windowed, 0, "a windowed run")
+    expect_ordered(output_of(windowed),
+                   ["audio on", "audio ready:", "audio: 0 voices peak"],
+                   "a windowed run opens a device and reports on it at exit")
+
+    bare = run(binary, [*SMALL, "--headless", "--ticks", "5"])
+    expect_exit(bare, 0, "a headless run")
+    expect_contains(output_of(bare), "audio off", "a headless run opens no device")
+    if "audio ready:" in output_of(bare):
+        raise CheckFailed("a headless run opened an audio device")
+
+    opted_out = run(binary, [*SMALL, "--video-driver", "dummy", "--frames", "5", "--no-render",
+                             "--no-audio"])
+    expect_exit(opted_out, 0, "a windowed run with --no-audio")
+    expect_contains(output_of(opted_out), "audio off", "--no-audio turns it off")
+    if "audio ready:" in output_of(opted_out):
+        raise CheckFailed("--no-audio opened an audio device anyway")
+
+
 CASES = {
     "version": check_version,
     "help": check_help,
@@ -399,6 +435,7 @@ CASES = {
     "log_file": check_log_file,
     "window_under_dummy_driver": check_window_under_dummy_driver,
     "gamepad_follows_the_window": check_gamepad_follows_the_window,
+    "audio_follows_the_window": check_audio_follows_the_window,
     "pick_returns_expected_cell": check_pick_returns_expected_cell,
 }
 

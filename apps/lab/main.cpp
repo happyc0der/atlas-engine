@@ -12,6 +12,8 @@
 #include <atlas/app/main_guard.hpp>
 #include <atlas/app/ppm.hpp>
 #include <atlas/app/run_bounds.hpp>
+#include <atlas/audio/device.hpp>
+#include <atlas/audio/synth.hpp>
 #include <atlas/core/args.hpp>
 #include <atlas/core/assert.hpp>
 #include <atlas/core/build_info.hpp>
@@ -70,8 +72,10 @@ struct Options {
     bool no_overlay = false;
     bool no_render = false;
     bool no_gamepad = false;
+    bool no_audio = false;
     bool start_paused = false;
     std::string_view video_driver;
+    std::string_view audio_driver;
     std::string_view log_level;
     std::string_view log_file;
     std::string_view shader_dir;
@@ -131,6 +135,8 @@ Options:
   --no-overlay           Do not create the debug overlay.
   --no-render            Open the window but create no graphics device; for the dummy driver.
   --no-gamepad           Do not enumerate gamepads. On by default when there is a window.
+  --no-audio             Open no audio device. On by default when there is a window.
+  --audio-driver NAME    SDL audio driver, e.g. dummy.
   --log-level LEVEL      trace | debug | info | warning | error | fatal. Default info.
   --log-file PATH        Also write the log to a file.
   --version              Print build identity and exit.
@@ -181,8 +187,10 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
     options.no_overlay = args.has("no-overlay");
     options.no_render = args.has("no-render");
     options.no_gamepad = args.has("no-gamepad");
+    options.no_audio = args.has("no-audio");
     options.start_paused = args.has("paused");
     options.video_driver = args.value_or("video-driver", std::string_view{});
+    options.audio_driver = args.value_or("audio-driver", std::string_view{});
     options.log_level = args.value_or("log-level", std::string_view{"info"});
     options.log_file = args.value_or("log-file", std::string_view{});
     options.shader_dir = args.value_or("shader-dir", std::string_view{"assets/cooked/shaders"});
@@ -536,10 +544,49 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
         .video_driver = options->video_driver,
         .app_name = "Atlas lab",
         .gamepad = !options->headless && !options->no_gamepad,
+        .audio = !options->headless && !options->no_audio,
+        .audio_driver = options->audio_driver,
     });
     if (!platform) {
         return std::unexpected(std::move(platform).error().context("starting the platform"));
     }
+    // Declared after the platform, so it is destroyed before it. The platform's destructor
+    // shuts down every window-system subsystem at once, including the audio one this device's
+    // stream lives on, and a device closed after that is a device closed too late.
+    std::optional<atlas::audio::AudioDevice> audio;
+    atlas::audio::ClipHandle click_clip;
+    if (platform->has_audio_support()) {
+        auto opened = atlas::audio::AudioDevice::create();
+        if (!opened) {
+            // The fallback is the application's decision and is logged as one. If create()
+            // had quietly returned a silent device instead, nobody could tell a working
+            // machine from a broken one without reading the source.
+            ATLAS_LOG_WARN(kApp, "no audio device ({}); continuing without sound", opened.error());
+            audio = atlas::audio::AudioDevice::null();
+        } else {
+            audio = std::move(*opened);
+        }
+
+        // Generated, not loaded. The lab has no asset registry and deliberately does not want
+        // one: giving it a filesystem and a mount to play one click would be a larger change
+        // than the audio module itself.
+        const auto samples = atlas::audio::sine_blip(880.0F, 40, 0.35F);
+        if (auto clip = audio->create_clip({.samples = samples, .debug_name = "click"}); !clip) {
+            ATLAS_LOG_WARN(kApp, "the click could not be created: {}", clip.error());
+        } else {
+            click_clip = *clip;
+        }
+    }
+
+    /// Play the click, if there is anything to play it on. Called from the places a person
+    /// did something, never from inside a tick: audio is presentation, and `atlas_lab_sim`
+    /// is fenced at configure time so that a system could not reach this even by mistake.
+    const auto play_click = [&audio, &click_clip](float pan) {
+        if (audio.has_value() && click_clip.valid()) {
+            (void)audio->play(click_clip, {.pan = pan});
+        }
+    };
+
     atlas::platform::Window window;
     if (!options->headless) {
         auto created = platform->create_window({.title = "Atlas lab"});
@@ -723,6 +770,7 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                        !s) {
                 ATLAS_LOG_ERROR(kApp, "save failed: {}", s.error());
             } else {
+                play_click(0.0F);
                 ATLAS_LOG_INFO(kApp, "saved '{}' at tick {}", options->save_path,
                                sim.kernel->current_tick());
             }
@@ -738,6 +786,7 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                     !s) {
                     ATLAS_LOG_ERROR(kApp, "load failed: {}", s.error());
                 } else {
+                    play_click(0.0F);
                     last_hash = sim.lab.world.hash();
                     if (device.has_value()) {
                         publish();
@@ -870,6 +919,16 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                             !s) {
                             ATLAS_LOG_WARN(kApp, "pick command refused: {}", s.error());
                         } else {
+                            // Panned by where the click landed, so the sound comes from the
+                            // side of the field that changed. A tiny thing, and the reason
+                            // `pan` exists at all rather than being deferred until something
+                            // needed it.
+                            // The pick is stored in pixels, so the width it is measured
+                            // against has to be the pixel width too. Using the logical width
+                            // on a scaled display would pan everything to the left half.
+                            const float width =
+                                std::max(1.0F, static_cast<float>(window.pixel_size().width));
+                            play_click(((pick->screen.x / width) * 2.0F) - 1.0F);
                             ATLAS_LOG_INFO(kApp, "picked cell {} -> colour {}", *picked,
                                            next_colour);
                         }
@@ -879,6 +938,13 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
             pick.reset();
         }
         phases.events = micros_since(events_start);
+
+        // Mixed and pushed once a frame, on this thread. ADR-0011: no Atlas code runs on the
+        // window system's audio thread, and the price is that a frame longer than the queued
+        // audio is heard as a gap, which AudioStats::underruns counts.
+        if (audio.has_value()) {
+            audio->update();
+        }
 
         // ---- simulation
         const auto tick_start = std::chrono::steady_clock::now();
@@ -1151,6 +1217,12 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                        replay.checkpoints.size());
     }
 
+    if (audio.has_value()) {
+        const auto stats = audio->stats();
+        ATLAS_LOG_INFO(kApp, "audio: {} voices peak, {} underruns, {} refused{}", stats.voices_peak,
+                       stats.underruns, stats.plays_refused,
+                       stats.null_device ? ", no device" : "");
+    }
     counters.report();
     const std::uint64_t ticks_total = sim.kernel->current_tick() - first_tick;
     const auto elapsed_us = std::max<std::uint64_t>(1, micros_since(run_start));
