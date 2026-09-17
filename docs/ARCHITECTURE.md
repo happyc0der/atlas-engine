@@ -20,6 +20,7 @@ graph TD
   renderer[atlas::renderer<br/>camera, batching, ID target]
   assets[atlas::assets<br/>VFS, asset IDs, import, hot reload]
   scene[atlas::scene<br/>presentation entities, transforms,<br/>hierarchy, serialization]
+  edit[atlas::edit<br/>undoable scene commands, history]
   simulation[atlas::simulation<br/>ticks, commands, systems, hashing]
   runtime[atlas::runtime<br/>deferred: composition, main loop]
   tools[atlas::tools<br/>editor shell, panels]
@@ -46,6 +47,8 @@ graph TD
   scene --> core
   scene --> math
   scene --> rhi
+  edit --> core
+  edit --> scene
   simulation --> core
   simulation --> tasks
   runtime --> assets
@@ -58,6 +61,7 @@ graph TD
   runtime --> simulation
   tools --> assets
   tools --> core
+  tools --> edit
   tools --> math
   tools --> platform
   tools --> platform_internal
@@ -116,7 +120,8 @@ declaration. Its only permitted consumer is `atlas::rhi`.
 | scene | Presentation entities, transforms, hierarchy, serialization | Is the grand-strategy database |
 | simulation | Ticks, commands, system contracts, RNG, hashing, replay, snapshots | Contains game rules |
 | runtime | Composition, main loop, subsystem lifetimes | Depends on tools or editor code |
-| tools | Editor shell, panels, command and undo | Is depended on by runtime modules |
+| edit | Undoable scene commands, the history that applies them | Holds a UI type; is the simulation's command queue; is depended on by anything that draws |
+| tools | Editor shell, panels | Is depended on by runtime modules |
 | apps | Composition roots and demonstrations | Hold reusable engine logic |
 
 ## Time model

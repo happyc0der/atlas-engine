@@ -24,6 +24,7 @@ set(ATLAS_MODULES
     renderer
     assets
     scene
+    edit
     simulation
     runtime
     tools
@@ -38,10 +39,14 @@ set(ATLAS_MODULE_DEPS_rhi               "core;platform;platform_internal" CACHE 
 set(ATLAS_MODULE_DEPS_renderer          "core;math;rhi;assets" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_assets            "core;platform" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_scene             "core;math;assets;rhi" CACHE INTERNAL "")
+# edit: undoable commands over the scene and the history that applies them. Between scene and
+# tools so the command layer is testable without a UI library, and so a panel can be handed a
+# History without ever seeing a mutable Scene.
+set(ATLAS_MODULE_DEPS_edit              "core;scene" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_simulation        "core;tasks" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_runtime           "core;math;platform;rhi;renderer;assets;scene;simulation" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_rhi_internal      "core;platform;rhi" CACHE INTERNAL "")
-set(ATLAS_MODULE_DEPS_tools             "core;math;platform;platform_internal;rhi;rhi_internal;renderer;assets;scene;simulation" CACHE INTERNAL "")
+set(ATLAS_MODULE_DEPS_tools             "core;math;platform;platform_internal;rhi;rhi_internal;renderer;assets;scene;edit;simulation" CACHE INTERNAL "")
 
 # Third-party libraries permitted in a module's PUBLIC headers. Everything else must be a
 # private implementation detail. Each entry needs an ADR.
