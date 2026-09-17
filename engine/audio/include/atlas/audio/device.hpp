@@ -146,7 +146,11 @@ class AudioDevice {
 
     /// Mix and push whatever is needed to reach the queue target. Once per frame.
     ///
-    /// Allocation-free after the first call: the mixing buffer is sized at creation.
+    /// The mixing buffer is sized at creation and never grows. One allocation remains, and it
+    /// is named here rather than glossed: retiring a voice records the freed slot in the
+    /// pool's free list, which grows until it has held as many entries as there have been
+    /// simultaneous voices. So this is allocation-free once the voice count has peaked, not
+    /// from the first call. M12's benchmark measures it rather than trusting this sentence.
     void update();
 
     [[nodiscard]] AudioStats stats() const noexcept;
