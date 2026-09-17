@@ -812,13 +812,19 @@ step a speed ladder and stop at its ends rather than wrapping.
 | `Event` grows correctly, with the enforcement moving with it | **Met.** Twenty alternatives, twenty names, twenty positional assertions and a new `static_assert` that every alternative is trivially copyable. The last of those was previously a comment describing a property nothing checked, which is what made the inline text buffer a constraint rather than an intention. |
 | Typing into a real panel proven end to end | **Met for the automated half.** GPU tests click the log filter through a rectangle the panel reports back, send text, and assert the shown and hidden counts changed; the same recipe renames an entity and asserts one undoable step. **The manual half is outstanding:** no runner has an input method installed, so a real composition committing and a candidate window following the caret have not been observed by anyone. Listed as the first risk in the report rather than waved through. |
 | Text input on only while focused | **Met**, in both applications, synced once a frame from the overlay and queried from the window system rather than remembered. |
-| A controller pans and zooms with no anchor drift | **Met by test, not by hand.** Virtual joysticks drive real connect, button and axis events through the ordinary path on macOS and in the Linux container, and the camera arithmetic is unit-tested including the wheel-zoom invariant. **No physical controller has ever been plugged in**, so a real pad's mapping database and a wireless disconnection mid-frame are unverified, and the report says so. |
+| A controller pans and zooms with no anchor drift | ~~Met by test, not by hand.~~ **Not met when this was written, and corrected in M12.** Neither application ever enabled the gamepad subsystem, so nothing built here could run in a shipped binary. The platform work was real and remains so; the claim about a person using a controller was not. M12's opening slice turns the subsystem on with the window, adds the integration check that would have caught it, and the report carries the full account. A physical controller has still never been plugged in. |
 | What cannot be automated written down as such | **Met, and it is the honest part of this milestone.** Three properties are documented as untestable at the line where someone would delete them: the byte that keeps a character split from reading past the end of a view, the release of held gamepad state on disconnect, and the placement of a candidate list. Three mutation checks survived, and each survival is explained rather than reported as coverage. |
 | `precheck` clean, containers green, four workflows green | **Met.** 594 tests on macOS and in the Linux container, 652 including the GPU label, 58 on the software rasteriser with the new overlay tests running rather than skipping, and six CI jobs green on each of the four commits. |
 
 **Corrections this milestone made to earlier work.** A deferral entry claiming the sandbox's
 zoom anchor was still broken had been fixed in M9 and never struck. A comment described an
 implementation that does not exist. And `event.cpp` stated a property it did not enforce.
+
+**And a correction made to this milestone, hours after it closed.** The gamepad was unreachable
+from both applications, and this section said it worked. The gap sat between two kinds of test:
+the unit tests each build their own platform, so none could observe what a composition root
+asked for, and the integration checks run whole binaries but had no reason to ask what had been
+initialised. M12 opens by closing it.
 
 ## First continuous integration
 

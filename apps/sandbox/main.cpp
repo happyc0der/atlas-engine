@@ -78,6 +78,7 @@ struct Options {
     std::string_view screenshot;
     bool no_render = false;
     bool no_overlay = false;
+    bool no_gamepad = false;
     bool hot_reload = false;
     std::string_view cache_dir;
     std::uint32_t grid = 100;
@@ -112,6 +113,7 @@ Options:
                          Default: build/sandbox-scene.json.
   --inspect ID           Start with the given entity selected in the scene panel.
   --no-overlay           Do not create the debug overlay.
+  --no-gamepad           Do not enumerate gamepads. On by default when there is a window.
   --edit-check           Apply and undo edits to the demo scene headlessly, then exit.
   --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
   --hot-reload           Re-read assets whose files change while running.
@@ -134,6 +136,7 @@ In a window, Escape or the close button quits.)");
     options.screenshot = args.value_or("screenshot", std::string_view{});
     options.no_render = args.has("no-render");
     options.no_overlay = args.has("no-overlay");
+    options.no_gamepad = args.has("no-gamepad");
     options.hot_reload = args.has("hot-reload");
     options.cache_dir = args.value_or("cache-dir", std::string_view{});
     options.scene_graph = args.has("scene");
@@ -334,10 +337,14 @@ void step_simulation(atlas::Tick tick) {
     }
 
     // Subsystems are constructed in dependency order and destroyed in reverse, by scope.
+    // The gamepad subsystem follows the window: a headless run has nothing to aim, and
+    // enumerating input devices there is work with no consumer that can also raise a
+    // permission prompt. So every headless test behaves exactly as it did before.
     auto platform = atlas::platform::Platform::create({
         .video = !options->headless,
         .video_driver = options->video_driver,
         .app_name = "Atlas sandbox",
+        .gamepad = !options->headless && !options->no_gamepad,
     });
     if (!platform) {
         return std::unexpected(std::move(platform).error().context("starting the platform"));

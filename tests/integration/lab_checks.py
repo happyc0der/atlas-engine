@@ -353,6 +353,29 @@ def check_pick_returns_expected_cell(binary: str) -> None:
     expect_contains(text, f"picked cell {expected}", "the pick became a command")
 
 
+
+def check_gamepad_follows_the_window(binary: str) -> None:
+    # The check M11 needed and did not have. Gamepad support was built, tested and reported
+    # as met while neither application ever asked for the subsystem, because every gamepad
+    # test builds its own platform and so none of them can see what a composition root
+    # requested. This reads the one line that says what was actually brought up.
+    windowed = run(binary, [*SMALL, "--video-driver", "dummy", "--frames", "5",
+                            "--no-render"])
+    expect_exit(windowed, 0, "a windowed run")
+    expect_contains(output_of(windowed), "gamepad on", "a windowed run enables the gamepad")
+
+    # Off without a window: nothing there can aim a camera, and enumerating input devices is
+    # work with no consumer that can also raise a permission prompt.
+    bare = run(binary, [*SMALL, "--headless", "--ticks", "5"])
+    expect_exit(bare, 0, "a headless run")
+    expect_contains(output_of(bare), "gamepad off", "a headless run leaves the gamepad alone")
+
+    opted_out = run(binary, [*SMALL, "--video-driver", "dummy", "--frames", "5",
+                             "--no-render", "--no-gamepad"])
+    expect_exit(opted_out, 0, "a windowed run with --no-gamepad")
+    expect_contains(output_of(opted_out), "gamepad off", "--no-gamepad turns it off")
+
+
 CASES = {
     "version": check_version,
     "help": check_help,
@@ -375,6 +398,7 @@ CASES = {
     "rejects_bad_values": check_rejects_bad_values,
     "log_file": check_log_file,
     "window_under_dummy_driver": check_window_under_dummy_driver,
+    "gamepad_follows_the_window": check_gamepad_follows_the_window,
     "pick_returns_expected_cell": check_pick_returns_expected_cell,
 }
 

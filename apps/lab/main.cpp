@@ -69,6 +69,7 @@ struct Options {
     bool unbounded = false;
     bool no_overlay = false;
     bool no_render = false;
+    bool no_gamepad = false;
     bool start_paused = false;
     std::string_view video_driver;
     std::string_view log_level;
@@ -129,6 +130,7 @@ Options:
   --shader-dir PATH      Where the cooked shaders are. Default assets/cooked/shaders.
   --no-overlay           Do not create the debug overlay.
   --no-render            Open the window but create no graphics device; for the dummy driver.
+  --no-gamepad           Do not enumerate gamepads. On by default when there is a window.
   --log-level LEVEL      trace | debug | info | warning | error | fatal. Default info.
   --log-file PATH        Also write the log to a file.
   --version              Print build identity and exit.
@@ -178,6 +180,7 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
     options.unbounded = args.has("unbounded");
     options.no_overlay = args.has("no-overlay");
     options.no_render = args.has("no-render");
+    options.no_gamepad = args.has("no-gamepad");
     options.start_paused = args.has("paused");
     options.video_driver = args.value_or("video-driver", std::string_view{});
     options.log_level = args.value_or("log-level", std::string_view{"info"});
@@ -524,10 +527,15 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                    sim.lab.layout.width(), sim.lab.layout.height(), sim.lab.layout.chunk_count(),
                    sim.lab.layout.chunk_size(), options->seed, sim.lab.world.hash());
 
+    // The gamepad subsystem follows the window: a run with no window has nobody to aim a
+    // camera, and enumerating input devices on a headless machine is work with no consumer
+    // that can also raise a permission prompt. Every headless test therefore behaves exactly
+    // as it did before this line existed.
     auto platform = atlas::platform::Platform::create({
         .video = !options->headless,
         .video_driver = options->video_driver,
         .app_name = "Atlas lab",
+        .gamepad = !options->headless && !options->no_gamepad,
     });
     if (!platform) {
         return std::unexpected(std::move(platform).error().context("starting the platform"));

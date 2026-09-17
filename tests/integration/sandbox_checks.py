@@ -207,6 +207,28 @@ def case_window_under_dummy_driver(binary: str) -> None:
     )
 
 
+
+def case_gamepad_follows_the_window(binary: str) -> None:
+    # The check M11 needed and did not have. Gamepad support was built, tested and reported
+    # as met while neither application ever asked for the subsystem, because every gamepad
+    # test builds its own platform and so none of them can see what a composition root
+    # requested. This reads the one line that says what was actually brought up.
+    windowed = run(binary, ["--video-driver", "dummy", "--frames", "5", "--no-render"])
+    expect_exit(windowed, 0, "a windowed run")
+    expect_contains(output_of(windowed), "gamepad on", "a windowed run enables the gamepad")
+
+    # Off without a window: nothing there can aim a camera, and enumerating input devices is
+    # work with no consumer that can also raise a permission prompt.
+    bare = run(binary, ["--headless", "--ticks", "5"])
+    expect_exit(bare, 0, "a headless run")
+    expect_contains(output_of(bare), "gamepad off", "a headless run leaves the gamepad alone")
+
+    opted_out = run(binary, ["--video-driver", "dummy", "--frames", "5", "--no-render",
+                             "--no-gamepad"])
+    expect_exit(opted_out, 0, "a windowed run with --no-gamepad")
+    expect_contains(output_of(opted_out), "gamepad off", "--no-gamepad turns it off")
+
+
 CASES = {
     "version": case_version,
     "help": case_help,
@@ -220,6 +242,7 @@ CASES = {
     "log_file": case_log_file,
     "log_level_filters": case_log_level_filters,
     "window_under_dummy_driver": case_window_under_dummy_driver,
+    "gamepad_follows_the_window": case_gamepad_follows_the_window,
 }
 
 

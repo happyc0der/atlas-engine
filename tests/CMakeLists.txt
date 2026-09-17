@@ -57,6 +57,17 @@ set_tests_properties("sandbox_window_under_dummy_driver" PROPERTIES
     LABELS "display;integration"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
+# Reads the one log line that says which subsystems a composition root actually asked for.
+# M11 shipped a gamepad neither application enabled; no unit test could see that, because
+# every gamepad test builds its own platform. This is the check that would have.
+add_test(NAME "sandbox_gamepad_follows_the_window"
+         COMMAND "${Python3_EXECUTABLE}" "${_atlas_sandbox_checks}"
+                 --binary "$<TARGET_FILE:atlas_sandbox>"
+                 --case gamepad_follows_the_window)
+set_tests_properties("sandbox_gamepad_follows_the_window" PROPERTIES
+    LABELS "display;integration"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
 # ----------------------------------------------------------------------------- the lab
 # The Strategy Lab is a second composition root and carries the milestone's determinism
 # claims, which only whole-program runs can test: a second run, a save, a replay.
@@ -98,8 +109,18 @@ if(TARGET atlas_lab)
              COMMAND "${Python3_EXECUTABLE}" "${_atlas_lab_checks}"
                      --binary "$<TARGET_FILE:atlas_lab>"
                      --case window_under_dummy_driver)
+    # "integration" as well as "display": it is a whole-binary run like the sandbox's
+    # equivalent, which has carried both labels since it was written.
     set_tests_properties("lab_window_under_dummy_driver" PROPERTIES
-        LABELS "display"
+        LABELS "display;integration"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
+    add_test(NAME "lab_gamepad_follows_the_window"
+             COMMAND "${Python3_EXECUTABLE}" "${_atlas_lab_checks}"
+                     --binary "$<TARGET_FILE:atlas_lab>"
+                     --case gamepad_follows_the_window)
+    set_tests_properties("lab_gamepad_follows_the_window" PROPERTIES
+        LABELS "display;integration"
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
     # Needs a real device: it draws the identifier pass and reads a pixel back.

@@ -109,12 +109,21 @@ Result<Platform> Platform::create(const PlatformConfig& config) {
     platform.m_video = config.video;
     platform.m_events.reserve(kEventReserve);
 
+    // One line that names every subsystem this platform actually brought up. It says "gamepad
+    // off" rather than staying silent, because a subsystem that is off looks exactly like a
+    // subsystem that is on until something asks for a device. M11 shipped a gamepad neither
+    // application enabled, and no test could see it: every gamepad test builds its own
+    // platform, so none of them observes what a composition root asked for. This line is what
+    // an integration check reads.
+    const std::string_view gamepad = platform.m_gamepad ? "on" : "off";
     if (config.video) {
         const char* driver = SDL_GetCurrentVideoDriver();
         platform.m_video_driver = (driver != nullptr) ? driver : "";
-        ATLAS_LOG_INFO(kPlatform, "platform ready: video driver '{}'", platform.m_video_driver);
+        ATLAS_LOG_INFO(kPlatform, "platform ready: video driver '{}', gamepad {}",
+                       platform.m_video_driver, gamepad);
     } else {
-        ATLAS_LOG_INFO(kPlatform, "platform ready: headless, no video subsystem");
+        ATLAS_LOG_INFO(kPlatform, "platform ready: headless, no video subsystem, gamepad {}",
+                       gamepad);
     }
 
     return platform;
