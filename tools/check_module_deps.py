@@ -128,7 +128,7 @@ def check_include_edges(
             continue
         # Tests may use anything their own module may use, plus their own module.
         problems.append(
-            f"{path.relative_to(REPO_ROOT)}:{number}: "
+            f"{path.relative_to(REPO_ROOT).as_posix()}:{number}: "
             f"module '{module}' includes <atlas/{target}/...>, which is not a permitted "
             f"dependency. Permitted: {sorted(permitted) or 'none'}. "
             f"Moving this boundary means editing cmake/ModuleGraph.cmake."
@@ -154,7 +154,7 @@ def check_public_header_purity(
         if library in allowed:
             continue
         problems.append(
-            f"{path.relative_to(REPO_ROOT)}:{number}: "
+            f"{path.relative_to(REPO_ROOT).as_posix()}:{number}: "
             f"public header includes third-party '{included}'. Third-party libraries are "
             f"private to a module's sources unless an ADR records an exception in "
             f"cmake/ModuleGraph.cmake."
@@ -164,7 +164,10 @@ def check_public_header_purity(
 
 def check_exceptions(path: Path, lines: list[str]) -> list[str]:
     """throw and catch belong only in documented boundary wrappers (ADR-0005)."""
-    relative = str(path.relative_to(REPO_ROOT))
+    # as_posix, not str: on Windows str gives backslashes and no allowlist key ever matches,
+    # so a documented boundary wrapper is reported as a violation there and nowhere else. Found
+    # by continuous integration on the one platform this cannot be tested on locally.
+    relative = path.relative_to(REPO_ROOT).as_posix()
     if relative in EXCEPTION_ALLOWLIST or is_test_file(path):
         return []
 
@@ -202,7 +205,7 @@ def main() -> int:
 
         if module not in deps:
             problems.append(
-                f"{path.relative_to(REPO_ROOT)}: file lives under engine/{module}/, which "
+                f"{path.relative_to(REPO_ROOT).as_posix()}: file lives under engine/{module}/, which "
                 f"is not a module in cmake/ModuleGraph.cmake."
             )
             continue

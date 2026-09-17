@@ -47,7 +47,27 @@ if [[ -z "${CLANG_TIDY_BIN}" ]]; then
     exit 1
 fi
 
-RUN_CLANG_TIDY_BIN="$(find_tool run-clang-tidy)"
+# The wrapper must match the binary it drives. A version 19 run-clang-tidy driving a version 23
+# clang-tidy resolved the configuration to nothing at all and reported "No checks enabled", which
+# is a linter that passes by doing nothing — the worst possible failure for one. So the wrapper is
+# derived from whatever clang-tidy was chosen, rather than whatever happens to be first on PATH,
+# and if the matching one is missing this falls back to calling clang-tidy per file: slower, and
+# right.
+RUN_CLANG_TIDY_BIN=""
+if [[ -n "${ATLAS_RUN_CLANG_TIDY:-}" ]]; then
+    RUN_CLANG_TIDY_BIN="${ATLAS_RUN_CLANG_TIDY}"
+elif [[ "${CLANG_TIDY_BIN}" =~ ^(.*/)?clang-tidy(-[0-9]+)?$ ]]; then
+    sibling="$(dirname "${CLANG_TIDY_BIN}")/run-clang-tidy${BASH_REMATCH[2]:-}"
+    if [[ -x "${sibling}" ]]; then
+        RUN_CLANG_TIDY_BIN="${sibling}"
+    fi
+fi
+
+if [[ -n "${RUN_CLANG_TIDY_BIN}" ]]; then
+    echo "run-clang-tidy: ${RUN_CLANG_TIDY_BIN}"
+else
+    echo "run-clang-tidy: none matching ${CLANG_TIDY_BIN}; analysing one file at a time"
+fi
 
 # Homebrew's clang-tidy does not know where Apple's SDK lives, so without an explicit
 # sysroot it fails to find <cstdint> and friends. A broken parse produces a flood of
