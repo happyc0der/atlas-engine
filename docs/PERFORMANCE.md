@@ -737,6 +737,52 @@ Machine: Mac16,7, Apple M4 Pro, 14 hardware threads, AppleClang 21, RelWithDebIn
 whole-application runs above were taken under the same load as the benchmarks; they are far
 less sensitive to it, because what they report is a count of gaps rather than a duration.
 
+## Rotated sprites, M13: the prediction, written first
+
+**This section was committed before the change it predicts.** The rotated-sprites deferral has
+been waiting since M3 and its trigger is the first consumer that needs a rotated instance; an
+animation clip with a rotation track is that consumer. Growing the per-instance vertex data is
+the cost, and it lands in the exact path M7 and M8 made faster, so it is predicted here and
+measured afterwards rather than the other way round.
+
+### What changes
+
+The quad instance goes from **48 bytes to 64**: a fourth four-component vector carrying a
+rotation and a normalised pivot. Alignment is unchanged either way once anything is added, a
+rotation is not well defined without a point to rotate about, and the pivot costs no processor
+time. The trigonometry stays on the graphics device — computing a sine and cosine per quad on
+the processor would cost of the order of the whole current submit at a hundred thousand quads.
+
+### The baseline, and why it is a minimum
+
+Nine runs on a machine that was **not idle**: load average around two, with a window server and
+this session's own process both busy.
+
+| Scenario | Minimum | Median | Maximum | Recorded baseline |
+|---|---|---|---|---|
+| `renderer/quad_batch_submit` 10k | 92.8 µs | 257.5 µs | 309.4 µs | 120.5 µs |
+| `renderer/quad_batch_submit` 100k | 655.0 µs | 1652.0 µs | 1837.6 µs | 665.4 µs |
+
+**The minimum is the comparison point**, and the table is why: it lands within a few per cent
+of the stored baseline on both scenarios while the median is two to three times it. What is
+being measured is a floor that a busy machine can only obscure, never beat, so the best of
+several runs is the honest statistic here and the median is not. The same rule applies to the
+measurement after the change, and both are taken the same way.
+
+### The prediction
+
+The timed section is instance construction, the buffer upload, and the draw. Bytes rise by a
+third, and at a hundred thousand quads the upload is a large share of it.
+
+| Scenario | Predicted after | Reasoning |
+|---|---|---|
+| 100k quads | **750 to 885 µs**, so +15% to +35% | Dominated by the upload, which grows with the bytes |
+| 10k quads | **97 to 116 µs**, so +5% to +25% | Fixed costs are a larger share, so the ratio is smaller |
+| `renderer/allocations_per_frame` | **unchanged at 8** | The instance vector is reserved once at creation; a wider instance changes that one allocation's size, not how many there are |
+
+**If the hundred-thousand case lands above 900 µs the prediction was wrong about what dominates**,
+and the cause is worth finding before the slice reports rather than after.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.
