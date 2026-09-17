@@ -17,10 +17,26 @@ namespace {
 /// below make the positional match safe against both additions and reordering, which is
 /// the only thing a table would otherwise get wrong.
 constexpr std::array<std::string_view, std::variant_size_v<Event>> kEventNames{
-    "QuitRequested",  "WindowCloseRequested", "WindowResized",       "WindowMinimized",
-    "WindowRestored", "WindowFocusGained",    "WindowFocusLost",     "WindowDisplayScaleChanged",
-    "KeyPressed",     "KeyReleased",          "TextInput",           "TextEditing",
-    "MouseMoved",     "MouseButtonPressed",   "MouseButtonReleased", "MouseWheel",
+    "QuitRequested",
+    "WindowCloseRequested",
+    "WindowResized",
+    "WindowMinimized",
+    "WindowRestored",
+    "WindowFocusGained",
+    "WindowFocusLost",
+    "WindowDisplayScaleChanged",
+    "KeyPressed",
+    "KeyReleased",
+    "TextInput",
+    "TextEditing",
+    "MouseMoved",
+    "MouseButtonPressed",
+    "MouseButtonReleased",
+    "MouseWheel",
+    "GamepadConnected",
+    "GamepadDisconnected",
+    "GamepadButtonPressed",
+    "GamepadButtonReleased",
 };
 
 template <std::size_t Index, typename T>
@@ -43,6 +59,10 @@ static_assert(kAlternativeIs<12, MouseMoved>);
 static_assert(kAlternativeIs<13, MouseButtonPressed>);
 static_assert(kAlternativeIs<14, MouseButtonReleased>);
 static_assert(kAlternativeIs<15, MouseWheel>);
+static_assert(kAlternativeIs<16, GamepadConnected>);
+static_assert(kAlternativeIs<17, GamepadDisconnected>);
+static_assert(kAlternativeIs<18, GamepadButtonPressed>);
+static_assert(kAlternativeIs<19, GamepadButtonReleased>);
 
 // The property the valueless check below relies on, and which the text events were designed
 // around: an alternative that owned memory would make a valueless variant reachable and would

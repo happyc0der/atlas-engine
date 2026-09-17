@@ -11,6 +11,7 @@
 /// Events describe *transitions*. Current state is queried instead, through InputState and
 /// the Window accessors. Mixing the two is how input handling becomes order-dependent.
 
+#include <atlas/platform/gamepad.hpp>
 #include <atlas/platform/key.hpp>
 #include <atlas/platform/types.hpp>
 
@@ -150,11 +151,37 @@ struct TextEditing {
     }
 };
 
+/// A gamepad was plugged in, or was already present at startup, and took a slot.
+struct GamepadConnected {
+    GamepadId gamepad = 0;
+};
+
+/// A gamepad went away and freed its slot. Anything it was holding is released.
+struct GamepadDisconnected {
+    GamepadId gamepad = 0;
+};
+
+struct GamepadButtonPressed {
+    GamepadId gamepad = 0;
+    GamepadButton button = GamepadButton::South;
+};
+
+struct GamepadButtonReleased {
+    GamepadId gamepad = 0;
+    GamepadButton button = GamepadButton::South;
+};
+
+/// There is deliberately no axis event. A stick's position is state, not a transition, and a
+/// resting stick jitters: reporting every change would be hundreds of events a second, which
+/// is what would first exhaust the frame's event storage and start allocating. Both consumers
+/// ask `InputState` instead.
+
 using Event =
     std::variant<QuitRequested, WindowCloseRequested, WindowResized, WindowMinimized,
                  WindowRestored, WindowFocusGained, WindowFocusLost, WindowDisplayScaleChanged,
                  KeyPressed, KeyReleased, TextInput, TextEditing, MouseMoved, MouseButtonPressed,
-                 MouseButtonReleased, MouseWheel>;
+                 MouseButtonReleased, MouseWheel, GamepadConnected, GamepadDisconnected,
+                 GamepadButtonPressed, GamepadButtonReleased>;
 
 /// Name of the alternative an event currently holds. For logging and debugging.
 [[nodiscard]] std::string_view event_name(const Event& event) noexcept;

@@ -18,11 +18,14 @@ atlas_add_module(platform
         src/event.cpp
         src/key.cpp
         src/sdl_keymap.cpp
+        src/sdl_gamepadmap.cpp
+        src/gamepad.cpp
         src/text_split.cpp
         src/sdl_error.cpp
         src/sdl_access.cpp
     HEADERS
         include/atlas/platform/event.hpp
+        include/atlas/platform/gamepad.hpp
         include/atlas/platform/input.hpp
         include/atlas/platform/key.hpp
         include/atlas/platform/platform.hpp

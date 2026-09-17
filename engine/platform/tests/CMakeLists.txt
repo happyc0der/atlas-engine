@@ -17,6 +17,7 @@ atlas_add_test(platform_input
 atlas_add_test(platform_keymap
     SOURCES
         test_keymap.cpp
+        test_gamepadmap.cpp
         test_text_split.cpp
     DEPENDS
         atlas::platform
@@ -36,6 +37,7 @@ atlas_add_test(platform_lifetime
         test_platform.cpp
         test_window_dummy.cpp
         test_input_events.cpp
+        test_gamepad_events.cpp
     DEPENDS
         atlas::platform
     PRIVATE_DEPS

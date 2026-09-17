@@ -5,10 +5,12 @@
 #include <atlas/platform/platform.hpp>
 
 #include "sdl_error.hpp"
+#include "sdl_gamepadmap.hpp"
 #include "sdl_keymap.hpp"
 #include "text_split.hpp"
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_events.h>
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_keyboard.h>
@@ -94,6 +96,16 @@ Result<Platform> Platform::create(const PlatformConfig& config) {
 
     Platform platform;
     platform.m_initialised = true;
+
+    if (config.gamepad) {
+        // A separate subsystem rather than a flag on the main init, so that a machine with no
+        // input devices, or one that refuses to enumerate them, still gets its window.
+        if (SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
+            platform.m_gamepad = true;
+        } else {
+            ATLAS_LOG_WARN(kPlatform, "the gamepad subsystem did not start: {}", SDL_GetError());
+        }
+    }
     platform.m_video = config.video;
     platform.m_events.reserve(kEventReserve);
 
@@ -114,6 +126,14 @@ Platform::~Platform() {
     // the process. Platform lifetime is already visible from the "platform ready" line at
     // creation and from whatever the application logs as it shuts down.
     if (m_initialised) {
+        // Closed before SDL_Quit so that an open pad is released rather than torn down with
+        // the subsystem, and so a moved-from platform does not close a handle it gave away.
+        for (void*& handle : m_gamepad_handle) {
+            if (handle != nullptr) {
+                SDL_CloseGamepad(static_cast<SDL_Gamepad*>(handle));
+                handle = nullptr;
+            }
+        }
         SDL_Quit();
         m_initialised = false;
     }
@@ -123,20 +143,33 @@ Platform::Platform(Platform&& other) noexcept
     : m_initialised(std::exchange(other.m_initialised, false)),
       m_video(std::exchange(other.m_video, false)),
       m_quit_requested(std::exchange(other.m_quit_requested, false)),
+      m_gamepad(std::exchange(other.m_gamepad, false)),
       m_video_driver(std::move(other.m_video_driver)), m_events(std::move(other.m_events)),
-      m_input(other.m_input) {}
+      m_input(other.m_input),
+      // Taken, not copied: two platforms holding the same open pad would close it twice.
+      m_gamepad_instance(std::exchange(other.m_gamepad_instance, {})),
+      m_gamepad_handle(std::exchange(other.m_gamepad_handle, {})) {}
 
 Platform& Platform::operator=(Platform&& other) noexcept {
     if (this != &other) {
         if (m_initialised) {
+            for (void*& handle : m_gamepad_handle) {
+                if (handle != nullptr) {
+                    SDL_CloseGamepad(static_cast<SDL_Gamepad*>(handle));
+                    handle = nullptr;
+                }
+            }
             SDL_Quit();
         }
         m_initialised = std::exchange(other.m_initialised, false);
         m_video = std::exchange(other.m_video, false);
         m_quit_requested = std::exchange(other.m_quit_requested, false);
         m_video_driver = std::move(other.m_video_driver);
+        m_gamepad = std::exchange(other.m_gamepad, false);
         m_events = std::move(other.m_events);
         m_input = other.m_input;
+        m_gamepad_instance = std::exchange(other.m_gamepad_instance, {});
+        m_gamepad_handle = std::exchange(other.m_gamepad_handle, {});
     }
     return *this;
 }
@@ -189,6 +222,15 @@ Result<Window> Platform::create_window(const WindowDesc& desc) {
                    window.pixel_size().width, window.pixel_size().height, window.display_scale());
 
     return window;
+}
+
+std::size_t Platform::gamepad_slot(std::uint32_t instance) const noexcept {
+    for (std::size_t slot = 0; slot < kMaxGamepads; ++slot) {
+        if (m_gamepad_handle[slot] != nullptr && m_gamepad_instance[slot] == instance) {
+            return slot;
+        }
+    }
+    return kMaxGamepads;
 }
 
 std::span<const Event> Platform::pump() {
@@ -280,6 +322,87 @@ std::span<const Event> Platform::pump() {
                 m_input.set_key(key, false);
                 m_events.emplace_back(KeyReleased{.key = key, .modifiers = modifiers});
             }
+            break;
+        }
+
+        case SDL_EVENT_GAMEPAD_ADDED: {
+            // The window system sends button and axis events only for a gamepad that has been
+            // opened, so opening it here is what makes the rest of this work rather than an
+            // optimisation.
+            const std::uint32_t instance = sdl_event.gdevice.which;
+            std::size_t slot = kMaxGamepads;
+            for (std::size_t candidate = 0; candidate < kMaxGamepads; ++candidate) {
+                if (m_gamepad_handle[candidate] == nullptr) {
+                    slot = candidate;
+                    break;
+                }
+            }
+            if (slot == kMaxGamepads) {
+                ATLAS_LOG_WARN(kPlatform, "a gamepad was ignored: all {} slots are taken",
+                               kMaxGamepads);
+                break;
+            }
+            SDL_Gamepad* pad = SDL_OpenGamepad(instance);
+            if (pad == nullptr) {
+                ATLAS_LOG_WARN(kPlatform, "a gamepad could not be opened: {}", SDL_GetError());
+                break;
+            }
+            m_gamepad_handle[slot] = pad;
+            m_gamepad_instance[slot] = instance;
+            m_input.set_gamepad_connected(static_cast<GamepadId>(slot), true);
+            const char* name = SDL_GetGamepadName(pad);
+            ATLAS_LOG_INFO(kPlatform, "gamepad '{}' connected in slot {}",
+                           name != nullptr ? name : "unknown", slot);
+            m_events.emplace_back(GamepadConnected{.gamepad = static_cast<GamepadId>(slot)});
+            break;
+        }
+
+        case SDL_EVENT_GAMEPAD_REMOVED: {
+            const std::uint32_t instance = sdl_event.gdevice.which;
+            for (std::size_t slot = 0; slot < kMaxGamepads; ++slot) {
+                if (m_gamepad_handle[slot] == nullptr || m_gamepad_instance[slot] != instance) {
+                    continue;
+                }
+                SDL_CloseGamepad(static_cast<SDL_Gamepad*>(m_gamepad_handle[slot]));
+                m_gamepad_handle[slot] = nullptr;
+                m_gamepad_instance[slot] = 0;
+                // Clears whatever the pad was holding, so an unplugged stick stops moving.
+                m_input.set_gamepad_connected(static_cast<GamepadId>(slot), false);
+                ATLAS_LOG_INFO(kPlatform, "the gamepad in slot {} was disconnected", slot);
+                m_events.emplace_back(GamepadDisconnected{.gamepad = static_cast<GamepadId>(slot)});
+                break;
+            }
+            break;
+        }
+
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+            const auto slot = gamepad_slot(sdl_event.gbutton.which);
+            const GamepadButton button =
+                detail::from_sdl_button(static_cast<SDL_GamepadButton>(sdl_event.gbutton.button));
+            if (slot == kMaxGamepads || button == GamepadButton::Count) {
+                break;
+            }
+            const bool down = sdl_event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+            m_input.set_gamepad_button(static_cast<GamepadId>(slot), button, down);
+            const auto id = static_cast<GamepadId>(slot);
+            if (down) {
+                m_events.emplace_back(GamepadButtonPressed{.gamepad = id, .button = button});
+            } else {
+                m_events.emplace_back(GamepadButtonReleased{.gamepad = id, .button = button});
+            }
+            break;
+        }
+
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+            const auto slot = gamepad_slot(sdl_event.gaxis.which);
+            const GamepadAxis axis =
+                detail::from_sdl_axis(static_cast<SDL_GamepadAxis>(sdl_event.gaxis.axis));
+            if (slot == kMaxGamepads || axis == GamepadAxis::Count) {
+                break;
+            }
+            // State only: there is no axis event, for the reason event.hpp gives.
+            m_input.set_gamepad_axis(static_cast<GamepadId>(slot), axis, sdl_event.gaxis.value);
             break;
         }
 

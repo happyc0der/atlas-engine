@@ -44,6 +44,10 @@ TEST_CASE("every event alternative has a distinct name", "[platform][event]") {
     check(Event{atlas::platform::MouseButtonPressed{}});
     check(Event{atlas::platform::MouseButtonReleased{}});
     check(Event{MouseWheel{}});
+    check(Event{atlas::platform::GamepadConnected{}});
+    check(Event{atlas::platform::GamepadDisconnected{}});
+    check(Event{atlas::platform::GamepadButtonPressed{}});
+    check(Event{atlas::platform::GamepadButtonReleased{}});
 
     // Every alternative was covered. If someone adds one to the variant without adding it
     // here, this fails and says so.

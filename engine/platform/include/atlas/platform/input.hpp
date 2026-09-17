@@ -11,6 +11,7 @@
 /// The pressed and released queries refer to the most recent pump, so they answer "this
 /// frame" for a caller that pumps once per frame.
 
+#include <atlas/platform/gamepad.hpp>
 #include <atlas/platform/key.hpp>
 #include <atlas/platform/types.hpp>
 
@@ -48,6 +49,22 @@ class InputState {
 
     [[nodiscard]] float wheel_delta_y() const noexcept { return m_wheel_delta_y; }
 
+    /// Whether a gamepad occupies this slot. Out-of-range slots answer false rather than
+    /// asserting, because a caller polling four slots every frame should not have to check.
+    [[nodiscard]] bool is_connected(GamepadId gamepad) const noexcept;
+
+    [[nodiscard]] bool is_down(GamepadId gamepad, GamepadButton button) const noexcept;
+    [[nodiscard]] bool was_pressed(GamepadId gamepad, GamepadButton button) const noexcept;
+    [[nodiscard]] bool was_released(GamepadId gamepad, GamepadButton button) const noexcept;
+
+    /// A stick in [-1, 1] or a trigger in [0, 1], after the dead zone.
+    ///
+    /// **Level state, not an edge**: it survives `begin_frame` and keeps its value until the
+    /// pad moves, because a stick held still is still deflected. Reads zero for an empty or
+    /// out-of-range slot, so a caller that stops checking connectedness gets no movement
+    /// rather than stale movement.
+    [[nodiscard]] float axis(GamepadId gamepad, GamepadAxis axis) const noexcept;
+
   private:
     // Platform is the only thing allowed to write input state. A caller that could forge
     // input would make the "events say what changed, this says what is true" split a lie.
@@ -59,8 +76,19 @@ class InputState {
     void set_key(Key key, bool down) noexcept;
     void set_mouse_button(MouseButton button, bool down) noexcept;
 
+    /// Take or release a slot. Releasing clears everything the pad was holding, so a stick
+    /// held at the moment it is unplugged does not pan the camera forever.
+    void set_gamepad_connected(GamepadId gamepad, bool connected) noexcept;
+    void set_gamepad_button(GamepadId gamepad, GamepadButton button, bool down) noexcept;
+    /// Raw, in the window system's own range; the dead zone and the rescale are applied here
+    /// so that they are applied exactly once.
+    void set_gamepad_axis(GamepadId gamepad, GamepadAxis axis, std::int16_t raw) noexcept;
+
     static constexpr std::size_t kKeyCount = static_cast<std::size_t>(Key::Count);
     static constexpr std::size_t kButtonCount = static_cast<std::size_t>(MouseButton::Count);
+    static constexpr std::size_t kGamepadButtonCount =
+        static_cast<std::size_t>(GamepadButton::Count);
+    static constexpr std::size_t kGamepadAxisCount = static_cast<std::size_t>(GamepadAxis::Count);
 
     std::array<bool, kKeyCount> m_key_down{};
     std::array<bool, kKeyCount> m_key_pressed{};
@@ -69,6 +97,16 @@ class InputState {
     std::array<bool, kButtonCount> m_button_down{};
     std::array<bool, kButtonCount> m_button_pressed{};
     std::array<bool, kButtonCount> m_button_released{};
+
+    struct GamepadState {
+        bool connected = false;
+        std::array<bool, kGamepadButtonCount> down{};
+        std::array<bool, kGamepadButtonCount> pressed{};
+        std::array<bool, kGamepadButtonCount> released{};
+        std::array<float, kGamepadAxisCount> axis{};
+    };
+
+    std::array<GamepadState, kMaxGamepads> m_gamepads{};
 
     KeyModifiers m_modifiers;
     Point2D m_mouse_position;

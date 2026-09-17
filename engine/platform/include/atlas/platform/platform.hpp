@@ -20,6 +20,7 @@
 #include <atlas/platform/input.hpp>
 #include <atlas/platform/window.hpp>
 
+#include <array>
 #include <span>
 #include <string>
 #include <string_view>
@@ -41,6 +42,17 @@ struct PlatformConfig {
 
     /// Application name, used by the window system where it shows one.
     std::string_view app_name = "Atlas";
+
+    /// Initialise the gamepad subsystem.
+    ///
+    /// **Off by default, unlike video.** Without video there is no application, so video
+    /// defaults on; without a gamepad every application still works, so it is a peripheral a
+    /// composition root opts into. Off also means a headless test does not enumerate the
+    /// machine's input devices, which is slower and, on some systems, a permission prompt.
+    ///
+    /// Failing to initialise it is a warning, not a refusal: an application that cannot find
+    /// a gamepad should still open its window.
+    bool gamepad = false;
 };
 
 class Platform {
@@ -78,15 +90,29 @@ class Platform {
     /// loop that does not want to inspect every event itself.
     [[nodiscard]] bool quit_requested() const noexcept { return m_quit_requested; }
 
+    /// Whether the gamepad subsystem started. False when it was not asked for, and when it
+    /// was asked for and the window system refused.
+    [[nodiscard]] bool has_gamepad_support() const noexcept { return m_gamepad; }
+
   private:
     Platform() = default;
+
+    /// Which slot holds the window system's device identifier, or `kMaxGamepads` for none.
+    [[nodiscard]] std::size_t gamepad_slot(std::uint32_t instance) const noexcept;
 
     bool m_initialised = false;
     bool m_video = false;
     bool m_quit_requested = false;
+    bool m_gamepad = false;
     std::string m_video_driver;
     std::vector<Event> m_events;
     InputState m_input;
+
+    /// Slot to window-system identifier, and slot to the opened handle. The identifier is not
+    /// stable across runs and the handle is a third-party type, so neither may be public: a
+    /// `void*` here is the same trick `Window` uses for its own handle.
+    std::array<std::uint32_t, kMaxGamepads> m_gamepad_instance{};
+    std::array<void*, kMaxGamepads> m_gamepad_handle{};
 };
 
 }  // namespace atlas::platform
