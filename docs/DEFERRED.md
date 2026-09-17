@@ -67,7 +67,7 @@ integration ran for the first time. What it found is recorded in
   instance data, which compaction fixed without touching pass structure. The bar is still met
   and the design must still be checked against both implementations; what is missing is a
   measurement or a third pass that makes hand-ordering the bottleneck.
-- **Rotated sprites.** The batcher draws axis-aligned rectangles. A scene can express a
+- ~~**Rotated sprites.**~~ **Built in M13**, by the trigger this entry named: the first consumer that needed a rotated instance was an animation clip with a rotation track. The instance grew from 48 bytes to 64 and the submit path costs a fifth to a third more, measured against a prediction written first; see PERFORMANCE.md. Note that the re-deferral's own reason had expired before it was fired — it cited the cost per instance byte at a million cells, and since M8 the cell field has its own four-byte stream and does not use quad instances at all. The original text follows. The batcher draws axis-aligned rectangles. A scene can express a
   rotation the renderer cannot draw. First deferred in M3 with "picked up when the renderer
   next changes, in M7". The renderer changed in M7 and this was deferred again, on a stated
   reason rather than by lapse: the Strategy Lab is axis-aligned, and at a million cells every

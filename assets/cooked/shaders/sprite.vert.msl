@@ -22,14 +22,19 @@ struct main0_in
     float4 input_instance_position_size [[attribute(2)]];
     float4 input_instance_uv_rect [[attribute(3)]];
     float4 input_instance_colour [[attribute(4)]];
+    float4 input_instance_rotation_pivot [[attribute(5)]];
 };
 
-vertex main0_out main0(main0_in in [[stage_in]], constant Camera& _43 [[buffer(0)]])
+vertex main0_out main0(main0_in in [[stage_in]], constant Camera& _93 [[buffer(0)]])
 {
     main0_out out = {};
+    float2 _178 = in.input_instance_rotation_pivot.yz * in.input_instance_position_size.zw;
+    float _182 = cos(in.input_instance_rotation_pivot.x);
+    float _184 = sin(in.input_instance_rotation_pivot.x);
+    float2 _161 = (in.input_corner * in.input_instance_position_size.zw) - _178;
     out._entryPointOutput_uv = in.input_instance_uv_rect.xy + (in.input_uv * in.input_instance_uv_rect.zw);
     out._entryPointOutput_colour = in.input_instance_colour;
-    out.gl_Position = _43.view_projection * float4(in.input_instance_position_size.xy + (in.input_corner * in.input_instance_position_size.zw), 0.0, 1.0);
+    out.gl_Position = _93.view_projection * float4((in.input_instance_position_size.xy + _178) + float2((_161.x * _182) - (_161.y * _184), (_161.x * _184) + (_161.y * _182)), 0.0, 1.0);
     return out;
 }
 

@@ -6,6 +6,7 @@
 #include <atlas/renderer/shader_loader.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <format>
 #include <utility>
@@ -60,14 +61,25 @@ Result<QuadBatch> QuadBatch::create(rhi::Device& device, const Config& config) {
     // Slot zero advances per vertex and holds the shared corners; slot one advances per
     // instance and holds what makes each quad different. That split is the whole reason one
     // draw can cover thousands of quads.
+    //
+    // The offsets come from `offsetof` rather than from literals. They were literals until
+    // M13, and nothing cross-checked them against the struct they describe: a field inserted
+    // above another moved it, the numbers stayed, and the mismatch reaches the driver rather
+    // than the compiler. The shader's own declared inputs are now compared against this list
+    // by tools/cook_shaders.py, which closes the other half of the same gap.
     constexpr std::array<rhi::VertexAttribute, 2> kCornerAttributes{{
-        {.location = 0, .offset = 0, .format = rhi::VertexFormat::Float2},
-        {.location = 1, .offset = 8, .format = rhi::VertexFormat::Float2},
+        {.location = 0, .offset = offsetof(Corner, x), .format = rhi::VertexFormat::Float2},
+        {.location = 1, .offset = offsetof(Corner, u), .format = rhi::VertexFormat::Float2},
     }};
-    constexpr std::array<rhi::VertexAttribute, 3> kInstanceAttributes{{
-        {.location = 2, .offset = 0, .format = rhi::VertexFormat::Float4},
-        {.location = 3, .offset = 16, .format = rhi::VertexFormat::Float4},
-        {.location = 4, .offset = 32, .format = rhi::VertexFormat::Float4},
+    constexpr std::array<rhi::VertexAttribute, 4> kInstanceAttributes{{
+        {.location = 2,
+         .offset = offsetof(Instance, position_size),
+         .format = rhi::VertexFormat::Float4},
+        {.location = 3, .offset = offsetof(Instance, uv_rect), .format = rhi::VertexFormat::Float4},
+        {.location = 4, .offset = offsetof(Instance, colour), .format = rhi::VertexFormat::Float4},
+        {.location = 5,
+         .offset = offsetof(Instance, rotation_pivot),
+         .format = rhi::VertexFormat::Float4},
     }};
     const std::array<rhi::VertexStream, 2> streams{{
         {.stride = sizeof(Corner), .per_instance = false, .attributes = kCornerAttributes},
@@ -237,6 +249,10 @@ void QuadBatch::add(const Quad& quad) {
                           quad.bounds.size.y},
         .uv_rect = {quad.uv.position.x, quad.uv.position.y, quad.uv.size.x, quad.uv.size.y},
         .colour = {quad.colour.r, quad.colour.g, quad.colour.b, quad.colour.a},
+        // The angle goes across as an angle. Computing its sine and cosine here would be a
+        // pair of trigonometric calls per quad on this thread; the graphics device does them
+        // per vertex, four at a time, on hardware built for it.
+        .rotation_pivot = {quad.rotation, quad.pivot.x, quad.pivot.y, 0.0F},
     });
     ++m_stats.quads;
 }

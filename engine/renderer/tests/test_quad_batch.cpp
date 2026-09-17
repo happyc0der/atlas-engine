@@ -7,6 +7,7 @@
 
 #include <array>
 #include <functional>
+#include <numbers>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -493,6 +494,115 @@ TEST_CASE("two flushes in one frame both survive to the picture", "[renderer][ba
     CHECK(green(right_x, mid_y) > 200);
 
     // The batch holds graphics resources the device owns, so it goes before the texture.
+    *batch = QuadBatch{};
+    harness->device.destroy_texture(*target);
+}
+
+TEST_CASE("a rotated quad covers what a rotation would cover", "[renderer][batch][gpu]") {
+    // The existing pixel tests cannot see a rotation. Both sample two points on one scanline,
+    // which a correctly rotated quad and an axis-aligned one at the same centre both cover, so
+    // a shader that ignored the angle entirely would pass them.
+    //
+    // So this uses an oracle instead of a picture: a tall, narrow quad turned a quarter turn
+    // about its centre becomes a short, wide one. The pixel to its side is then covered and the
+    // pixel above it is not, and without the turn it is exactly the other way round. Both halves
+    // are asserted, because only checking the covered one would pass for a quad that had simply
+    // grown.
+    auto harness = make_harness();
+    if (!harness) {
+        SKIP("no graphics device available on this machine");
+    }
+
+    constexpr std::uint32_t kSize = 128;
+    const auto target = harness->device.create_texture({
+        .width = kSize,
+        .height = kSize,
+        .format = harness->device.swapchain_format(),
+        .usage = {.sampled = false, .colour_target = true},
+        .debug_name = "rotated quad",
+    });
+    REQUIRE(target.has_value());
+
+    auto batch = QuadBatch::create(harness->device, {});
+    REQUIRE(batch.has_value());
+
+    atlas::math::OrthoCamera camera;
+    camera.set_viewport(static_cast<float>(kSize), static_cast<float>(kSize));
+    camera.set_centre({0.0F, 0.0F});
+    camera.set_zoom(1.0F);
+
+    const auto visible = camera.visible_bounds();
+    // A quarter of the view tall and a sixteenth wide, centred. Narrow enough that the sideways
+    // pixel is outside it unturned, and tall enough that the upward one is inside.
+    const float width = visible.size.x / 16.0F;
+    const float height = visible.size.y / 4.0F;
+
+    const auto draw = [&](float rotation) {
+        auto frame = harness->device.begin_frame();
+        REQUIRE(frame.has_value());
+        auto pass = frame->begin_render_pass({
+            .colour = {.texture = *target,
+                       .load = atlas::rhi::LoadOp::Clear,
+                       .clear_colour = {.r = 0.0F, .g = 0.0F, .b = 0.0F, .a = 1.0F}},
+        });
+        REQUIRE(pass.has_value());
+
+        batch->begin(*pass, camera.view_projection());
+        batch->set_texture(harness->texture, harness->sampler);
+        batch->add(Quad{
+            .bounds = {.position = {-width * 0.5F, -height * 0.5F}, .size = {width, height}},
+            .uv = {.position = {0.0F, 0.0F}, .size = {1.0F, 1.0F}},
+            .colour = {.r = 1.0F, .g = 0.0F, .b = 0.0F, .a = 1.0F},
+            .rotation = rotation,
+        });
+        (void)batch->end();
+        pass->end();
+        REQUIRE(harness->device.end_frame(std::move(*frame)).has_value());
+
+        auto ticket = harness->device.request_readback(
+            *target, atlas::rhi::Rect2D{.x = 0, .y = 0, .extent = {kSize, kSize}});
+        REQUIRE(ticket.has_value());
+        REQUIRE(harness->device.wait_idle().has_value());
+        auto pixels = harness->device.take_readback(*ticket);
+        REQUIRE(pixels.has_value());
+        return std::move(*pixels);
+    };
+
+    const auto red_at = [&](const auto& pixels, std::uint32_t x, std::uint32_t y) {
+        const bool bgra = pixels.format == atlas::rhi::TextureFormat::Bgra8Unorm ||
+                          pixels.format == atlas::rhi::TextureFormat::Bgra8UnormSrgb;
+        const std::size_t index = ((static_cast<std::size_t>(y) * kSize) + x) * 4;
+        return std::to_integer<int>(pixels.pixels[index + (bgra ? 2 : 0)]);
+    };
+
+    // The sample distance has to sit between the quad's two half-extents, or neither reading
+    // discriminates. At this zoom a world unit is a pixel: the quad is eight wide and
+    // thirty-two tall, so its half-extents are four and sixteen, and ten is the only order of
+    // magnitude that is inside one and outside the other. A first attempt sampled at
+    // twenty-five, which is outside both, and every reading came back as the clear colour.
+    constexpr std::uint32_t kOffset = 10;
+    static_assert(kOffset > (kSize / 16) / 2, "the sample must fall outside the narrow extent");
+    static_assert(kOffset < (kSize / 4) / 2, "and inside the tall one");
+
+    const std::uint32_t centre = kSize / 2;
+    const std::uint32_t beside = centre + kOffset;
+    const std::uint32_t above = centre - kOffset;
+
+    const auto upright = draw(0.0F);
+    INFO("upright beside=" << red_at(upright, beside, centre)
+                           << " above=" << red_at(upright, centre, above));
+    // Tall and narrow: the pixel above the centre is inside it, the one beside is not.
+    CHECK(red_at(upright, centre, above) > 200);
+    CHECK(red_at(upright, beside, centre) < 60);
+
+    const auto turned = draw(std::numbers::pi_v<float> / 2.0F);
+    INFO("turned beside=" << red_at(turned, beside, centre)
+                          << " above=" << red_at(turned, centre, above));
+    // A quarter turn swaps them. Both halves matter: a quad that had merely grown would cover
+    // the sideways pixel too, and only the second assertion tells the two apart.
+    CHECK(red_at(turned, beside, centre) > 200);
+    CHECK(red_at(turned, centre, above) < 60);
+
     *batch = QuadBatch{};
     harness->device.destroy_texture(*target);
 }

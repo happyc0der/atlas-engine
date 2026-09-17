@@ -237,6 +237,53 @@ def write_header(manifest: dict, path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+# Vertex layouts the engine declares in C++, as {shader name: {location: type}}.
+#
+# This table is the other half of a contract that had no check at all. The renderer declares
+# vertex attributes by location and format; the shader declares inputs by semantic, which
+# glslang turns into the same locations. Nothing compared the two, so a field added on one side
+# and forgotten on the other compiled cleanly and failed at the driver, which reports it — in
+# the words of the RHI header — as "a driver-level failure with no useful message".
+#
+# The reflection needed to check it was already being collected and written into the manifest,
+# and read by nothing. M13 grew the quad instance from 48 bytes to 64 and this is what makes
+# that kind of change fail loudly next time.
+#
+# A shader absent from here is not checked, which is deliberate: the lab's cell shaders derive
+# their geometry from vertex and instance indices and declare no vertex inputs at all.
+DECLARED_VERTEX_INPUTS = {
+    "sprite": {
+        0: "vec2",  # corner position, per vertex
+        1: "vec2",  # corner texture coordinate, per vertex
+        2: "vec4",  # instance position and size
+        3: "vec4",  # instance texture rectangle
+        4: "vec4",  # instance colour
+        5: "vec4",  # instance rotation and pivot
+    },
+}
+
+
+def check_vertex_inputs(manifest: dict) -> list[str]:
+    """Compare each vertex shader's declared inputs against the layout the engine declares."""
+    problems = []
+    for entry in manifest["shaders"]:
+        if entry["stage"] != "vertex":
+            continue
+        expected = DECLARED_VERTEX_INPUTS.get(entry["name"])
+        if expected is None:
+            continue
+        found = {item["location"]: item["type"]
+                 for item in entry["resources"].get("inputs", [])}
+        if found != expected:
+            problems.append(
+                f"{entry['name']}.vert declares inputs {sorted(found.items())}, and the engine "
+                f"declares {sorted(expected.items())}. One side was changed without the other; "
+                f"see DECLARED_VERTEX_INPUTS in tools/cook_shaders.py and the vertex layout in "
+                f"the module that draws with this shader."
+            )
+    return problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -334,8 +381,23 @@ def main() -> int:
                   file=sys.stderr)
             return 1
 
-        print(f"shaders are current: {len(entries)} compiled, outputs and header match")
+        input_problems = check_vertex_inputs(manifest)
+        if input_problems:
+            for problem in input_problems:
+                print(problem, file=sys.stderr)
+            return 1
+
+        print(f"shaders are current: {len(entries)} compiled, outputs, header and vertex "
+              f"layouts match")
         return 0
+
+    # Checked when cooking as well as when verifying: whoever changes a shader is the person
+    # best placed to fix the mismatch, and they find out now rather than in CI.
+    input_problems = check_vertex_inputs(manifest)
+    if input_problems:
+        for problem in input_problems:
+            print(problem, file=sys.stderr)
+        return 1
 
     MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     write_header(manifest, GENERATED_HEADER)

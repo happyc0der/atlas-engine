@@ -38,6 +38,21 @@ struct Quad {
 
     /// Multiplied with the sampled texel. Opaque white leaves the texture unchanged.
     rhi::Colour colour{.r = 1.0F, .g = 1.0F, .b = 1.0F, .a = 1.0F};
+
+    /// Rotation about `pivot`, in radians, counter-clockwise on screen.
+    ///
+    /// Zero, the default, is the axis-aligned rectangle this batcher drew before M13 and still
+    /// draws without a trigonometric call: the shader multiplies by a cosine of one and a sine
+    /// of zero, which the graphics device does per vertex and not per quad.
+    float rotation = 0.0F;
+
+    /// What the rotation turns about, as a fraction of `bounds`.
+    ///
+    /// The centre by default, which is what a sprite turning on the spot wants and what the
+    /// sandbox's orbiting parent needs. A rotation is not well defined without a point to turn
+    /// about, and a corner is the wrong default: it swings the whole rectangle rather than
+    /// spinning it.
+    math::Vec2 pivot{.x = 0.5F, .y = 0.5F};
 };
 
 /// What one frame of batching cost.
@@ -122,14 +137,21 @@ class QuadBatch {
     void release() noexcept;
 
     /// What the shader reads per instance. The layout is declared to the pipeline, so the
-    /// field order here is part of that contract.
+    /// field order here is part of that contract — and so is the **order of the fields**,
+    /// which `quad_batch.cpp` derives with `offsetof` rather than restating as literals.
+    ///
+    /// Grew from 48 bytes to 64 in M13, when the first consumer that needed a rotated instance
+    /// arrived. The fourth vector is the rotation and its pivot; the remaining component is
+    /// unused and is the room the next thing goes in, because alignment rounds up to it either
+    /// way once anything at all is added.
     struct Instance {
-        std::array<float, 4> position_size;  ///< x, y, width, height
-        std::array<float, 4> uv_rect;        ///< u, v, width, height
-        std::array<float, 4> colour;         ///< red, green, blue, alpha
+        std::array<float, 4> position_size;   ///< x, y, width, height
+        std::array<float, 4> uv_rect;         ///< u, v, width, height
+        std::array<float, 4> colour;          ///< red, green, blue, alpha
+        std::array<float, 4> rotation_pivot;  ///< rotation, pivot u, pivot v, unused
     };
 
-    static_assert(sizeof(Instance) == 48, "the vertex layout declares a 48-byte instance");
+    static_assert(sizeof(Instance) == 64, "the vertex layout declares a 64-byte instance");
 
     rhi::Device* m_device = nullptr;
     rhi::RenderPass* m_pass = nullptr;

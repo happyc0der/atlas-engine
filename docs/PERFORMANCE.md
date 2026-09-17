@@ -783,6 +783,52 @@ third, and at a hundred thousand quads the upload is a large share of it.
 **If the hundred-thousand case lands above 900 µs the prediction was wrong about what dominates**,
 and the cause is worth finding before the slice reports rather than after.
 
+### The result, and a measurement that had to be thrown away
+
+**The first measurement said 2.9× at a hundred thousand quads and 3.6× at ten thousand.** Its own
+threshold said to find out why before reporting, so that is what happened, and the answer was
+that the measurement was wrong rather than the change.
+
+The before and after sets were taken twenty minutes apart. The "before" minimum was a lucky run
+on a briefly quiet machine; the "after" set never got one. Comparing two minima compares the
+best luck each set happened to have, and **that is only fair when both sets had equal
+opportunity to hit the floor** — which separated-in-time runs on a shared machine do not.
+Choosing the minimum had seemed like the careful option and it made the error larger, not
+smaller.
+
+The measurement that replaced it builds **both binaries**, keeps a cooked shader directory for
+each, and alternates them in blocks: before, after, before, after, swapping the shaders each
+time so each binary runs against its own. Four blocks each, interleaved inside the same few
+minutes.
+
+| Scenario | Before | After | Ratio (min) | Ratio (median) | Predicted |
+|---|---|---|---|---|---|
+| 100k quads | 1580.5 µs | 1903.0 µs | **1.20×** | 1.16× | 1.15× to 1.35× |
+| 10k quads | 256.3 µs | 333.6 µs | **1.30×** | 1.23× | 1.05× to 1.25× |
+| `allocations_per_frame` | 8 | 8 | — | — | unchanged |
+
+**The hundred-thousand prediction was right and the ten-thousand one was slightly low**: the
+fixed costs turned out to be a smaller share than assumed, so the smaller scenario paid nearly
+as much proportionally as the larger. Both are recorded as measured.
+
+The absolute numbers are well above the stored baseline on both rows, because the machine was
+busier during this session than when that baseline was recorded. The ratio is what this section
+claims, and it is measured on one machine within one span of minutes; the absolutes are not
+comparable to the baseline and are not offered as though they were.
+
+### What it costs, stated plainly
+
+A third more bytes per instance, and a fifth to a third more time in the submit path. At a
+hundred thousand quads that is about 320 microseconds a frame on this machine — which the
+sandbox, drawing nine sprites, will never pay, and which the Strategy Laboratory does not pay at
+all because its cells use their own four-byte instance stream and never touch this path.
+
+**The deferral's own stated reason had expired before it was fired.** It read: "at a million
+cells every added instance byte costs a megabyte per upload in the exact path M7 made faster."
+Since M8's instance compaction the cell field does not go through quad instances at all, so the
+cost argument that justified deferring in M7 no longer applied to the path it was about. That is
+recorded here rather than quietly dropped.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.
