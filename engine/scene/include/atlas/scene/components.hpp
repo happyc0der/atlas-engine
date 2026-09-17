@@ -125,6 +125,32 @@ struct SpriteRenderData {
     bool visible = true;
 };
 
+/// A clip to play on this entity, and how.
+///
+/// **Authored**: edited through the history, saved with the scene, and never written by the
+/// animator. Its counterpart is `AnimationPose`, which the animator owns and nothing saves.
+///
+/// Deliberately **no running time here.** The clock lives in the pose, so a saved scene records
+/// what the author chose and never how long the application happened to be open. Without that
+/// split the sandbox's save-load-save byte check would fail the moment a clip started playing,
+/// and the file would change every second for no authored reason.
+struct Animator {
+    /// The clip asset. An identifier that resolves to nothing means the entity is not animated,
+    /// which is also what a clip still loading looks like.
+    assets::AssetId clip;
+    /// Where playback begins, in milliseconds. What a scrub control sets, and what a save
+    /// records; the pose's own clock starts from here.
+    std::uint32_t start_ms = 0;
+    /// Multiplier on the passage of time. Clamped to [0, 100] and never negative: running a
+    /// clip backwards is a different feature with a different name, and letting time go
+    /// backwards here would make the clock's integer exactness pointless.
+    float speed = 1.0F;
+    bool playing = true;
+    /// Per instance rather than per clip, so one clip can loop on one entity and play once on
+    /// another without being two files.
+    std::uint8_t loop = 1;
+};
+
 /// A viewpoint attached to an entity.
 struct Camera {
     /// Pixels per world unit.

@@ -105,6 +105,16 @@ class Scene {
     /// Every entity carrying a pose, in stable-identifier order.
     [[nodiscard]] std::vector<StableId> animated() const;
 
+    /// The clip this entity plays, or nullptr when it plays none.
+    ///
+    /// Authored, unlike the pose: edited through the history and saved with the scene.
+    [[nodiscard]] const Animator* animator(StableId id) const;
+    void set_animator(StableId id, const Animator& animator);
+    void remove_animator(StableId id);
+
+    /// Every entity carrying an animator, in stable-identifier order.
+    [[nodiscard]] std::vector<StableId> animators() const;
+
     // --- hierarchy --------------------------------------------------------------------
 
     /// Attach `child` under `parent`, or detach it when `parent` is None.

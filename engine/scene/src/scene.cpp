@@ -320,6 +320,36 @@ std::vector<StableId> Scene::animated() const {
     return found;
 }
 
+const Animator* Scene::animator(StableId id) const {
+    const entt::entity handle = m_impl->lookup(id);
+    return handle == entt::null ? nullptr : m_impl->registry.try_get<Animator>(handle);
+}
+
+void Scene::set_animator(StableId id, const Animator& animator) {
+    const entt::entity handle = m_impl->lookup(id);
+    if (handle != entt::null) {
+        m_impl->registry.emplace_or_replace<Animator>(handle, animator);
+    }
+}
+
+void Scene::remove_animator(StableId id) {
+    const entt::entity handle = m_impl->lookup(id);
+    if (handle != entt::null) {
+        m_impl->registry.remove<Animator>(handle);
+    }
+}
+
+std::vector<StableId> Scene::animators() const {
+    std::vector<StableId> found;
+    for (const auto& [id, handle] : m_impl->by_id) {
+        if (m_impl->registry.all_of<Animator>(handle)) {
+            found.push_back(id);
+        }
+    }
+    std::ranges::sort(found);
+    return found;
+}
+
 const Camera* Scene::camera(StableId id) const {
     const entt::entity handle = m_impl->lookup(id);
     return handle == entt::null ? nullptr : m_impl->registry.try_get<Camera>(handle);
