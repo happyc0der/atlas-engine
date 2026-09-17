@@ -139,11 +139,14 @@ integration ran for the first time. What it found is recorded in
   reason: the low limit was a symptom of the slow tick and, measured, now costs dropped ticks.
 - **Instance compaction for the cell field.** Each drawn cell is a 48-byte quad instance
   rebuilt from the snapshot every frame: 48 MB a frame at a million visible cells, 61 streamed
-  flushes, 8.3 ms. The identifier pass already derives every cell's rectangle in the shader
+  flushes, and 7.11 ms of processor time measured by `atlas_bench --filter cell_field`. (An
+  earlier 8.3 ms figure here was the display's refresh interval rather than the engine's work;
+  see the correction in `docs/PERFORMANCE.md`.) The identifier pass already derives every cell's
+  rectangle in the shader
   from its instance index and a per-chunk uniform, with no vertex buffer at all; the colour
   pass could do the same with one byte per cell. **Promoted by the hash change:** drawing is now
-  8.3 ms of a 10.6 ms frame, so this is the largest remaining cost in the frame and the next
-  thing worth measuring, where before it was second to hashing.
+  7.11 ms of processor time at a million cells, which is the largest single cost in the frame
+  and the next thing worth measuring, where before it was second to hashing.
 - **Snapshot pooling.** Building the snapshot costs 1.44 ms at a million cells, once per frame
   after the last tick, and allocates a fresh one each time. The counter is in the overlay; the
   pool is built when the counter says the allocation, not the fill, is what costs.

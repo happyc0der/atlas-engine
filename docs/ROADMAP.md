@@ -393,7 +393,7 @@ What it proves, with no game rules anywhere:
   cell's identifier is derivable from an instance index plus a per-chunk base, and M8 gets
   disjoint ranges for free. Five tables with neutral names; adjacency is a compressed-sparse-row
   structure whose five invariants are each checked with their own message and corruption test.
-- **A million cells drawn** at 8.3 ms a frame, culled per chunk, through the streaming path
+- **A million cells drawn**, culled per chunk, through the streaming path
   Gate 1 built. Pan, zoom, and four map modes that switch by reading a different band of the
   same snapshot: geometry is built once and a mode switch rebuilds nothing, tested directly.
 - **Picking through an integer-identifier target** with a deferred readback that arrives two

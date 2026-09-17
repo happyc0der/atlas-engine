@@ -403,6 +403,11 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
 struct Phases {
     std::uint64_t events = 0;
     std::uint64_t simulation = 0;
+    /// Acquiring a swapchain image and presenting. Reported apart from the drawing because
+    /// both wait for the display: with vertical sync on, this is where the frame's idle time
+    /// goes, and counting it as drawing made a million cells and four thousand cells look
+    /// equally expensive. They are not; see docs/PERFORMANCE.md.
+    std::uint64_t present = 0;
     std::uint64_t snapshot = 0;
     std::uint64_t draw = 0;
 };
@@ -828,8 +833,9 @@ struct Phases {
         // ---- present
         if (device.has_value() && window.valid() && !window.is_minimized()) {
             ATLAS_ZONE_NAMED("present");
-            const auto draw_start = std::chrono::steady_clock::now();
+            const auto acquire_start = std::chrono::steady_clock::now();
             auto frame = device->begin_frame();
+            std::uint64_t present_us = micros_since(acquire_start);
             if (!frame) {
                 ATLAS_LOG_ERROR(kApp, "begin_frame failed: {}", frame.error());
                 quit = true;
@@ -844,13 +850,14 @@ struct Phases {
                     }
 
                     atlas::tools::DebugUi::PreparedFrame prepared{};
-                    std::array<std::string, 12> values;
+                    std::array<std::string, 13> values;
                     if (overlay.has_value()) {
                         overlay->begin_frame(static_cast<float>(frame_ns) / 1'000'000'000.0F,
                                              frame->swapchain_extent().width,
                                              frame->swapchain_extent().height);
-                        const std::uint64_t largest = std::max(
-                            {phases.events, phases.simulation, phases.snapshot, phases.draw});
+                        const std::uint64_t largest =
+                            std::max({phases.events, phases.simulation, phases.snapshot,
+                                      phases.draw, phases.present});
                         const auto phase = [&](std::uint64_t us) {
                             return std::format("{}{} us", us, us == largest && us > 0 ? " *" : "");
                         };
@@ -868,8 +875,9 @@ struct Phases {
                         values[8] = phase(phases.simulation);
                         values[9] = phase(phases.snapshot);
                         values[10] = phase(phases.draw);
-                        values[11] = std::format("{:.2f}", field->camera().zoom());
-                        const std::array<atlas::tools::Stat, 12> stats{{
+                        values[11] = phase(phases.present);
+                        values[12] = std::format("{:.2f}", field->camera().zoom());
+                        const std::array<atlas::tools::Stat, 13> stats{{
                             {.label = "frame", .value = values[0]},
                             {.label = "tick", .value = values[1]},
                             {.label = "state hash", .value = values[2]},
@@ -881,7 +889,8 @@ struct Phases {
                             {.label = "simulation (cpu)", .value = values[8]},
                             {.label = "snapshot (cpu)", .value = values[9]},
                             {.label = "draw (cpu)", .value = values[10]},
-                            {.label = "zoom", .value = values[11]},
+                            {.label = "acquire+present", .value = values[11]},
+                            {.label = "zoom", .value = values[12]},
                         }};
                         overlay->stats_panel("Strategy Lab", stats);
                         prepared = overlay->end_frame(*frame);
@@ -897,6 +906,7 @@ struct Phases {
                         }
                     }
 
+                    const auto record_start = std::chrono::steady_clock::now();
                     auto pass = frame->begin_render_pass({
                         .colour = {.load = atlas::rhi::LoadOp::Clear,
                                    .clear_colour = {.r = 0.05F, .g = 0.05F, .b = 0.07F}},
@@ -912,7 +922,9 @@ struct Phases {
                             overlay->draw(*pass, prepared);
                         }
                     }
+                    phases.draw = micros_since(record_start);
                 }
+                const auto present_start = std::chrono::steady_clock::now();
                 if (const auto status = device->end_frame(std::move(*frame)); !status) {
                     ATLAS_LOG_ERROR(kApp, "end_frame failed: {}", status.error());
                     quit = true;
@@ -928,8 +940,9 @@ struct Phases {
                         pick->requested_frame = frame_index;
                     }
                 }
+                present_us += micros_since(present_start);
             }
-            phases.draw = micros_since(draw_start);
+            phases.present = present_us;
         }
         ATLAS_FRAME_MARK();
 

@@ -25,6 +25,12 @@ if(TARGET atlas_lab_sim)
     target_link_libraries(atlas_bench PRIVATE atlas::lab_sim)
 endif()
 
+# The cell field benchmark needs the lab's renderer, which needs a device.
+if(TARGET atlas_lab_view)
+    target_sources(atlas_bench PRIVATE src/bench_cell_field.cpp)
+    target_link_libraries(atlas_bench PRIVATE atlas::lab_view)
+endif()
+
 # The asset benchmark encodes its own test image with the header-only stb writer. SYSTEM,
 # for the same reason the assets module includes the decoder that way.
 find_path(STB_INCLUDE_DIR NAMES stb_image_write.h REQUIRED)

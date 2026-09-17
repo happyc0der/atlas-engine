@@ -245,6 +245,9 @@ so the lab now records them only while recording. Hashing strategy is M8's first
 The frame, measured with the application itself (`atlas_lab`, Release, `--no-overlay`, the
 window fitted to the whole grid, frame times from `FrameCounters` over 120 frames):
 
+**These frame times were misread, and the correction is below the table.** They are the
+display's, not the engine's.
+
 | Configuration | Median frame | p90 | p99 | Ticks per second achieved |
 |---|---|---|---|---|
 | 1M cells, paused (draw only) | 8.3 ms | 8.5 ms | 20.8 ms | - |
@@ -253,8 +256,30 @@ window fitted to the whole grid, frame times from `FrameCounters` over 120 frame
 | 1M cells, headless, unbounded | - | - | - | 82 |
 | 100k cells, 60 tps | 8.5 ms | 8.8 ms | 9.2 ms | 60 (none dropped) |
 
-Drawing a million cells costs 8.3 ms: 61 flushes of the quad batch, 48 MB of instance data
-streamed per frame through the path Gate 1 made non-blocking. That is the requirement met.
+**Correction, M8.** "Drawing a million cells costs 8.3 ms" was wrong. 8.3 ms is 120 Hz, and
+the same figure comes back from a four-thousand-cell grid: the frame was waiting for the
+display, not for the engine. The lab's frame timer measured wall time between frames and its
+"draw" phase counter enclosed acquiring a swapchain image, so both reported the refresh interval
+whenever the engine was faster than it. `bench_quads` carries a comment about exactly this trap;
+the lab walked into it anyway. What made it hard to notice is that at a million cells the true
+cost happens to sit near the refresh interval, so the number looked plausible at the one size
+anybody checked.
+
+Measured properly by `atlas_bench --filter cell_field`, which excludes acquiring and presenting
+and times only culling, filling instances from the snapshot, and recording the draws:
+
+| Cells | Median | p90 | p99 | Throughput |
+|---|---|---|---|---|
+| 10k | 93 us | 115 us | 219 us | 108 M cells/s |
+| 100k | 708 us | 742 us | 862 us | 145 M cells/s |
+| 1M | 7.11 ms | 7.39 ms | 7.55 ms | 148 M cells/s |
+
+Linear in the cell count, at about 6.8 nanoseconds each, which is what a copy-bound path looks
+like: every drawn cell is written three times before it reaches the graphics processor — into a
+scratch quad, into the batch's instance array, and into the transfer buffer — at 48 bytes a
+time, so a million cells move about 144 MB per frame. The lab's overlay now reports drawing and
+acquire-and-present as separate phases, so the display's wait cannot be read as the engine's
+work again.
 At 60 ticks a second the frame is two ticks plus the draw, which is what the catch-up limit
 is for: before it, the accumulator's default of eight catch-up ticks produced 270 ms frames.
 The limit does not make the simulation faster, it keeps the picture responsive while the
@@ -399,8 +424,10 @@ Two consequences worth recording. The lab's `--max-ticks-per-frame` default went
 the tick scheduler's own 8: the low limit existed because a tick cost tens of milliseconds, and
 at 2 ms it only prevents catching up after a slow frame — measured at 150 frames, a limit of 2
 drops five ticks with a 32.6 ms p99 where 4 and 8 drop none with a 17 ms p99. And the frame is
-now dominated by drawing, 8.3 ms of 10.6 ms, so instance compaction rather than hashing is the
-next thing worth measuring.
+now dominated by drawing. That claim rested on a misread frame timer and the corrected figure
+is above: submitting a million cells costs 7.11 ms of processor time, which is still the largest
+single cost in the frame, so instance compaction rather than hashing remains the next thing
+worth measuring.
 
 ### What it cost
 
