@@ -105,15 +105,7 @@ analyse() {
     [[ $# -eq 0 ]] && return 0
 
     local config_args=()
-    if [[ -n "${config}" ]]; then
-        config_args+=("-config-file=${config}")
-        # Diagnostics whose location is inside a header nobody here can edit. Replacing the
-        # global allocation functions makes the standard library's own declarations disagree
-        # with ours about parameter names, and the header-only image writer the asset
-        # benchmark calls has analyser findings of its own. Passed on the command line
-        # because the equivalent configuration-file key is not honoured by every version.
-        config_args+=("-exclude-header-filter=(vcpkg_installed|/usr/include/|/Library/Developer/|stb_)")
-    fi
+    [[ -n "${config}" ]] && config_args+=("-config-file=${config}")
 
     # ${a[@]+"${a[@]}"} rather than "${a[@]}": under `set -u` the macOS system bash, which is
     # still 3.2, treats expanding an empty array as an unbound variable where bash 5 on the
