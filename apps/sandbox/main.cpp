@@ -621,6 +621,17 @@ void step_simulation(atlas::Tick tick) {
                             log_buffer->clear();
                         }
 
+                        // Text input is switched on only while a field has focus, and off again
+                        // when it loses focus. Leaving it on changes how the platform treats
+                        // ordinary keys: with an input method engaged a shortcut key becomes a
+                        // composition keystroke.
+                        if (const bool want_text = overlay->wants_text_input();
+                            want_text != window.text_input_active()) {
+                            if (auto status = window.set_text_input_active(want_text); !status) {
+                                ATLAS_LOG_WARN(kApp, "text input: {}", status.error());
+                            }
+                        }
+
                         prepared_overlay = overlay->end_frame(*frame);
                     }
 

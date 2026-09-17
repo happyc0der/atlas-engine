@@ -23,4 +23,17 @@ struct Point2D {
     float y = 0.0F;
 };
 
+/// A rectangle in logical units, matching Point2D rather than pixels.
+///
+/// Used to tell the window system where a text caret is, so an input method can put its
+/// candidate list beside it rather than over it.
+struct Rect2D {
+    float x = 0.0F;
+    float y = 0.0F;
+    float width = 0.0F;
+    float height = 0.0F;
+
+    [[nodiscard]] friend bool operator==(const Rect2D&, const Rect2D&) = default;
+};
+
 }  // namespace atlas::platform

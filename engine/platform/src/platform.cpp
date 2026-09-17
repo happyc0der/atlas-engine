@@ -6,6 +6,7 @@
 
 #include "sdl_error.hpp"
 #include "sdl_keymap.hpp"
+#include "text_split.hpp"
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_hints.h>
@@ -14,8 +15,10 @@
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_video.h>
 
+#include <algorithm>
 #include <format>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace atlas::platform {
@@ -277,6 +280,31 @@ std::span<const Event> Platform::pump() {
                 m_input.set_key(key, false);
                 m_events.emplace_back(KeyReleased{.key = key, .modifiers = modifiers});
             }
+            break;
+        }
+
+        case SDL_EVENT_TEXT_INPUT:
+            // The library owns this string and releases it after delivery, so the bytes are
+            // copied here rather than referenced. Splitting is in text_split.hpp, where it can
+            // be tested without a window system.
+            if (sdl_event.text.text != nullptr) {
+                detail::append_text_input(m_events, sdl_event.text.text);
+            }
+            break;
+
+        case SDL_EVENT_TEXT_EDITING: {
+            // A composition replaces the previous one, so this is truncated rather than split.
+            TextEditing editing;
+            const std::string_view text = sdl_event.edit.text != nullptr
+                                              ? std::string_view{sdl_event.edit.text}
+                                              : std::string_view{};
+            const std::size_t take = detail::utf8_prefix_length(text, TextInput::kCapacity);
+            std::ranges::copy(text.substr(0, take), editing.bytes.begin());
+            editing.length = static_cast<std::uint8_t>(take);
+            editing.truncated = take < text.size();
+            editing.selection_start = sdl_event.edit.start;
+            editing.selection_length = sdl_event.edit.length;
+            m_events.emplace_back(editing);
             break;
         }
 

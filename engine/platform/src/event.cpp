@@ -17,10 +17,10 @@ namespace {
 /// below make the positional match safe against both additions and reordering, which is
 /// the only thing a table would otherwise get wrong.
 constexpr std::array<std::string_view, std::variant_size_v<Event>> kEventNames{
-    "QuitRequested",       "WindowCloseRequested", "WindowResized",   "WindowMinimized",
-    "WindowRestored",      "WindowFocusGained",    "WindowFocusLost", "WindowDisplayScaleChanged",
-    "KeyPressed",          "KeyReleased",          "MouseMoved",      "MouseButtonPressed",
-    "MouseButtonReleased", "MouseWheel",
+    "QuitRequested",  "WindowCloseRequested", "WindowResized",       "WindowMinimized",
+    "WindowRestored", "WindowFocusGained",    "WindowFocusLost",     "WindowDisplayScaleChanged",
+    "KeyPressed",     "KeyReleased",          "TextInput",           "TextEditing",
+    "MouseMoved",     "MouseButtonPressed",   "MouseButtonReleased", "MouseWheel",
 };
 
 template <std::size_t Index, typename T>
@@ -37,10 +37,17 @@ static_assert(kAlternativeIs<6, WindowFocusLost>);
 static_assert(kAlternativeIs<7, WindowDisplayScaleChanged>);
 static_assert(kAlternativeIs<8, KeyPressed>);
 static_assert(kAlternativeIs<9, KeyReleased>);
-static_assert(kAlternativeIs<10, MouseMoved>);
-static_assert(kAlternativeIs<11, MouseButtonPressed>);
-static_assert(kAlternativeIs<12, MouseButtonReleased>);
-static_assert(kAlternativeIs<13, MouseWheel>);
+static_assert(kAlternativeIs<10, TextInput>);
+static_assert(kAlternativeIs<11, TextEditing>);
+static_assert(kAlternativeIs<12, MouseMoved>);
+static_assert(kAlternativeIs<13, MouseButtonPressed>);
+static_assert(kAlternativeIs<14, MouseButtonReleased>);
+static_assert(kAlternativeIs<15, MouseWheel>);
+
+// The property the valueless check below relies on, and which the text events were designed
+// around: an alternative that owned memory would make a valueless variant reachable and would
+// allocate inside pump(), which promises it does not.
+static_assert(std::is_trivially_copyable_v<Event>);
 
 }  // namespace
 

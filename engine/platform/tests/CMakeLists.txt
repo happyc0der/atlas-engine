@@ -17,6 +17,7 @@ atlas_add_test(platform_input
 atlas_add_test(platform_keymap
     SOURCES
         test_keymap.cpp
+        test_text_split.cpp
     DEPENDS
         atlas::platform
     PRIVATE_DEPS

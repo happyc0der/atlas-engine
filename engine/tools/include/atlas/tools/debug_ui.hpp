@@ -56,6 +56,12 @@ class DebugUi {
     [[nodiscard]] bool wants_mouse() const noexcept;
     [[nodiscard]] bool wants_keyboard() const noexcept;
 
+    /// Whether a text field has focus and wants characters.
+    ///
+    /// The application switches the window's text input on and off from this, so that an
+    /// input method is engaged only while something is there to type into.
+    [[nodiscard]] bool wants_text_input() const noexcept;
+
     /// Start a frame of interface building.
     ///
     /// The elapsed time drives the library's own animations, and the pixel size keeps the
@@ -78,12 +84,14 @@ class DebugUi {
     ///
     /// Editing is deliberately narrow: the local position, because it is the one property
     /// worth dragging and it proves the whole path. The other commands exist and are tested;
-    /// their widgets arrive one at a time. A rename widget needs text input the platform does
-    /// not deliver yet, which `docs/DEFERRED.md` records.
+    /// their widgets arrive one at a time. Renaming works since M11, which gave the platform a
+    /// text event; assigning a clip by path is the next one that needs a widget.
+    ///
+    /// Returns where it drew the fields it owns, so a test can reach a widget it did not place.
     ///
     /// Selection is the panel's own state, not the scene's, and is remembered across frames.
     /// A selected entity that has since been destroyed is dropped silently.
-    void scene_panel(std::string_view title, edit::History& history);
+    ScenePanelReport scene_panel(std::string_view title, edit::History& history);
 
     /// Records from a log buffer, with severity and category filters.
     ///

@@ -16,9 +16,9 @@ using atlas::platform::QuitRequested;
 using atlas::platform::WindowResized;
 
 TEST_CASE("every event alternative has a distinct name", "[platform][event]") {
-    // event_name uses if constexpr with a static_assert fallback, so a new alternative
-    // without a name fails to compile. This checks the names are also distinct, which the
-    // compiler cannot.
+    // event_name indexes a table positionally, and static assertions in event.cpp pin each
+    // alternative to its index, so a reordering fails to compile. Neither catches a name that
+    // is missing or duplicated, which is what this checks.
     std::set<std::string_view> names;
 
     const auto check = [&names](const Event& event) {
@@ -38,6 +38,8 @@ TEST_CASE("every event alternative has a distinct name", "[platform][event]") {
     check(Event{atlas::platform::WindowDisplayScaleChanged{}});
     check(Event{KeyPressed{}});
     check(Event{atlas::platform::KeyReleased{}});
+    check(Event{atlas::platform::TextInput{}});
+    check(Event{atlas::platform::TextEditing{}});
     check(Event{atlas::platform::MouseMoved{}});
     check(Event{atlas::platform::MouseButtonPressed{}});
     check(Event{atlas::platform::MouseButtonReleased{}});

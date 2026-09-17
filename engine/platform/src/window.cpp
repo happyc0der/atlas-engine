@@ -3,6 +3,7 @@
 #include <atlas/platform/window.hpp>
 
 #include "sdl_error.hpp"
+#include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_video.h>
 
 #include <string>
@@ -152,6 +153,68 @@ void Window::hide() {
         ATLAS_ASSERT_MAIN_THREAD();
         SDL_HideWindow(as_sdl(m_handle));
     }
+}
+
+Status Window::set_text_input_active(bool active) {
+    if (m_handle == nullptr) {
+        return fail(ErrorCode::InvalidArgument,
+                    "cannot change text input on a window that does not exist");
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    // Asked of the window system rather than tracked, so repeated calls with the value it
+    // already has cost one query and change nothing. An application syncing this every frame
+    // from a user-interface state is the expected caller.
+    if (SDL_TextInputActive(as_sdl(m_handle)) == active) {
+        return ok();
+    }
+
+    const bool changed =
+        active ? SDL_StartTextInput(as_sdl(m_handle)) : SDL_StopTextInput(as_sdl(m_handle));
+    if (!changed) {
+        return std::unexpected(
+            detail::sdl_error(ErrorCode::Internal, active ? "starting text input failed"
+                                                          : "stopping text input failed"));
+    }
+    return ok();
+}
+
+bool Window::text_input_active() const noexcept {
+    if (m_handle == nullptr) {
+        return false;
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+    return SDL_TextInputActive(as_sdl(m_handle));
+}
+
+Status Window::set_text_input_area(Rect2D caret, float cursor) {
+    if (m_handle == nullptr) {
+        return fail(ErrorCode::InvalidArgument,
+                    "cannot set a text input area on a window that does not exist");
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    const SDL_Rect rect{.x = static_cast<int>(caret.x),
+                        .y = static_cast<int>(caret.y),
+                        .w = static_cast<int>(caret.width),
+                        .h = static_cast<int>(caret.height)};
+
+    // Compared against what the window system already has, so a caller that recomputes the
+    // caret every frame does not ask it to move the candidate list every frame.
+    SDL_Rect current{};
+    int current_cursor = 0;
+    const int wanted_cursor = static_cast<int>(cursor);
+    if (SDL_GetTextInputArea(as_sdl(m_handle), &current, &current_cursor) && current.x == rect.x &&
+        current.y == rect.y && current.w == rect.w && current.h == rect.h &&
+        current_cursor == wanted_cursor) {
+        return ok();
+    }
+
+    if (!SDL_SetTextInputArea(as_sdl(m_handle), &rect, wanted_cursor)) {
+        return std::unexpected(
+            detail::sdl_error(ErrorCode::Internal, "setting the text input area failed"));
+    }
+    return ok();
 }
 
 }  // namespace atlas::platform

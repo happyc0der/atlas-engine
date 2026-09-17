@@ -7,6 +7,7 @@
 #include <atlas/tools/debug_ui.hpp>
 #include <atlas/tools/panels.hpp>
 
+#include "imgui_keymap.hpp"
 #include <SDL3/SDL_gpu.h>
 
 #include <array>
@@ -25,49 +26,21 @@ namespace {
 
 constexpr log::Category kTools{"tools"};
 
-/// Atlas's key identifiers, mapped to the overlay library's own.
-///
-/// Only the keys an engineering overlay needs. The alternative was the library's SDL
-/// backend, which would have required raw window-system events inside this module and
-/// therefore a third-party type crossing the platform boundary. Driving the input directly
-/// from Atlas's own event types costs this table and keeps the boundary intact.
-[[nodiscard]] ImGuiKey to_imgui_key(platform::Key key) noexcept {
-    using platform::Key;
-    switch (key) {
-    case Key::Tab: return ImGuiKey_Tab;
-    case Key::Left: return ImGuiKey_LeftArrow;
-    case Key::Right: return ImGuiKey_RightArrow;
-    case Key::Up: return ImGuiKey_UpArrow;
-    case Key::Down: return ImGuiKey_DownArrow;
-    case Key::PageUp: return ImGuiKey_PageUp;
-    case Key::PageDown: return ImGuiKey_PageDown;
-    case Key::Home: return ImGuiKey_Home;
-    case Key::End: return ImGuiKey_End;
-    case Key::Insert: return ImGuiKey_Insert;
-    case Key::Delete: return ImGuiKey_Delete;
-    case Key::Backspace: return ImGuiKey_Backspace;
-    case Key::Space: return ImGuiKey_Space;
-    case Key::Enter: return ImGuiKey_Enter;
-    case Key::Escape: return ImGuiKey_Escape;
-    case Key::LeftShift: return ImGuiKey_LeftShift;
-    case Key::RightShift: return ImGuiKey_RightShift;
-    case Key::LeftControl: return ImGuiKey_LeftCtrl;
-    case Key::RightControl: return ImGuiKey_RightCtrl;
-    case Key::LeftAlt: return ImGuiKey_LeftAlt;
-    case Key::RightAlt: return ImGuiKey_RightAlt;
-    case Key::LeftSuper: return ImGuiKey_LeftSuper;
-    case Key::RightSuper: return ImGuiKey_RightSuper;
-    default: return ImGuiKey_None;
-    }
-}
+/// Long enough for any name a person types; short enough to live in the panel rather than
+/// on the heap. A name longer than this is shown read-only rather than truncated.
+constexpr std::size_t kNameBufferSize = 128;
 
-[[nodiscard]] int to_imgui_button(platform::MouseButton button) noexcept {
-    switch (button) {
-    case platform::MouseButton::Left: return 0;
-    case platform::MouseButton::Right: return 1;
-    case platform::MouseButton::Middle: return 2;
-    default: return -1;
-    }
+/// Tell the overlay which modifiers are held.
+///
+/// Sent with every key event rather than tracked, because the overlay's shortcuts are checked
+/// against its own idea of the modifier state: without this it never sees Ctrl held, and every
+/// shortcut is dead however complete the key table is. The physical modifiers are submitted;
+/// the library does the Cmd-for-Ctrl substitution on Apple systems itself.
+void submit_modifiers(ImGuiIO& io, const platform::KeyModifiers& modifiers) {
+    io.AddKeyEvent(ImGuiMod_Ctrl, modifiers.control);
+    io.AddKeyEvent(ImGuiMod_Shift, modifiers.shift);
+    io.AddKeyEvent(ImGuiMod_Alt, modifiers.alt);
+    io.AddKeyEvent(ImGuiMod_Super, modifiers.super);
 }
 
 }  // namespace
@@ -80,6 +53,11 @@ struct DebugUi::Impl {
     /// Selection belongs to the panel, not to the scene. Putting it in the scene would make
     /// a save file depend on what an engineer happened to have clicked.
     std::optional<scene::StableId> selected;
+
+    /// The name field's buffer and whether it is being edited, so a reseed does not fight a
+    /// half-typed name. Panel state, like selection.
+    std::array<char, kNameBufferSize> name_input{};
+    bool name_editing = false;
 
     /// The log console's own state. The filter is a view setting, like selection.
     LogFilter log_filter;
@@ -182,14 +160,14 @@ bool DebugUi::handle_event(const platform::Event& event) {
         return io.WantCaptureMouse;
     }
     if (const auto* pressed = std::get_if<platform::MouseButtonPressed>(&event)) {
-        const int button = to_imgui_button(pressed->button);
+        const int button = detail::to_imgui_button(pressed->button);
         if (button >= 0) {
             io.AddMouseButtonEvent(button, true);
         }
         return io.WantCaptureMouse;
     }
     if (const auto* released = std::get_if<platform::MouseButtonReleased>(&event)) {
-        const int button = to_imgui_button(released->button);
+        const int button = detail::to_imgui_button(released->button);
         if (button >= 0) {
             io.AddMouseButtonEvent(button, false);
         }
@@ -200,14 +178,27 @@ bool DebugUi::handle_event(const platform::Event& event) {
         return io.WantCaptureMouse;
     }
     if (const auto* key_down = std::get_if<platform::KeyPressed>(&event)) {
-        const ImGuiKey key = to_imgui_key(key_down->key);
+        submit_modifiers(io, key_down->modifiers);
+        const ImGuiKey key = detail::to_imgui_key(key_down->key);
         if (key != ImGuiKey_None) {
             io.AddKeyEvent(key, true);
         }
         return io.WantCaptureKeyboard;
     }
+    if (const auto* text = std::get_if<platform::TextInput>(&event)) {
+        io.AddInputCharactersUTF8(text->c_str());
+        return io.WantCaptureKeyboard;
+    }
+    if (std::holds_alternative<platform::TextEditing>(event)) {
+        // Delivered by the platform and deliberately not shown here. The overlay library has
+        // no composition interface, and its own window-system backend ignores this event too;
+        // the preedit is drawn by the operating system where the operating system draws it.
+        // Recorded as a limitation in docs/DEFERRED.md rather than faked.
+        return io.WantCaptureKeyboard;
+    }
     if (const auto* key_up = std::get_if<platform::KeyReleased>(&event)) {
-        const ImGuiKey key = to_imgui_key(key_up->key);
+        submit_modifiers(io, key_up->modifiers);
+        const ImGuiKey key = detail::to_imgui_key(key_up->key);
         if (key != ImGuiKey_None) {
             io.AddKeyEvent(key, false);
         }
@@ -236,6 +227,14 @@ bool DebugUi::wants_keyboard() const noexcept {
     }
     ImGui::SetCurrentContext(m_impl->context);
     return ImGui::GetIO().WantCaptureKeyboard;
+}
+
+bool DebugUi::wants_text_input() const noexcept {
+    if (m_impl == nullptr) {
+        return false;
+    }
+    ImGui::SetCurrentContext(m_impl->context);
+    return ImGui::GetIO().WantTextInput;
 }
 
 void DebugUi::begin_frame(float delta_seconds, std::uint32_t pixel_width,
@@ -373,12 +372,64 @@ void draw_position_editor(edit::History& history, scene::StableId id,
     }
 }
 
-void draw_inspector(edit::History& history, scene::StableId id) {
+/// The name field, as an editable text box that commits one undoable rename.
+///
+/// Above the component table rather than a row in it, because a text field inside a
+/// fixed-fit column is squeezed to nothing, which is the same trap the position editor hit.
+///
+/// The buffer belongs to the panel and is reseeded from the scene whenever the field is not
+/// being edited, so an outside change is picked up but a half-typed name is not thrown away
+/// mid-keystroke. A name too long for the buffer is shown read-only instead of truncated:
+/// committing a silently shortened name would be worse than not offering to edit it.
+///
+/// Commits on Enter or on losing focus, as one undo step. `Rename::merge` exists but is not
+/// asked for: a rename is one act, not a drag.
+void draw_name_editor(edit::History& history, scene::StableId id,
+                      std::array<char, kNameBufferSize>& buffer, bool& editing,
+                      std::optional<PixelRect>& field_rect) {
+    const std::string_view current = history.scene().name(id);
+    if (current.size() >= buffer.size()) {
+        ImGui::TextUnformatted(std::format("name (too long to edit): {}", current).c_str());
+        return;
+    }
+
+    if (!editing) {
+        buffer.fill('\0');
+        std::ranges::copy(current, buffer.begin());
+    }
+
+    ImGui::SetNextItemWidth(-1.0F);
+    const bool entered = ImGui::InputText("##name", buffer.data(), buffer.size(),
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    field_rect = PixelRect{.x = min.x, .y = min.y, .width = max.x - min.x, .height = max.y - min.y};
+
+    editing = ImGui::IsItemActive();
+
+    const bool finished = entered || ImGui::IsItemDeactivatedAfterEdit();
+    if (finished) {
+        editing = false;
+        std::string typed{buffer.data()};
+        if (typed != current) {
+            if (auto status = history.apply(std::make_unique<edit::Rename>(id, std::move(typed)));
+                !status) {
+                ATLAS_LOG_WARN(kTools, "rename refused: {}", status.error());
+            }
+        }
+    }
+}
+
+void draw_inspector(edit::History& history, scene::StableId id,
+                    std::array<char, kNameBufferSize>& name_buffer, bool& name_editing,
+                    std::optional<PixelRect>& name_field) {
     const scene::Scene& scene = history.scene();
 
-    // First, because it is the only thing here that can be changed. Everything below is a
-    // read-only row, and burying the one widget under thirteen of them means scrolling to
+    // First, because these are the only things here that can be changed. Everything below is a
+    // read-only row, and burying the widgets under thirteen of them means scrolling to
     // find the feature this panel exists for.
+    draw_name_editor(history, id, name_buffer, name_editing, name_field);
+
     const auto* local = scene.local_transform(id);
     if (local != nullptr) {
         draw_position_editor(history, id, *local);
@@ -390,7 +441,6 @@ void draw_inspector(edit::History& history, scene::StableId id) {
     }
 
     row("id", std::format("{}", static_cast<std::uint64_t>(id)));
-    row("name", std::string{scene.name(id)});
 
     const scene::StableId parent = scene.parent(id);
     row("parent", parent == scene::StableId::None
@@ -459,9 +509,10 @@ void draw_history_controls(edit::History& history) {
 
 }  // namespace
 
-void DebugUi::scene_panel(std::string_view title, edit::History& history) {
+ScenePanelReport DebugUi::scene_panel(std::string_view title, edit::History& history) {
+    ScenePanelReport report;
     if (m_impl == nullptr || !m_impl->frame_open) {
-        return;
+        return report;
     }
     ImGui::SetCurrentContext(m_impl->context);
 
@@ -502,7 +553,8 @@ void DebugUi::scene_panel(std::string_view title, edit::History& history) {
         const float controls_height = ImGui::GetFrameHeightWithSpacing() + 8.0F;
         if (ImGui::BeginChild("inspector", ImVec2(0.0F, -controls_height))) {
             if (selected.has_value()) {
-                draw_inspector(history, *selected);
+                draw_inspector(history, *selected, m_impl->name_input, m_impl->name_editing,
+                               report.name_field);
             } else {
                 ImGui::TextUnformatted("No entity selected.");
             }
@@ -515,6 +567,7 @@ void DebugUi::scene_panel(std::string_view title, edit::History& history) {
     ImGui::End();
 
     m_impl->selected = selected;
+    return report;
 }
 
 LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::LogBuffer& buffer) {
@@ -556,6 +609,12 @@ LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::L
                              m_impl->log_category_input.size())) {
             m_impl->log_filter.category_substring = m_impl->log_category_input.data();
         }
+        const ImVec2 filter_min = ImGui::GetItemRectMin();
+        const ImVec2 filter_max = ImGui::GetItemRectMax();
+        report.filter_field = PixelRect{.x = filter_min.x,
+                                        .y = filter_min.y,
+                                        .width = filter_max.x - filter_min.x,
+                                        .height = filter_max.y - filter_min.y};
 
         ImGui::SameLine();
         ImGui::Checkbox("follow", &m_impl->log_autoscroll);

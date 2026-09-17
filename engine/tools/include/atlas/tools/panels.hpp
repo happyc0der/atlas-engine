@@ -15,6 +15,7 @@
 /// exception and takes an `edit::History`, because a history *is* the validated path.
 
 #include <atlas/core/log.hpp>
+#include <atlas/math/vector.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
 
 #include <cstddef>
@@ -40,11 +41,36 @@ struct LogFilter {
 /// in a way nobody sees: a filter that silently hides errors looks exactly like a quiet system.
 [[nodiscard]] bool matches(const log::LogBuffer::Entry& entry, const LogFilter& filter);
 
+/// Where a widget was drawn, in the overlay's pixels.
+///
+/// Reported so that a test can click a field it did not place, and so that a future guided
+/// tour could point at one. The overlay draws in the swapchain's pixels, so these are pixels
+/// and not logical units.
+struct PixelRect {
+    float x = 0.0F;
+    float y = 0.0F;
+    float width = 0.0F;
+    float height = 0.0F;
+
+    [[nodiscard]] math::Vec2 centre() const noexcept {
+        return math::Vec2{.x = x + (width * 0.5F), .y = y + (height * 0.5F)};
+    }
+};
+
+/// What a scene panel drew this frame.
+struct ScenePanelReport {
+    /// Where the name field is, when an entity is selected and its name is short enough to
+    /// edit. Absent otherwise.
+    std::optional<PixelRect> name_field;
+};
+
 /// What a log console did this frame.
 struct LogConsoleReport {
     /// Records displayed, and records held back by the filter.
     std::size_t shown = 0;
     std::size_t hidden = 0;
+    /// Where the category filter field is, for the same reason as ScenePanelReport's.
+    std::optional<PixelRect> filter_field;
     /// The user asked for the buffer to be emptied. The panel does not empty it: it holds the
     /// buffer by const reference, and whoever owns it decides.
     bool clear_requested = false;

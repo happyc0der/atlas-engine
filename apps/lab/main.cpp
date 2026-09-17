@@ -1014,6 +1014,17 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                         if (overlay->log_console_panel("Log", *log_buffer).clear_requested) {
                             log_buffer->clear();
                         }
+                        // Text input is switched on only while a field has focus, and off
+                        // again when it loses focus. Leaving it on changes how the platform
+                        // treats ordinary keys: with an input method engaged a shortcut key
+                        // becomes a composition keystroke instead.
+                        if (const bool want_text = overlay->wants_text_input();
+                            want_text != window.text_input_active()) {
+                            if (auto s = window.set_text_input_active(want_text); !s) {
+                                ATLAS_LOG_WARN(kApp, "text input: {}", s.error());
+                            }
+                        }
+
                         prepared = overlay->end_frame(*frame);
                     }
 

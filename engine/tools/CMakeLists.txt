@@ -12,6 +12,7 @@ atlas_define_sdl3_target()
 atlas_add_module(tools
     SOURCES
         src/debug_ui.cpp
+        src/imgui_keymap.cpp
         src/panels.cpp
     HEADERS
         include/atlas/tools/debug_ui.hpp

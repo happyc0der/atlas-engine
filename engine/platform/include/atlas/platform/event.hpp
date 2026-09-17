@@ -14,7 +14,9 @@
 #include <atlas/platform/key.hpp>
 #include <atlas/platform/types.hpp>
 
+#include <array>
 #include <cstdint>
+#include <string_view>
 #include <variant>
 
 namespace atlas::platform {
@@ -99,10 +101,60 @@ struct MouseWheel {
     float delta_y = 0.0F;
 };
 
-using Event = std::variant<QuitRequested, WindowCloseRequested, WindowResized, WindowMinimized,
-                           WindowRestored, WindowFocusGained, WindowFocusLost,
-                           WindowDisplayScaleChanged, KeyPressed, KeyReleased, MouseMoved,
-                           MouseButtonPressed, MouseButtonReleased, MouseWheel>;
+/// Text the user committed, UTF-8 encoded.
+///
+/// Separate from KeyPressed because they answer different questions. A key tells you which
+/// physical key moved; this tells you what characters the user meant, after the keyboard
+/// layout, any dead keys, and any input method have had their say. A Japanese commit arrives
+/// here as several characters and no key press at all.
+///
+/// **A commit longer than the capacity arrives as several consecutive events, each cut on a
+/// code-point boundary.** Concatenating them in order restores the original, which is lossless
+/// because committed text is a stream: every consumer appends. The alternative was a payload
+/// that owns memory, which would make Event non-trivially-copyable and allocate inside pump().
+struct TextInput {
+    /// Chosen so the whole event stays small enough to keep the event buffer cheap. Long
+    /// enough that a commit from any ordinary keystroke or input method fits in one.
+    static constexpr std::size_t kCapacity = 63;
+
+    /// Always NUL-terminated at `length`, so `c_str()` is safe for a C interface.
+    std::array<char, kCapacity + 1> bytes{};
+    std::uint8_t length = 0;
+
+    [[nodiscard]] std::string_view text() const noexcept {
+        return std::string_view{bytes.data(), length};
+    }
+
+    [[nodiscard]] const char* c_str() const noexcept { return bytes.data(); }
+};
+
+/// An input method's composition in progress: what the user is typing but has not committed.
+///
+/// **Replaces the previous composition rather than adding to it**, which is why this is not
+/// split the way TextInput is. A composition is state, not a stream, and two halves of one
+/// preedit would contradict each other. A composition too long for the buffer is truncated and
+/// says so, because a consumer showing a preview wants "something is being composed" more than
+/// it wants the exact bytes.
+struct TextEditing {
+    std::array<char, TextInput::kCapacity + 1> bytes{};
+    std::uint8_t length = 0;
+    bool truncated = false;
+
+    /// The selected range within the composition, in code points. Negative when the input
+    /// method does not say, which several do not.
+    std::int32_t selection_start = -1;
+    std::int32_t selection_length = -1;
+
+    [[nodiscard]] std::string_view text() const noexcept {
+        return std::string_view{bytes.data(), length};
+    }
+};
+
+using Event =
+    std::variant<QuitRequested, WindowCloseRequested, WindowResized, WindowMinimized,
+                 WindowRestored, WindowFocusGained, WindowFocusLost, WindowDisplayScaleChanged,
+                 KeyPressed, KeyReleased, TextInput, TextEditing, MouseMoved, MouseButtonPressed,
+                 MouseButtonReleased, MouseWheel>;
 
 /// Name of the alternative an event currently holds. For logging and debugging.
 [[nodiscard]] std::string_view event_name(const Event& event) noexcept;

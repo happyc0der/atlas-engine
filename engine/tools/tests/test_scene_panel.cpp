@@ -10,8 +10,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <memory>
 #include <optional>
+#include <source_location>
+#include <string_view>
+#include <thread>
 #include <utility>
 
 using atlas::edit::History;
@@ -158,6 +163,176 @@ TEST_CASE("the panel drops a selection whose entity has been destroyed", "[tools
     CHECK(history.undo());
     CHECK(fixture.scene.contains(fixture.child));
     CHECK_FALSE(overlay->selected_entity().has_value());
+
+    REQUIRE(harness->device.wait_idle().has_value());
+}
+
+TEST_CASE("typing into the name field renames through the history", "[tools][gpu]") {
+    // The whole path in one test: a platform event reaches the bridge, the bridge feeds the
+    // overlay, a widget the test did not place receives the characters, and the edit arrives
+    // as one undoable command. Every piece of that is new in M11 and none of it can be seen
+    // from a unit test, because the widget only exists while a frame is being built.
+    auto harness = make_harness();
+    if (!harness) {
+        SKIP("no graphics device available");
+    }
+    auto overlay = DebugUi::create(harness->device, harness->window);
+    if (!overlay) {
+        SKIP("the overlay could not be created on this device");
+    }
+
+    Fixture fixture = make_scene();
+    History history{fixture.scene};
+    overlay->select_entity(fixture.child);
+
+    // Draw once to learn where the field is. The panel reports its own geometry precisely so
+    // a caller can reach a widget it did not position.
+    const auto draw_once = [&](float dt) {
+        // Large enough to contain the panel where it places itself: the scene panel
+        // defaults to y=320 and is 520 tall, so a short display clips the inspector
+        // away and no field is drawn at all.
+        overlay->begin_frame(dt, 1280, 900);
+        auto report = overlay->scene_panel("Scene", history);
+        auto gpu_frame = harness->device.begin_frame();
+        REQUIRE(gpu_frame.has_value());
+        (void)overlay->end_frame(*gpu_frame);
+        REQUIRE(harness->device.end_frame(std::move(*gpu_frame)).has_value());
+        return report;
+    };
+
+    const auto first = draw_once(1.0F / 60.0F);
+    REQUIRE(first.name_field.has_value());
+    const auto centre = first.name_field->centre();
+
+    // Click into it. The overlay trickles a press and release that arrive together across
+    // frames, so the click needs more than one frame to take effect.
+    (void)overlay->handle_event(atlas::platform::MouseMoved{
+        .position = {.x = centre.x, .y = centre.y}, .delta_x = 0.0F, .delta_y = 0.0F});
+    (void)overlay->handle_event(
+        atlas::platform::MouseButtonPressed{.button = atlas::platform::MouseButton::Left});
+    draw_once(1.0F / 60.0F);
+    (void)overlay->handle_event(
+        atlas::platform::MouseButtonReleased{.button = atlas::platform::MouseButton::Left});
+    draw_once(1.0F / 60.0F);
+
+    // A focused text field is exactly what the application watches to decide whether to
+    // engage the platform's text input.
+    CHECK(overlay->wants_text_input());
+
+    // Select everything, then type over it. This is also what proves modifiers reach the
+    // overlay: without them the shortcut is dead and the text would be appended instead.
+    //
+    // Sent as two separate presses rather than one with both modifiers held, because the
+    // overlay compares the held set for exact equality — Control on most systems, Command on
+    // Apple ones — so a chord with both matches neither, which is correct and is what an
+    // earlier version of this test got wrong. One of the two does nothing on any given
+    // platform; whichever owns the shortcut selects.
+    //
+    // The trailing frames are not padding. The overlay trickles its input queue so that a
+    // press and a release queued together cannot be seen in one frame, so a shortcut needs
+    // several frames to land.
+    const auto press_select_all = [&](atlas::platform::KeyModifiers modifiers,
+                                      atlas::platform::Key modifier_key) {
+        (void)overlay->handle_event(
+            atlas::platform::KeyPressed{.key = atlas::platform::Key::A, .modifiers = modifiers});
+        (void)overlay->handle_event(
+            atlas::platform::KeyReleased{.key = atlas::platform::Key::A, .modifiers = modifiers});
+        (void)overlay->handle_event(
+            atlas::platform::KeyReleased{.key = modifier_key, .modifiers = {}});
+        for (int frame = 0; frame < 4; ++frame) {
+            draw_once(1.0F / 60.0F);
+        }
+    };
+    press_select_all({.control = true}, atlas::platform::Key::LeftControl);
+    press_select_all({.super = true}, atlas::platform::Key::LeftSuper);
+
+    atlas::platform::TextInput typed;
+    const std::string_view name = "renamed";
+    std::ranges::copy(name, typed.bytes.begin());
+    typed.length = static_cast<std::uint8_t>(name.size());
+    (void)overlay->handle_event(typed);
+    draw_once(1.0F / 60.0F);
+
+    // Enter commits. Several frames, because the overlay trickles its input queue: a key
+    // event queued behind characters is deferred to a later frame on purpose, so that a
+    // press and a release in one frame cannot be seen together.
+    (void)overlay->handle_event(atlas::platform::KeyPressed{.key = atlas::platform::Key::Enter});
+    (void)overlay->handle_event(atlas::platform::KeyReleased{.key = atlas::platform::Key::Enter});
+    for (int frame = 0; frame < 4; ++frame) {
+        draw_once(1.0F / 60.0F);
+    }
+
+    CHECK(fixture.scene.name(fixture.child) == "renamed");
+    REQUIRE(history.undo_depth() == 1);
+    CHECK(history.undo_label() == "rename");
+
+    // And it is a real history entry, not a direct write: undo restores the old name.
+    CHECK(history.undo());
+    CHECK(fixture.scene.name(fixture.child) == "child");
+
+    REQUIRE(harness->device.wait_idle().has_value());
+}
+
+TEST_CASE("typing into the log filter changes what the console shows", "[tools][gpu]") {
+    // The same path against the field that has existed since M9 and has never been able to
+    // receive a character. If this passes, the log console's filter works for the first time.
+    auto harness = make_harness();
+    if (!harness) {
+        SKIP("no graphics device available");
+    }
+    auto overlay = DebugUi::create(harness->device, harness->window);
+    if (!overlay) {
+        SKIP("the overlay could not be created on this device");
+    }
+
+    atlas::log::LogBuffer buffer{64};
+    const auto record = [](std::string_view category, std::string_view message) {
+        return atlas::log::Record{.timestamp = std::chrono::system_clock::now(),
+                                  .thread = std::this_thread::get_id(),
+                                  .category = atlas::log::Category{category},
+                                  .severity = atlas::log::Severity::Info,
+                                  .message = message,
+                                  .where = std::source_location::current()};
+    };
+    buffer.push(record("alpha", "one"));
+    buffer.push(record("alpha", "two"));
+    buffer.push(record("beta", "three"));
+
+    const auto draw_once = [&] {
+        // The log console defaults to y=510 and is 280 tall; see the note above.
+        overlay->begin_frame(1.0F / 60.0F, 1280, 900);
+        auto report = overlay->log_console_panel("Log", buffer);
+        auto gpu_frame = harness->device.begin_frame();
+        REQUIRE(gpu_frame.has_value());
+        (void)overlay->end_frame(*gpu_frame);
+        REQUIRE(harness->device.end_frame(std::move(*gpu_frame)).has_value());
+        return report;
+    };
+
+    const auto unfiltered = draw_once();
+    CHECK(unfiltered.shown == 3);
+    CHECK(unfiltered.hidden == 0);
+    REQUIRE(unfiltered.filter_field.has_value());
+    const auto centre = unfiltered.filter_field->centre();
+
+    (void)overlay->handle_event(atlas::platform::MouseMoved{
+        .position = {.x = centre.x, .y = centre.y}, .delta_x = 0.0F, .delta_y = 0.0F});
+    (void)overlay->handle_event(
+        atlas::platform::MouseButtonPressed{.button = atlas::platform::MouseButton::Left});
+    draw_once();
+    (void)overlay->handle_event(
+        atlas::platform::MouseButtonReleased{.button = atlas::platform::MouseButton::Left});
+    draw_once();
+
+    atlas::platform::TextInput typed;
+    const std::string_view filter = "alp";
+    std::ranges::copy(filter, typed.bytes.begin());
+    typed.length = static_cast<std::uint8_t>(filter.size());
+    (void)overlay->handle_event(typed);
+
+    const auto filtered = draw_once();
+    CHECK(filtered.shown == 2);
+    CHECK(filtered.hidden == 1);
 
     REQUIRE(harness->device.wait_idle().has_value());
 }

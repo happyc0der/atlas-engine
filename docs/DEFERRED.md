@@ -243,25 +243,36 @@ integration ran for the first time. What it found is recorded in
   position, and undo and redo buttons. Both go through `edit::History`, so the reasoning that
   deferred them is satisfied rather than waived. Still deferred, each for its own reason:
 
-  - **A rename widget**, blocked on the platform. `platform::Event` has no text-input event,
-    `platform.cpp` does not handle `SDL_EVENT_TEXT_INPUT`, and the overlay's key table covers
-    only navigation keys, so a text field cannot receive a single character today. The
-    `Rename` command exists and is tested; it is the widget that is missing. The next platform
-    slice is a `TextInput` event plus character forwarding in `DebugUi`.
+  - ~~**A rename widget**, blocked on the platform.~~ **Built in M11**, which gave the platform
+    a `TextInput` event, completed the overlay's key table, and started submitting modifiers —
+    without which no shortcut inside a text field could fire. The log console's category filter,
+    which had been a real field unable to receive a character since M9, started working in the
+    same commit.
   - **Rotation, scale, sprite and camera widgets.** Their commands exist and are tested from
     the first slice. Recorded here so that "a command with no widget" reads as intended rather
     than as a gap.
   - **Reparent by drag.** The command exists; the gesture needs drag-and-drop targets on every
     tree node and visible feedback when a cycle is refused. A parent field in the inspector is
     the same command with a fraction of the surface, and comes first.
+  - **Composition preview in the overlay.** M11 delivers `TextEditing` from the platform, and
+    the overlay deliberately does not draw it: the library has no composition interface, and
+    its own window-system backend ignores the event too. So a preedit appears where the
+    operating system draws it, and is invisible until committed where the operating system
+    does not. Picked up if the overlay ever gains a text field that a person composes into
+    rather than types a short identifier into.
+  - **The candidate-list events.** `SDL_EVENT_TEXT_EDITING_CANDIDATES` is sent only to an
+    application that has taken over drawing the candidate list, which Atlas has not.
+  - **An operating-system clipboard for the overlay.** The library's default clipboard is
+    in-process, so pasting from another application into a field does nothing. `Window` would
+    need to expose the system clipboard. Picked up the first time someone tries to paste a
+    path into the overlay and is surprised.
   - ~~**Widgets for the lab's simulation controls.**~~ **Built**, along with a log console and
     an asset status panel. Keys and buttons now produce the same request type and are applied
     by one function, so the two cannot drift.
-- **The sandbox's zoom anchor on a high-density display.** `DemoScene` hands the pointer's
-  logical coordinates to a camera whose viewport is in pixels, so a wheel zoom anchors at half
-  the intended point on a two-times display. The lab converts; the sandbox should too. Found
-  while making the lab's pick agree with its own analytic inverse, which is the kind of thing
-  a cross-check exists to find.
+- ~~**The sandbox's zoom anchor on a high-density display.**~~ **Fixed in M9**, in four sites
+  rather than the one this entry described: both of the sandbox's scene classes had it, for pan
+  as well as zoom. The entry was left standing by mistake and is struck here; M11's shared
+  camera controller is what stops the next such fix needing four edits.
 
 ## Decided by ADR-0010, planned as milestones
 

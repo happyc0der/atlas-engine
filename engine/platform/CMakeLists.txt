@@ -18,6 +18,7 @@ atlas_add_module(platform
         src/event.cpp
         src/key.cpp
         src/sdl_keymap.cpp
+        src/text_split.cpp
         src/sdl_error.cpp
         src/sdl_access.cpp
     HEADERS

@@ -87,6 +87,27 @@ class Window {
     void show();
     void hide();
 
+    /// Ask the window system to deliver text events for this window, and where there is one,
+    /// to engage the input method or on-screen keyboard.
+    ///
+    /// Switched on by the application while a text field has focus and off again when it
+    /// loses focus. **Never left on.** An active text input changes how the platform treats
+    /// ordinary keys: with an input method engaged every key press goes through it first, so
+    /// a shortcut key becomes a composition keystroke instead.
+    ///
+    /// Main thread. Failure: Internal, carrying the window system's message.
+    [[nodiscard]] Status set_text_input_active(bool active);
+
+    /// Whether text input is currently active, asked of the window system rather than
+    /// tracked, so it cannot drift. False for an invalid window.
+    [[nodiscard]] bool text_input_active() const noexcept;
+
+    /// Where the text caret is, so an input method's candidate list can follow it.
+    ///
+    /// In logical units. `cursor` is the caret's offset from the left of the rectangle, also
+    /// logical. Has no effect while text input is inactive. Main thread.
+    [[nodiscard]] Status set_text_input_area(Rect2D caret, float cursor);
+
   private:
     friend class Platform;
 
