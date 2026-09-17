@@ -96,8 +96,12 @@ jobs:
         if: runner.os == 'Windows'
         run: .\external\vcpkg\bootstrap-vcpkg.bat -disableMetrics
 
+      # Benchmarks are off by default because they take far longer to run than the tests.
+      # They are built here on every platform all the same: until M8 they compiled only on the
+      # development machine, under one compiler, and a benchmark that does not build is a
+      # performance claim nobody can reproduce.
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DATLAS_BUILD_BENCHMARKS=ON
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -107,6 +111,18 @@ jobs:
       # the ordinary test run now, so a developer gets the same coverage locally.
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
+
+      # Timings from a shared runner are noise and no threshold is asserted on them. What is
+      # exercised is each benchmark's own checks: the hashing group refuses to report a number
+      # for a candidate that is not deterministic, ignores part of its input, or disagrees with
+      # the one-shot hash it streams. Running it on all three platforms is also what makes the
+      # candidates' cross-platform agreement a fact rather than an expectation.
+      - name: Benchmark self-checks
+        shell: bash
+        run: |
+          BENCH="build/${{ matrix.preset }}/bin/atlas_bench"
+          [ -x "${BENCH}" ] || BENCH="${BENCH}.exe"
+          "./${BENCH}" --filter hash
 
       - name: Upload logs on failure
         if: failure()

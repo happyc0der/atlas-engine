@@ -18,7 +18,9 @@ PRESET="${1:-linux-clang-debug}"
 # The presets pin x64-linux, which is what CI builds. A local container on Apple Silicon
 # runs arm64, so the triplet can be overridden for that case. Overriding it verifies the
 # toolchain and the code; it does not verify the x86_64 architecture, which stays CI's job.
-CONFIGURE_ARGS=()
+# Continuous integration configures with benchmarks on, so this does too: a container run
+# that passed while CI failed to compile a benchmark would be worse than no container run.
+CONFIGURE_ARGS=("-DATLAS_BUILD_BENCHMARKS=ON")
 if [[ -n "${ATLAS_VCPKG_TRIPLET:-}" ]]; then
     CONFIGURE_ARGS+=("-DVCPKG_TARGET_TRIPLET=${ATLAS_VCPKG_TRIPLET}")
     echo "note: overriding vcpkg triplet to ${ATLAS_VCPKG_TRIPLET} (architecture parity not verified)"
@@ -42,5 +44,8 @@ echo "=== test (${PRESET}) ==="
 ctest --preset "${PRESET}"
 
 echo "=== run (${PRESET}) ==="
+echo "=== benchmark self-checks (${PRESET}) ==="
+"./build/${PRESET}/bin/atlas_bench" --filter hash
+
 "./build/${PRESET}/bin/atlas_sandbox" --version
 "./build/${PRESET}/bin/atlas_sandbox" --headless --ticks 120

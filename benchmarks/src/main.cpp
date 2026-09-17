@@ -49,13 +49,29 @@ Options:
         const auto environment = atlas::bench::describe_environment();
 
         std::vector<atlas::bench::Result> results;
+        bool matched = false;
         for (const auto& benchmark : atlas::bench::registry()) {
             if (!filter.empty() && benchmark.name != filter) {
                 continue;
             }
+            matched = true;
             auto group = benchmark.run();
             results.insert(results.end(), std::make_move_iterator(group.begin()),
                            std::make_move_iterator(group.end()));
+        }
+
+        // A filter that names nothing is an error rather than an empty run. Continuous
+        // integration runs a filtered benchmark to exercise its self-checks, and a filter
+        // that silently matched nothing would turn that step into a guaranteed pass.
+        if (!filter.empty() && !matched) {
+            std::string known;
+            for (const auto& benchmark : atlas::bench::registry()) {
+                known += known.empty() ? "" : ", ";
+                known += std::string{benchmark.name};
+            }
+            std::fprintf(stderr, "atlas_bench: no benchmark group named '%s'; known groups: %s\n",
+                         std::string{filter}.c_str(), known.c_str());
+            return 1;
         }
 
         atlas::bench::write_table(environment, results);
