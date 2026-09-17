@@ -2,52 +2,75 @@
 
 Atlas is a set of static-library modules composed by an application. Every module boundary
 is a CMake target; the permitted dependency edges live in `cmake/ModuleGraph.cmake` and are
-enforced at configure time and again in CI by `tools/check_module_deps.py`.
+enforced at configure time and again in CI by `tools/check_module_deps.py`, which also
+checks that the diagram below draws exactly the edges the table permits. It had drifted
+five ways before M9, so it is now compared rather than trusted.
 
 ## Module graph
 
 ```mermaid
 graph TD
   core[atlas::core<br/>Result/Error, Log, Assert,<br/>Handle/SlotMap, Hash, profile macros]
-  math[atlas::math<br/>M3]
+  math[atlas::math<br/>vectors, matrices, camera]
   platform[atlas::platform<br/>window, events, input, clocks]
-  tasks[atlas::tasks<br/>M8]
+  platform_internal[atlas::platform_internal<br/>native window handle, for rhi only]
+  tasks[atlas::tasks<br/>worker pool, parallel_for]
   rhi[atlas::rhi<br/>device, resources, passes]
+  rhi_internal[atlas::rhi_internal<br/>native device handle, for tools only]
   renderer[atlas::renderer<br/>camera, batching, ID target]
   assets[atlas::assets<br/>VFS, asset IDs, import, hot reload]
   scene[atlas::scene<br/>presentation entities, transforms,<br/>hierarchy, serialization]
   simulation[atlas::simulation<br/>ticks, commands, systems, hashing]
   runtime[atlas::runtime<br/>deferred: composition, main loop]
   tools[atlas::tools<br/>editor shell, panels]
-  apps[apps: sandbox, editor, strategy_lab]
+  apps[apps: sandbox, lab, common<br/>composition roots, not modules]
 
-  platform --> core
   math --> core
+  platform --> core
+  platform_internal --> core
+  platform_internal --> platform
   tasks --> core
   rhi --> core
   rhi --> platform
-  renderer --> rhi
+  rhi --> platform_internal
+  rhi_internal --> core
+  rhi_internal --> platform
+  rhi_internal --> rhi
+  renderer --> assets
+  renderer --> core
   renderer --> math
+  renderer --> rhi
   assets --> core
   assets --> platform
+  scene --> assets
   scene --> core
   scene --> math
-  scene --> assets
   scene --> rhi
   simulation --> core
   simulation --> tasks
-  runtime --> platform
-  runtime --> rhi
-  runtime --> renderer
   runtime --> assets
+  runtime --> core
+  runtime --> math
+  runtime --> platform
+  runtime --> renderer
+  runtime --> rhi
   runtime --> scene
   runtime --> simulation
-  tools --> rhi
+  tools --> assets
+  tools --> core
+  tools --> math
+  tools --> platform
+  tools --> platform_internal
   tools --> renderer
+  tools --> rhi
+  tools --> rhi_internal
   tools --> scene
+  tools --> simulation
+
   apps --> renderer
   apps --> assets
   apps --> scene
+  apps --> simulation
   apps --> tools
 ```
 
@@ -163,7 +186,8 @@ what allows the simulation to move to its own thread later without changing the 
 
 ## Threading model
 
-v0.1 is single-threaded by design. Every platform and RHI entry point asserts main-thread
+v0.1 was single-threaded by design, and since M8 the simulation's compute phase runs on
+`atlas::tasks` workers when a pool is supplied. Every platform and RHI entry point asserts main-thread
 affinity.
 
 | Thread | From | Owns | Must not |
@@ -233,9 +257,10 @@ and resolving it subtly wrongly is a directory escape, and no legitimate asset p
 A resolved path is then checked to lie inside its root, because a symbolic link can point
 anywhere and what matters is where a path ends up.
 
-Loading is asynchronous through a small pool owned by the assets module, deliberately not the
-general task system, which does not exist yet and which the specification wants kept separate
-from deterministic simulation scheduling. A worker sees only bytes: never the window, the
+Loading is asynchronous through a small pool owned by the assets module, deliberately not
+`atlas::tasks`. That pool exists since M8, so this is a choice rather than a limitation: the
+specification wants asset work kept separate from deterministic simulation scheduling, and a
+blocking file read on a simulation worker would stall a tick. A worker sees only bytes: never the window, the
 graphics device, or engine state. It produces decoded data and stops, and the main thread
 turns that into a graphics resource, because only the main thread may. That split is the
 whole reason loading can be asynchronous at all, and it is why an asset has a `Decoded` state
@@ -317,13 +342,14 @@ depends on frame rate, network and thread scheduling, and none of those may infl
 **Compute and commit are separated by `const`.** The compute phase receives a `const World`
 and writes only storage its own system owns; the commit phase receives a mutable one. The
 compiler enforces the split, so a system cannot write shared state while another reads it even
-by mistake. This is the single reason moving compute onto workers in M8 is a scheduling change
+by mistake. This is the single reason moving compute onto workers in M8 was a scheduling change
 rather than a redesign.
 
-**Batches are derived now and executed sequentially.** Systems that share no table in a
-conflicting way are grouped, following declared order so the grouping is reproducible. M6 runs
-one system at a time regardless. Deriving the batches anyway means M8 has nothing left to
-design, and a wrong access declaration fails today instead of becoming a data race later.
+**Batches are derived here and executed by the kernel.** Systems that share no table in a
+conflicting way are grouped, following declared order so the grouping is reproducible. M6 ran
+one system at a time regardless; since M8 a batch holding more than one system is dispatched
+across the worker pool. Deriving them also makes a wrong access declaration fail today instead
+of becoming a data race later.
 
 **The kernel knows nothing about what a table holds.** A table is asked to hash itself and to
 write and read itself, and nothing more, so layouts stay the application's choice per measured

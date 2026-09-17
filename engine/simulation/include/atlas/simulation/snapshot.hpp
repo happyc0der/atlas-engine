@@ -24,8 +24,8 @@
 /// this only carries it.
 ///
 /// Thread affinity: one producer, one consumer, either order, any threads. The shared pointer
-/// operations are atomic, so this is safe today and stays safe when the simulation moves off
-/// the main thread in M8, which is the reason it is built this way now rather than later.
+/// operations are atomic, which is why this was built this way in M6 rather than later: it
+/// needed no change when M8 moved the compute phase onto workers.
 
 #include <atlas/core/time.hpp>
 

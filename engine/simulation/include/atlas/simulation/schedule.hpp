@@ -10,15 +10,16 @@
 /// **Two phases, separated by const.** The compute phase is handed a `const World` and may
 /// only write to storage the system owns. The commit phase is handed a mutable one and
 /// applies what compute produced. The compiler enforces the split, so a system physically
-/// cannot mutate shared state while others are reading it. Until M8 both phases run on the
-/// main thread; the separation is what makes moving compute onto workers a scheduling change
-/// rather than a redesign.
+/// cannot mutate shared state while others are reading it. That separation is what made
+/// moving compute onto workers in M8 a scheduling change rather than a redesign; commit
+/// remains serial, in declared order, because that order is what makes two systems writing
+/// one table deterministic.
 ///
-/// **Batches are derived now and executed sequentially.** Systems that touch no common table
-/// in a conflicting way are grouped, in declared order. M6 runs the batches one system at a
-/// time anyway, but they are computed and validated here so that M8 has nothing left to
-/// design. Deriving them also catches a declaration that is wrong today, long before it
-/// becomes a data race.
+/// **Batches are derived here and executed by the kernel.** Systems that touch no common
+/// table in a conflicting way are grouped, in declared order. M6 ran each batch one system at
+/// a time; since M8 a batch with more than one system is dispatched across the worker pool.
+/// Deriving them also catches a declaration that is wrong today, long before it becomes a
+/// data race.
 ///
 /// **Declarations are checked against reality only as far as they can be.** Nothing stops a
 /// system writing a table it did not declare, because the kernel hands it the world and

@@ -13,16 +13,16 @@
 /// 3. **Commit**, system by system in declared order, each applying what it computed.
 /// 4. **Hash** the resulting state.
 ///
-/// Compute and commit are separate because that is what lets compute move onto worker
-/// threads in M8 without changing a result. In M6 both run on the main thread, one system at
-/// a time, and the batches are derived and validated anyway so that nothing is left to
-/// design later.
+/// Compute and commit are separate because that is what lets compute run on worker threads
+/// without changing a result. M8 did exactly that: a batch with more than one system is
+/// dispatched across the pool, and the state hash is identical at every worker count.
 ///
 /// **A fixed timestep does not make this deterministic.** What does is the command order, the
 /// system order, the commit order, and the numeric rules in docs/DETERMINISM.md. The tick
 /// loop only decides how many times to run.
 ///
-/// Thread affinity: main thread, until M8 moves the compute phase.
+/// Thread affinity: main thread. Since M8 the compute phase may run on `tasks` workers when
+/// a pool is supplied, which the kernel owns the dispatch of; commit and hash stay here.
 
 #include <atlas/core/result.hpp>
 #include <atlas/core/time.hpp>

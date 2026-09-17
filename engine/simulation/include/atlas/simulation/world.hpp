@@ -14,7 +14,7 @@
 /// docs/DETERMINISM.md.
 ///
 /// Thread affinity: the compute phase sees this as `const` and the commit phase as mutable.
-/// That split is enforced by the type system rather than by convention, which is what makes
+/// That split is enforced by the type system rather than by convention, which is what made
 /// moving the compute phase onto workers in M8 a scheduling change.
 
 #include <atlas/core/result.hpp>

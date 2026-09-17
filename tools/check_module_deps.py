@@ -28,6 +28,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINE_DIR = REPO_ROOT / "engine"
 MODULE_GRAPH = REPO_ROOT / "cmake" / "ModuleGraph.cmake"
+ARCHITECTURE = REPO_ROOT / "docs" / "ARCHITECTURE.md"
 
 SOURCE_SUFFIXES = {".cpp", ".hpp", ".h", ".cc", ".cxx", ".inl"}
 
@@ -83,6 +84,63 @@ def parse_module_graph() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         sys.exit(f"error: no module dependencies parsed from {MODULE_GRAPH}")
 
     return deps, public
+
+
+def check_architecture_diagram(deps: dict[str, set[str]]) -> list[str]:
+    """The diagram in ARCHITECTURE.md must show exactly the edges the allow-list permits.
+
+    A picture of the module graph that disagrees with the module graph is worse than no
+    picture, because it is the first thing a reader sees and they have no reason to doubt it.
+    Before M9 it had drifted five ways at once: an edge the table does not permit, three it
+    permits that were missing, and two modules with no node at all. Nothing noticed, because
+    nothing compared them. This does.
+
+    Only `atlas::`-prefixed nodes participate. The `apps` node is prose about the
+    applications, which are composition roots rather than modules, so it is left alone.
+    """
+    if not ARCHITECTURE.is_file():
+        return [f"cannot find {ARCHITECTURE}"]
+
+    text = ARCHITECTURE.read_text(encoding="utf-8")
+    block = re.search(r"```mermaid\n(.*?)```", text, re.DOTALL)
+    if block is None:
+        return [f"{ARCHITECTURE.name}: no mermaid module graph found"]
+
+    body = block.group(1)
+    declared = set(re.findall(r"^\s*([a-z_]+)\[atlas::", body, re.MULTILINE))
+    drawn: set[tuple[str, str]] = set()
+    for line in body.splitlines():
+        edge = re.match(r"\s*([a-z_]+)\s*-->\s*([a-z_]+)\s*$", line)
+        if edge is None:
+            continue
+        source, target = edge.group(1), edge.group(2)
+        if source in declared and target in declared:
+            drawn.add((source, target))
+
+    permitted = {
+        (module, dep)
+        for module, module_deps in deps.items()
+        for dep in module_deps
+        if module in declared and dep in declared
+    }
+
+    problems: list[str] = []
+    for module in sorted(set(deps) - declared):
+        problems.append(
+            f"docs/ARCHITECTURE.md: module '{module}' is in cmake/ModuleGraph.cmake but has no "
+            f"node in the diagram."
+        )
+    for source, target in sorted(drawn - permitted):
+        problems.append(
+            f"docs/ARCHITECTURE.md: the diagram draws '{source} --> {target}', which "
+            f"cmake/ModuleGraph.cmake does not permit."
+        )
+    for source, target in sorted(permitted - drawn):
+        problems.append(
+            f"docs/ARCHITECTURE.md: cmake/ModuleGraph.cmake permits '{source} --> {target}', "
+            f"which the diagram does not draw."
+        )
+    return problems
 
 
 def module_of(path: Path) -> str | None:
@@ -195,7 +253,7 @@ def main() -> int:
     args = parser.parse_args()
 
     deps, public = parse_module_graph()
-    problems: list[str] = []
+    problems: list[str] = check_architecture_diagram(deps)
     checked = 0
 
     for path in source_files():

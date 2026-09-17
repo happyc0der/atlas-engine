@@ -5,8 +5,10 @@
 /// The asset registry: what exists, what state it is in, and how it gets loaded.
 ///
 /// **Threading.** Reading and decoding happen on a small worker pool owned by this module,
-/// not on the general task system, which does not exist yet and which the specification
-/// wants kept separate from deterministic simulation scheduling anyway. Workers touch only
+/// not on `atlas::tasks`. That pool exists since M8, so this is a choice rather than a
+/// limitation: the specification wants asset work kept separate from deterministic
+/// simulation scheduling, and a blocking file read on a simulation worker would stall a
+/// tick. Workers touch only
 /// bytes: they never see the window, the graphics device, or any engine state. Finished work
 /// comes back through a queue that the main thread drains, and only the main thread turns
 /// decoded data into a graphics resource.

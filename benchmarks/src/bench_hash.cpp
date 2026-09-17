@@ -21,7 +21,8 @@
 //   3. Hashing independent blocks and then hashing their results should cost about the same
 //      as (2) on one thread, since it is the same arithmetic in a different order.
 //   4. Threads should divide (3), minus whatever dispatch costs — and dispatch is measured
-//      here rather than assumed, because a worker pool does not exist yet.
+//      here rather than assumed, rather than assumed against the worker pool's own measured
+//      dispatch floor.
 //
 // If (1) does not hold, the dependency-chain explanation is wrong and the rest of this file
 // is measuring the wrong thing.

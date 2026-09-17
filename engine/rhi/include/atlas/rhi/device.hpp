@@ -234,8 +234,8 @@ class Device {
 
     /// Copy `data` into a buffer, waiting for the copy to finish.
     ///
-    /// Synchronous, and meant for initialisation. A streaming path that does not stall
-    /// arrives when something needs to update a buffer every frame.
+    /// Synchronous, and meant for initialisation. For data that changes every frame use
+    /// `stream_buffer` below, which does not stall.
     [[nodiscard]] Status upload_buffer(BufferHandle buffer, std::span<const std::byte> data,
                                        std::uint64_t offset = 0);
 

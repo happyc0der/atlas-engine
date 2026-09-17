@@ -95,7 +95,7 @@ class Window {
     friend SDL_Window* internal::native_handle(const Window& window) noexcept;
 
     /// Opaque; the concrete window type never appears in a public header. The RHI reaches
-    /// the underlying handle through a separate internal target in M2.
+    /// the underlying handle through a separate internal target.
     void* m_handle = nullptr;
     WindowId m_id = 0;
     std::string m_title;

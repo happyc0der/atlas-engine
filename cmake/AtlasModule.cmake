@@ -148,8 +148,9 @@ function(atlas_add_test name)
     # would fail. Catch2 documents this case.
     #
     # The working directory is the project root so that a relative asset path means the same
-    # thing under CTest as it does when the binary is run by hand. Depending on the caller's
-    # working directory is a stopgap; the asset system replaces it with virtual paths in M4.
+    # thing under CTest as it does when the binary is run by hand. Asset paths inside the
+    # engine go through VirtualPath; this is about where a test binary is launched from,
+    # which is a property of the harness rather than of the asset system.
     catch_discover_tests(${target}
         DISCOVERY_MODE PRE_TEST
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"

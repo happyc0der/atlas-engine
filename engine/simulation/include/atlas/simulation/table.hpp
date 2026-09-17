@@ -17,8 +17,8 @@
 /// the work inside.
 ///
 /// Thread affinity: a table is read by the compute phase and written only by the commit
-/// phase. Until M8 both run on the main thread; the contract is what makes moving the
-/// compute phase to workers a scheduling change rather than a redesign.
+/// phase. Since M8 the compute phase may run on worker threads, which this contract is what
+/// made possible: a system reads tables it does not own and writes only its own scratch.
 
 #include <atlas/core/hash.hpp>
 #include <atlas/core/result.hpp>

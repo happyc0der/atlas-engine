@@ -106,7 +106,7 @@ TEST_CASE("clearing empties the channel", "[sim][snapshot]") {
 }
 
 TEST_CASE("a consumer never sees a torn snapshot", "[sim][snapshot]") {
-    // The property that has to hold when the simulation moves off the main thread in M8.
+    // The property that has to hold now that the compute phase runs on workers.
     // The consumer checks that every snapshot it takes is internally consistent: the tick in
     // the header matches every cell, so a half-published one would be visible.
     Channel channel;

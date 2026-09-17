@@ -139,9 +139,9 @@ Status Device::upload_buffer(BufferHandle buffer, std::span<const std::byte> dat
     SDL_UploadToGPUBuffer(copy, &source, &destination, false);
     SDL_EndGPUCopyPass(copy);
 
-    // Waiting makes this an initialisation-time operation. A streaming path that does not
-    // stall belongs with the first thing that updates a buffer every frame, and does not
-    // exist yet.
+    // Waiting makes this an initialisation-time operation. The non-stalling path is
+    // `stream_buffer`, built in M7 for the quad batcher, which was the first thing that
+    // updated a buffer every frame and had been paying this wait since M3.
     SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
     if (fence == nullptr) {
         auto error = m_impl->fail(ErrorCode::Internal, "submitting the upload failed");

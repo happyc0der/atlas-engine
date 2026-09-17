@@ -44,8 +44,10 @@ those buffers in system order, and within a buffer in stable index order. No res
 depend on which worker finished first: reductions merge per-worker partials in
 worker-index order.
 
-Until M8 the compute phase runs sequentially. The batches are still computed and validated,
-so parallel execution in M8 is a scheduling change rather than a redesign.
+Until M8 the compute phase ran sequentially. Because the batches were computed and validated
+from the start, making them parallel was a scheduling change rather than a redesign: the kernel
+dispatches a batch of more than one system across an `atlas::tasks` worker pool, and each
+system's rows are split by the partitioning rule above.
 
 ## Random numbers
 
@@ -150,15 +152,24 @@ saved midway and resumed from the file must reach the hash the uninterrupted run
 
 From M8: the same, repeated across worker counts 1, 2, 4, and hardware concurrency minus one.
 
-## Measured, as of 2026-09-15
+## Measured, as of 2026-09-17
 
 A fixed integer-only scenario of 500 ticks over 64 rows with three systems and a random
 stream produces these values:
 
-| Quantity | Value |
-|---|---|
-| Final state hash | `0xCECE73AEEC22FBCA` |
-| Hash over all 500 tick hashes | `0xD71CEC7C1078DD46` |
+| Quantity | Value | Hash version |
+|---|---|---|
+| Final state hash | `0xAA82430DE2321AFF` | 2 |
+| Hash over all 500 tick hashes | `0x2603546C5687E95E` | 2 |
+| Final state hash | `0xCECE73AEEC22FBCA` | 1, superseded |
+| Hash over all 500 tick hashes | `0xD71CEC7C1078DD46` | 1, superseded |
+
+**The version 1 rows are kept so that a hash from an old save or an old log can be recognised
+rather than puzzled over.** They are not a second opinion about the same computation: M8
+replaced the hash algorithm, `kHashAlgorithmVersion` became 2, and every stored hash changed
+with it. The simulation's state did not: the M8 change was verified by restoring the old
+algorithm and confirming it still produced the version 1 values, which is what distinguishes a
+new hash of the same state from a changed state.
 
 **These values are identical across two architectures, two compilers and two standard
 libraries:**
@@ -168,10 +179,13 @@ libraries:**
 | macOS arm64 | Apple Clang 21 | libc++ | development machine |
 | Linux arm64 | Clang 19 | libstdc++ | local container |
 | Linux x86_64 | Clang 19 | libstdc++ | continuous integration |
+| Windows x64 | MSVC | Microsoft STL | continuous integration |
 
-The test carrying the values is compiled and run in all three. The x86_64 result arrived on
-2026-09-15, when continuous integration ran for the first time; before that this section said
-the comparison had not been made, because it had not.
+The test carrying the values, `engine/simulation/tests/test_golden.cpp`, is compiled and run in
+all four; a mismatch anywhere fails that job. The x86_64 result arrived on 2026-09-15, when
+continuous integration ran for the first time; before that this section said the comparison had
+not been made, because it had not. The version 2 values have been green on every platform since
+they were recorded on 2026-09-16.
 
 **arm64 and x86_64 agreeing is the result worth having.** It is the pair the numeric policy
 was written for: arm64 contracts multiply-add into a fused instruction by default and x86_64

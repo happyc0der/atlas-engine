@@ -168,8 +168,8 @@ def write_header(manifest: dict, path: Path) -> None:
 
     Generated rather than parsed at runtime: Atlas has no JSON reader, adding one to load
     four integers would be a dependency in search of a problem, and constants mean a shader
-    that gains a resource breaks the build rather than the frame. The asset system replaces
-    this with real asset loading in M4.
+    that gains a resource breaks the build rather than the frame. M4 considered routing
+    shaders through the asset registry and decided against it; see docs/DEFERRED.md.
     """
     lines = [
         "// SPDX-License-Identifier: GPL-3.0-or-later",

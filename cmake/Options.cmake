@@ -6,8 +6,11 @@ include(CMakeDependentOption)
 
 option(ATLAS_BUILD_TESTS      "Build the test targets"                         ON)
 option(ATLAS_BUILD_APPS       "Build the application targets"                  ON)
-option(ATLAS_BUILD_BENCHMARKS "Build the benchmark targets (arrives in M3)"    OFF)
+option(ATLAS_BUILD_BENCHMARKS "Build the benchmark targets"    OFF)
 option(ATLAS_PROFILE          "Enable the Tracy profiler client"               OFF)
+# Kept as a local aid: `tools/tidy.sh` is what CI runs, against compile_commands.json, so no
+# preset or lane sets this. Turn it on by hand to have the compiler driver run clang-tidy while
+# you work on one module.
 option(ATLAS_ENABLE_TIDY      "Run clang-tidy as part of the build"            OFF)
 option(ATLAS_WARNINGS_AS_ERRORS "Treat first-party warnings as errors"         ON)
 

@@ -26,9 +26,13 @@ using Nanoseconds = std::chrono::nanoseconds;
 
 /// A simulation tick index.
 ///
-/// Deliberately a plain 64-bit counter rather than a strong type: there is currently one
-/// 64-bit counter in the engine, so there is nothing to confuse it with. It becomes a
-/// strong type when a second one appears and a mix-up becomes possible.
+/// Deliberately a plain 64-bit counter rather than a strong type. The original reason — that
+/// this was the engine's only 64-bit counter — has expired: `Command::sequence`,
+/// `Channel::published()`, `Frame::generation` and `RngStream::counter()` are all plain
+/// `std::uint64_t` too. It stays plain because no mix-up between them has actually happened,
+/// and a strong type here changes a signature in every module. The sharper condition, recorded
+/// in docs/DEFERRED.md, is a real confusion between two of these or a serialized field that a
+/// strong type would have caught.
 using Tick = std::uint64_t;
 
 /// A steady, monotonic clock.
@@ -36,8 +40,10 @@ using Tick = std::uint64_t;
 /// Concrete, with no virtual interface behind it. The one component that would need a fake
 /// clock to be testable, the main loop, does not exist as a testable unit yet: the tick
 /// accumulator takes an elapsed duration and reads no clock at all, which is what makes it
-/// directly testable. An injectable clock arrives with the runtime module, when there is
-/// something that needs one.
+/// directly testable. An injectable clock arrives when something needs one: a test that must
+/// control time without sleeping, or a replay driven from recorded frame durations. It was
+/// once tied to the runtime module, which has since been deferred with a condition that may
+/// never fire, so the condition here is its own.
 class SteadyClock {
   public:
     using Impl = std::chrono::steady_clock;
