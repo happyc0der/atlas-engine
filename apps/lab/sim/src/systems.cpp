@@ -47,7 +47,12 @@ sim::SystemDesc step_region_value(const TableIds& ids) {
         });
     };
     desc.commit = [scratch, ids](const sim::CommitContext& context) {
-        cell_table(context.world, ids).region_value = *scratch;
+        // Swapped rather than copied. The copy moved four megabytes a tick for nothing: compute
+        // writes every row before the next commit, so whatever the scratch receives here is
+        // overwritten before it is read. The contract that makes this safe is that this system
+        // writes every row every tick, which test_systems.cpp checks by filling the scratch with
+        // a sentinel and requiring none of it to survive a tick.
+        cell_table(context.world, ids).region_value.swap(*scratch);
     };
     return desc;
 }
@@ -122,7 +127,8 @@ sim::SystemDesc accumulate_population(const TableIds& ids) {
                   });
     };
     desc.commit = [scratch, ids](const sim::CommitContext& context) {
-        population_table(context.world, ids).population_value = *scratch;
+        // Swapped, for the same reason and under the same contract as step region value.
+        population_table(context.world, ids).population_value.swap(*scratch);
     };
     return desc;
 }

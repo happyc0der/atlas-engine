@@ -582,21 +582,30 @@ structure and are therefore memory-bound.
 
 | Workers | Tick at 1M cells | Speedup |
 |---|---|---|
-| none | 1.960 ms | 1.00x |
-| 1 | 1.383 ms | 1.42x |
-| 2 | 1.139 ms | 1.72x |
-| 4 | 962 us | 2.04x |
-| 13 | 946 us | **2.07x** |
+| none | 1.650 ms | 1.00x |
+| 1 | 1.032 ms | 1.60x |
+| 2 | 848 us | 1.95x |
+| 4 | 694 us | 2.38x |
+| 13 | 695 us | **2.38x** |
 
-The bottom of the predicted range, and the reason is Amdahl's law rather than the pool: about
-0.7 ms of the 1.96 ms tick was never parallel. The hash is 0.38 ms of it and the commit phase
-copies each system's scratch back into its table — several megabytes, one system at a time, by
+The bottom of the predicted range, and the reason is Amdahl's law rather than the pool: what is
+left is serial. The hash is 0.38 ms of it, and the commit phase runs one system at a time by
 contract, because commit order is what makes two systems writing the same table deterministic.
-A 36% serial fraction caps the speedup near 2.8x whatever the workers do, and 2.07x is what is
-left after dispatch.
 
-End to end, `atlas_lab --headless --grid 1024`: **507 to 1074 ticks a second**, with a
-byte-identical state hash at both settings.
+Those figures are after a second change that the first measurement provoked. Parallelising
+compute left a 1.96 ms sequential tick at 2.07x, and the commit phase turned out to be copying
+each system's scratch into its table — eight megabytes a tick between the two heavy systems, for
+nothing, since compute rewrites every row before the next commit. Swapping instead of copying
+took the sequential tick to 1.650 ms and the parallel one to 694 us, and moved the speedup from
+2.07x to 2.38x because it removed serial work rather than parallel work. The contract that makes
+the swap safe — every row rewritten every tick — is checked by predicting each row's new value
+from its old one and requiring all of them to match; a deliberately skipped row fails it.
+
+End to end, `atlas_lab --headless --grid 1024`, with both changes in: **588 ticks a second on
+one thread, 1372 on five, 1387 on fourteen** — and the state hash is `0xd7f4f889cb0f848d` at all
+three, which is M8's exit criterion demonstrated by the acceptance path rather than only by a
+test. The first version of this paragraph quoted a binary that had not been rebuilt after the
+commit change; the numbers here are from one that was, checked by watching it link.
 
 ### A conclusion this reverses
 

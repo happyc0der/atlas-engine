@@ -2,7 +2,9 @@
 #include "lab_harness.hpp"
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdio>
+#include <vector>
 
 using atlas::lab::testing::kSmall;
 using atlas::lab::testing::LabHarness;
@@ -57,6 +59,41 @@ TEST_CASE("each system changes only the table it owns", "[lab][systems]") {
     CHECK(h.lab.world.table_hash(h.lab.ids.grid).value() == before_grid);
     CHECK(h.lab.world.table_hash(h.lab.ids.cells).value() != before_cells);
     CHECK(h.lab.world.table_hash(h.lab.ids.population).value() != before_population);
+}
+
+TEST_CASE("every row is rewritten each tick, which is what lets commit swap", "[lab][systems]") {
+    // Both heavy systems hand their scratch to the table by swapping rather than copying, which
+    // moves four megabytes a tick less. That is only safe because each writes every row before
+    // the next commit: if it skipped one, the row would receive whatever the scratch happened to
+    // hold, which after a swap is the table's contents from two ticks ago.
+    //
+    // Checked from outside the system, because the scratch is private to it: every row's new
+    // value is predicted from the old one, and every row must match. A skipped row would hold a
+    // stale value instead and fail here.
+    LabHarness h(kSmall);
+    auto& cells = atlas::lab::cell_table(h.lab.world, h.lab.ids);
+    auto& population = atlas::lab::population_table(h.lab.world, h.lab.ids);
+    const auto& adjacency = atlas::lab::adjacency_table(h.lab.world, h.lab.ids);
+
+    const std::vector<std::uint32_t> region_before = cells.region_value;
+    const std::vector<std::uint32_t> population_before = population.population_value;
+    const std::vector<std::uint8_t> colour_before = cells.color_index;
+
+    auto kernel = h.kernel(17);
+    REQUIRE(kernel.step().has_value());
+
+    for (std::size_t i = 0; i < region_before.size(); ++i) {
+        INFO("row " << i);
+        const std::uint32_t value = region_before[i];
+        REQUIRE(cells.region_value[i] == value + 1U + (value >> 27U));
+
+        std::uint32_t gain = 0;
+        for (const std::uint32_t n : adjacency.neighbours_of(static_cast<std::uint32_t>(i))) {
+            gain += colour_before[n];
+        }
+        REQUIRE(population.population_value[i] ==
+                std::min(atlas::lab::kPopulationCap, population_before[i] + gain));
+    }
 }
 
 TEST_CASE("population saturates at the cap and never exceeds it", "[lab][systems]") {
