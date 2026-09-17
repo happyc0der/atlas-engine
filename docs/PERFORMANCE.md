@@ -823,6 +823,22 @@ hundred thousand quads that is about 320 microseconds a frame on this machine â€
 sandbox, drawing nine sprites, will never pay, and which the Strategy Laboratory does not pay at
 all because its cells use their own four-byte instance stream and never touch this path.
 
+### A check that had been passing by coincidence
+
+The shader currency check compares every cooked output byte for byte against a fresh build. That
+is only meaningful when the same compiler produced both, **and it never was**: this machine
+cooks with Homebrew's glslang and continuous integration with the distribution's, which are
+different builds of different versions. `DEPENDENCIES.md` has recorded both since M2.
+
+It went unnoticed because every shader until now was simple enough that the two produced
+identical output. The first one with real arithmetic in it did not, and the check reported the
+committed output as stale when it was current.
+
+The comparison is now made where it means something and skipped, loudly and with both toolchain
+strings printed, where it does not. The source hashes, the generated header and the vertex
+layouts are compared either way, because none of them depends on which compiler ran. A missing
+output still fails, which was verified by removing one.
+
 **The deferral's own stated reason had expired before it was fired.** It read: "at a million
 cells every added instance byte costs a megabyte per upload in the exact path M7 made faster."
 Since M8's instance compaction the cell field does not go through quad instances at all, so the

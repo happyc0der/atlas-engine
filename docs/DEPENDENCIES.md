@@ -24,7 +24,7 @@ distribution. All current dependencies are permissive and therefore compatible.
 | Catch2 | Unit and integration test framework | 3.15.3 | BSL-1.0 | Yes | Test targets only | M0 |
 | Tracy | Frame profiler client | 0.13.1 | BSD-3-Clause | Yes | `atlas/core/profile.hpp` macros, behind `ATLAS_PROFILE`; vcpkg feature `profile` | M0 |
 | SDL3 | Window, events, input, GPU | 3.4.12 | zlib | Yes | Private to `platform` and `rhi` | M1 |
-| glslang | Compiles HLSL to SPIR-V | 16.4.0 (vcpkg) / 16.6.0 (Homebrew) | BSD-3-Clause and Apache-2.0 | Yes | Build-time tool only; never linked into engine targets | M2 |
+| glslang | Compiles HLSL to SPIR-V | 16.4.0 (vcpkg) / 16.6.0 (Homebrew) / whatever `glslang-tools` provides on the CI image. **Three builds, and their SPIR-V is not byte-identical for a non-trivial shader** — see PERFORMANCE.md under M13 | BSD-3-Clause and Apache-2.0 | Yes | Build-time tool only; never linked into engine targets | M2 |
 | SPIRV-Cross | Translates SPIR-V to Metal Shading Language | 1.4.350.1 (vcpkg) / 1.4.357.0 (Homebrew) | Apache-2.0 | Yes | Build-time tool only | M2 |
 | stb | Image decoding (`stb_image`). The port also installs `stb_vorbis.c` v1.22 on every triplet; Atlas does not compile it, and M12 deferred Ogg support. | 2024-07-29, port-version 1 | MIT / Unlicense | Yes | Private to the assets importer | M4 |
 | Dear ImGui | Debug overlay | 1.92.8, features `docking-experimental`, `sdl3-binding`, `sdlgpu3-binding` | MIT | Yes | Private to `tools` | M3 |

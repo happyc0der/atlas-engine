@@ -358,18 +358,48 @@ def main() -> int:
                   file=sys.stderr)
             return 1
 
-        for entry in manifest["shaders"]:
-            for output in entry["outputs"].values():
-                fresh = out_dir / output["file"]
-                stored = COOKED_DIR / output["file"]
-                if not stored.is_file():
-                    print(f"missing committed output {output['file']}", file=sys.stderr)
-                    return 1
-                if fresh.read_bytes() != stored.read_bytes():
-                    print(f"{output['file']} differs from a fresh build; "
-                          f"run tools/cook_shaders.py", file=sys.stderr)
-                    return 1
+        # Byte-comparing the outputs is only meaningful when the same compiler produced both.
+        #
+        # It is not, here, and never was: this machine cooks with Homebrew's glslang and
+        # continuous integration with the distribution's, which are different builds of
+        # different versions. That went unnoticed until M13, because every shader until then
+        # was simple enough that both produced identical SPIR-V — so the check was passing by
+        # coincidence rather than by construction, and the first shader with real arithmetic
+        # in it turned that coincidence into a failure that said the committed output was
+        # stale when it was not.
+        #
+        # So the comparison is made where it means something and skipped, loudly, where it
+        # does not. This is the same reasoning that already makes the whole check skip on a
+        # machine with no toolchain: one that cannot reproduce the bytes cannot judge them.
+        # The source hashes and the generated header are compared either way, because neither
+        # depends on which compiler ran.
+        same_toolchain = committed.get("tools") == manifest["tools"]
+        if same_toolchain:
+            for entry in manifest["shaders"]:
+                for output in entry["outputs"].values():
+                    fresh = out_dir / output["file"]
+                    stored = COOKED_DIR / output["file"]
+                    if not stored.is_file():
+                        print(f"missing committed output {output['file']}", file=sys.stderr)
+                        return 1
+                    if fresh.read_bytes() != stored.read_bytes():
+                        print(f"{output['file']} differs from a fresh build; "
+                              f"run tools/cook_shaders.py", file=sys.stderr)
+                        return 1
+        else:
+            for entry in manifest["shaders"]:
+                for output in entry["outputs"].values():
+                    if not (COOKED_DIR / output["file"]).is_file():
+                        print(f"missing committed output {output['file']}", file=sys.stderr)
+                        return 1
+            print("note: this toolchain differs from the one that cooked the committed "
+                  "outputs, so they are checked for presence and currency but not compared "
+                  "byte for byte.", file=sys.stderr)
+            print(f"  committed with: {committed.get('tools')}", file=sys.stderr)
+            print(f"  present here:   {manifest['tools']}", file=sys.stderr)
 
+        # Version-independent, so this runs whichever compiler is present: it is derived from
+        # the reflection rather than from the compiled bytes.
         fresh_header = out_dir / "shader_manifest.hpp"
         write_header(manifest, fresh_header)
         if not GENERATED_HEADER.is_file():
@@ -387,8 +417,9 @@ def main() -> int:
                 print(problem, file=sys.stderr)
             return 1
 
-        print(f"shaders are current: {len(entries)} compiled, outputs, header and vertex "
-              f"layouts match")
+        compared = "outputs, header and vertex layouts match" if same_toolchain else (
+            "header and vertex layouts match; outputs present but not byte-compared")
+        print(f"shaders are current: {len(entries)} compiled, {compared}")
         return 0
 
     # Checked when cooking as well as when verifying: whoever changes a shader is the person
