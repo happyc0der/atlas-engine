@@ -117,11 +117,18 @@ integration ran for the first time. What it found is recorded in
   batches: three batches for four systems, observed and asserted in the lab's tests. Column
   sets would let them share one. Recorded from a single observation rather than acted on; M8's
   parallel scheduling is where it earns a decision.
-- **The world hash's cost.** Hashing a million-cell world takes 11.8 ms of a 33 ms tick, one
-  FNV step per byte over eleven bytes per cell. Every tick pays it, because the tick's contract
-  is drain, compute, commit, hash. Two ways out, both M8 work: hash only tables a batch wrote
-  (the schedule knows), or a faster function behind `kHashAlgorithmVersion`, which exists so a
-  change of algorithm invalidates replays and saves rather than silently mismatching them.
+- **The world hash's cost.** ~~Two ways out, both M8 work: hash only tables a batch wrote, or a
+  faster function behind `kHashAlgorithmVersion`.~~ **Measured, and one of those two is dead.**
+  The hash is 10.8 ms of a 12.4 ms million-cell tick, and all of it is the two tables the lab
+  writes every tick, so hashing only what was written saves nothing here; `adjacency`, the one
+  table where caching pays, already caches its own hash. A word-wise, four-lane replacement is
+  32 times faster and, once finalised, a *better* hash than FNV-1a by avalanche — unfinalised it
+  is half as good, which only measuring quality alongside speed revealed. Threads would take the
+  hash from 374 us to 113 us, which is 13% of the projected 2.0 ms tick in exchange for a worker
+  pool: the sequential change gets 96% of the win, so parallel hashing is not M8's first move.
+  Numbers, the trap, and the streaming constraint are in `docs/PERFORMANCE.md`. What remains is
+  a decision, not a measurement: adopting a candidate spends `kHashAlgorithmVersion` 2 and
+  invalidates every stored hash, which the version check makes loud rather than silent.
 - **A single-threaded tick at a million cells is 33 ms.** So 60 ticks a second is out of
   reach at that size until M8's parallel simulation. Meanwhile the lab caps catch-up at two
   ticks per frame (`--max-ticks-per-frame`) and drops and counts the rest, because a frame

@@ -271,6 +271,107 @@ reimplements the chunk-major index formula in Python.
 All of these numbers are processor-side. Graphics-processor time is not measurable through
 SDL_GPU and is not reported.
 
+## Hashing, M8's first question: measured, not yet changed
+
+M7 found that a million-cell tick spends most of itself hashing. This measures what could be
+done about it. Nothing here is adopted: `hash.hpp` says FNV-1a is "not the fastest hash
+available" and that `kHashAlgorithmVersion` exists so a faster one can replace it without
+silently invalidating stored values, and spending that version number is the owner's decision,
+not a performance tweak. `atlas_bench --filter hash` and `--filter simulation`, Release.
+
+**The prediction, written down first.** FNV-1a consumes one byte per multiply and each multiply
+waits for the previous one, so the loop should be bound by that dependency chain rather than by
+memory: roughly one byte per nanosecond on this machine, which is what 11 MB in 11.2 ms is.
+If so, eight bytes per multiply should give close to eight times; independent chains should give
+more again; blocking should cost nothing extra; threads should divide what remains. All four
+held, which is the only reason the explanation below is worth anything.
+
+### Where the tick's time actually goes
+
+| Part | 1M cells | Share of the tick |
+|---|---|---|
+| Whole tick | 12.35 ms | |
+| `World::hash()` | 10.76 ms | 87% |
+| — the `cells` table (7 MB) | 6.99 ms | |
+| — the `population` table (4 MB) | 4.09 ms | |
+| — the `chunks` table | 2.1 us | |
+| — `adjacency` (hash cached at `set`) | below the timer | |
+| — `grid` | below the timer | |
+| Everything else: four systems, commands, commit | 1.59 ms | 13% |
+
+**This kills the first of the two candidates `DEFERRED.md` recorded.** Hashing only the tables a
+tick wrote saves nothing here, because `cells` and `population` are the whole cost and the lab
+writes both every tick. The one table where caching would pay, `adjacency`, already caches its
+own hash and is free. The idea is not wrong in general; it is worth nothing in this workload,
+and this workload is the one that was too slow.
+
+### How fast the hash itself could be
+
+11 MB, the size of the lab's million-cell world.
+
+| Algorithm | Median | Throughput | Avalanche (ideal 32.0) |
+|---|---|---|---|
+| FNV-1a, one byte per multiply — what the engine does today | 11.20 ms | 1.03 GB/s | 30.67 |
+| Eight bytes per multiply | 1.41 ms | 8.2 GB/s | **16.59** |
+| Four independent chains, 32 bytes per step | 360 us | 32.0 GB/s | **16.60** |
+| Four chains, with a final mix | 360 us | 32.0 GB/s | 32.02 |
+| Four chains, mixed, streamed through a 32-byte buffer | 374 us | 30.8 GB/s | 32.02 |
+| Blocked into 256 KiB pieces, 2 threads | 217 us | 53 GB/s | 32.11 |
+| Blocked, 4 threads | 146 us | 79 GB/s | 32.11 |
+| Blocked, 8 threads | 113 us | 102 GB/s | 32.11 |
+
+**The trap is in the avalanche column, and only measuring it found it.** Avalanche is the
+average number of the 64 output bits that change when one input bit is flipped; 32 is ideal,
+and a hash well below it detects change less reliably, which for a state hash is the entire
+job. The obvious fast candidates score 16.6 against FNV-1a's 30.7 — they are twice as fast per
+byte and half as good, because a whole word exclusive-ored in passes through exactly one
+multiply, and a multiply diffuses upward only, so a flip in a high bit of the last word reaches
+almost nothing. FNV-1a avoids this by accident: every byte gets a multiply of its own.
+
+Every avalanche figure above is bit-identical when the same benchmark is built with a
+different compiler and standard library, in the Linux container, at a different optimisation
+level — which is the portability a canonical hash has to have, obtained here for the price of
+running the check. The Linux timings are from a debug build and are not comparable as speed,
+so they are not quoted.
+
+The fix is five operations once per hash, whatever the input size: MurmurHash3's fmix64
+finaliser. It costs nothing measurable (360 us either way) and lands at 32.02, slightly better
+than the hash it would replace. This is a coarse test over one kibibyte, not a statistical
+suite; adopting a hash as a compatibility commitment should include a real one.
+
+**Streaming costs nothing either.** `hash.hpp` promises that hashing A and then B gives the same
+value as hashing the concatenation, and `Hasher` depends on it: every table adds a row count and
+then each column separately. A word-wise hash keeps that promise only by holding partial blocks
+across calls, and the buffered version measures 374 us against 360 us, with the same value for
+every way of splitting the input, including splits chosen to be awkward. The engine's tables
+happen to add spans that are all multiples of eight today, which is the kind of accident that
+should not be load-bearing, so the buffer is not optional.
+
+### What this means for the tick, and for M8
+
+Projected, not measured, because measuring it means making the change this measurement exists to
+inform: 1.59 ms of work plus 0.37 ms of hashing is **about 2.0 ms against today's 12.35 ms**, a
+little over six times faster, from a sequential change with no threading at all.
+
+**That kills the second candidate too.** Threads take the hash from 374 us to 113 us, which
+sounds like a lot until it is put back in the tick: 0.26 ms off a 2.0 ms tick, about 13%, in
+exchange for a worker pool, a dispatch policy, and a parallel correctness argument. The
+sequential change gets 96% of the available win. Parallel hashing is not what M8 should build
+first; it may not be what M8 should build at all.
+
+Run-to-run variance on these figures is about 6% on this machine, which is smaller than every
+difference the conclusions rest on.
+
+### The decision this leaves
+
+Adopting any of these means `kHashAlgorithmVersion` becomes 2, and every stored hash computed
+under version 1 stops matching: saves, replay checkpoints, artifact cache entries, and the
+golden-scenario constants in both test suites. None of that is silent — the version is written
+alongside the values and checked on read, which is exactly the situation it was put there for —
+but it is a change to a stored format, so it is the owner's to make, along with whether
+`hash_string`, which computes table, system, command and stream identifiers at compile time and
+needs no speed at all, changes with it or stays as it is.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:

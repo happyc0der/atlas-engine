@@ -123,6 +123,17 @@ std::vector<Result> run() {
             with_units(atlas::bench::measure("simulation/hash", std::format("cells={}", cells), 12,
                                              2, [&] { (void)lab->world.world.hash(); }),
                        cells, "cells"));
+
+        // Decomposed per table, which is what the "hash only what a tick wrote" idea needs in
+        // order to be answerable: if the tables a tick writes are the expensive ones, the idea
+        // saves nothing here, whatever it might save in some other workload.
+        for (const auto& info : lab->world.world.tables()) {
+            results.push_back(with_units(
+                atlas::bench::measure("simulation/hash/table",
+                                      std::format("{} cells={}", info.name, cells), 12, 2,
+                                      [&] { (void)lab->world.world.table_hash(info.id); }),
+                cells, "cells"));
+        }
     }
 
     // Deterministic runs: many ticks on a grid small enough that the tick loop, not the

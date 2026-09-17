@@ -13,6 +13,7 @@ add_executable(atlas_bench
     src/bench_math.cpp
     src/bench_allocations.cpp
     src/bench_assets.cpp
+    src/bench_hash.cpp
 )
 
 target_link_libraries(atlas_bench PRIVATE atlas::renderer atlas::platform atlas::simulation atlas::assets)
