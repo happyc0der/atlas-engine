@@ -315,6 +315,9 @@ class StreamLanes {
             ++flips;
         }
     }
+    if (flips == 0) {
+        return 0;
+    }
     return (changed * 1000) / flips;
 }
 
@@ -332,11 +335,13 @@ void verify(std::span<const std::byte> bytes) {
         std::uint64_t (*hash)(std::span<const std::byte>);
     };
 
-    const auto blocked_64k = [](std::span<const std::byte> in) { return blocked(in, 64 * 1024); };
-    const auto blocked_64k_mixed = [](std::span<const std::byte> in) {
-        return blocked_mixed(in, 64 * 1024);
+    const auto blocked_64k = [](std::span<const std::byte> in) {
+        return blocked(in, std::size_t{64} * 1024);
     };
-    const Candidate candidates[] = {
+    const auto blocked_64k_mixed = [](std::span<const std::byte> in) {
+        return blocked_mixed(in, std::size_t{64} * 1024);
+    };
+    const std::array<Candidate, 7> candidates{{
         {"fnv1a", fnv1a},
         {"fnv_words", fnv_words},
         {"lanes4", lanes4},
@@ -344,7 +349,7 @@ void verify(std::span<const std::byte> bytes) {
         {"fnv_words_mixed", fnv_words_mixed},
         {"lanes4_mixed", lanes4_mixed},
         {"blocked_mixed", +blocked_64k_mixed},
-    };
+    }};
 
     std::vector<std::byte> copy(bytes.begin(), bytes.end());
     for (const Candidate& candidate : candidates) {
@@ -415,10 +420,10 @@ void verify(std::span<const std::byte> bytes) {
 
     // The threaded version must agree with the sequential one it parallelises, or the
     // comparison below is between two different functions.
-    const std::span<const std::byte> sample = bytes.subspan(0, 1024 * 1024);
-    const std::uint64_t sequential = blocked(sample, 64 * 1024);
+    const std::span<const std::byte> sample = bytes.subspan(0, std::size_t{1024} * 1024);
+    const std::uint64_t sequential = blocked(sample, std::size_t{64} * 1024);
     for (const unsigned threads : {1U, 2U, 3U, 8U}) {
-        if (blocked_threads(sample, 64 * 1024, threads) != sequential) {
+        if (blocked_threads(sample, std::size_t{64} * 1024, threads) != sequential) {
             die(std::format("blocked_threads disagrees with blocked at {} threads", threads));
         }
     }
@@ -483,8 +488,9 @@ std::vector<Result> run() {
         "hash/stream_words", std::format("{} spans=4", parameters), 50, 5, [&] {
             StreamHash hash;
             hash.add(bytes.subspan(0, 8));
-            hash.add(bytes.subspan(8, 4 * 1024 * 1024));
-            hash.add(bytes.subspan(8 + (4 * 1024 * 1024), 4 * 1024 * 1024));
+            hash.add(bytes.subspan(8, std::size_t{4} * 1024 * 1024));
+            hash.add(
+                bytes.subspan(8 + (std::size_t{4} * 1024 * 1024), std::size_t{4} * 1024 * 1024));
             hash.add(bytes.subspan(8 + (8 * 1024 * 1024)));
             sink = hash.value();
         })));
@@ -520,25 +526,27 @@ std::vector<Result> run() {
         }
         results.push_back(with_bytes(atlas::bench::measure(
             "hash/blocked_threads", std::format("{} threads={}", parameters, threads), 30, 5,
-            [&] { sink = blocked_threads(bytes, 256 * 1024, threads); })));
+            [&] { sink = blocked_threads(bytes, std::size_t{256} * 1024, threads); })));
     }
     // Quality, on the same footing as speed. One kibibyte, every bit flipped in turn.
     std::vector<std::byte> scratch(buffer.begin(), buffer.begin() + 1024);
     const auto blocked_64k_mixed = [](std::span<const std::byte> in) {
-        return blocked_mixed(in, 64 * 1024);
+        return blocked_mixed(in, std::size_t{64} * 1024);
     };
 
-    const struct {
+    struct Quality {
         const char* name;
         std::uint64_t (*hash)(std::span<const std::byte>);
-    } quality[] = {
+    };
+
+    const std::array<Quality, 6> quality{{
         {"fnv1a", fnv1a},
         {"fnv_words", fnv_words},
         {"lanes4", lanes4},
         {"fnv_words_mixed", fnv_words_mixed},
         {"lanes4_mixed", lanes4_mixed},
         {"blocked_mixed", +blocked_64k_mixed},
-    };
+    }};
 
     for (const auto& candidate : quality) {
         Result result = atlas::bench::measure_reported(

@@ -111,7 +111,7 @@ TEST_CASE("keys that would collide under a naive mix do not", "[sim][rng]") {
 TEST_CASE("a zero key still produces varied output", "[sim][rng]") {
     // A weak mixer returns zero for an all-zero key, and seed zero at tick zero is exactly
     // what a default-constructed simulation would use.
-    auto stream = RngStreams{0, 0}.stream("");
+    const auto stream = RngStreams{0, 0}.stream("");
     const auto values = draw(stream, 8);
     for (const std::uint64_t value : values) {
         CHECK(value != 0);

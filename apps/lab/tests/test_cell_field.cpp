@@ -15,7 +15,7 @@ TEST_CASE("a map-mode switch reads a different band and rebuilds no geometry", "
     if (!harness) {
         SKIP("no graphics device available");
     }
-    auto lab =
+    const auto lab =
         atlas::lab::generate({.width = 16, .height = 16, .chunk_size = 4, .seed = 3}).value();
     auto field = CellField::create(harness->device, {}).value();
     field.resize(128, 128);
@@ -45,7 +45,7 @@ TEST_CASE("a map-mode switch reads a different band and rebuilds no geometry", "
             pass.end();
         }
         REQUIRE(harness->device.end_frame(std::move(frame)).has_value());
-        auto ticket =
+        const auto ticket =
             harness->device.request_readback(target, {.extent = {.width = 128, .height = 128}})
                 .value();
         REQUIRE(harness->device.wait_idle().has_value());
@@ -65,7 +65,7 @@ TEST_CASE("culling keeps only the chunks the camera can see", "[lab][gpu]") {
     if (!harness) {
         SKIP("no graphics device available");
     }
-    auto lab =
+    const auto lab =
         atlas::lab::generate({.width = 64, .height = 64, .chunk_size = 8, .seed = 3}).value();
     auto field = CellField::create(harness->device, {}).value();
     field.resize(128, 128);

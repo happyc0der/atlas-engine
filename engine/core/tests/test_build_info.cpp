@@ -39,6 +39,6 @@ TEST_CASE("profiling state is reported honestly", "[core][build_info]") {
 
 TEST_CASE("the summary mentions the version and the build type", "[core][build_info]") {
     const std::string_view summary = info::summary();
-    CHECK(summary.find("0.0.1") != std::string_view::npos);
-    CHECK(summary.find(info::build_type()) != std::string_view::npos);
+    CHECK(summary.contains("0.0.1"));
+    CHECK(summary.contains(info::build_type()));
 }

@@ -9,9 +9,7 @@
 
 using atlas::platform::Event;
 using atlas::platform::Platform;
-using atlas::platform::PlatformConfig;
 using atlas::platform::Window;
-using atlas::platform::WindowDesc;
 
 // These tests use SDL's "dummy" video driver: a real window and a real event pipeline with
 // no display behind them. That is what lets window creation, resizing and destruction be

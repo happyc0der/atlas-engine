@@ -37,6 +37,9 @@ using Status = Result<void>;
 
 /// Build a failed Result<T> without naming the type twice.
 template <typename T = void, typename... Args> [[nodiscard]] Result<T> fail(Args&&... args) {
+    // A string literal argument decays to a pointer here, which is how it reaches Error's
+    // std::string parameter. That is the intended use of a forwarding helper, not a defect.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
     return std::unexpected(Error(std::forward<Args>(args)...));
 }
 

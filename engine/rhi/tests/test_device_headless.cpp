@@ -22,7 +22,7 @@ using atlas::rhi::Device;
 // situation that cannot arise in a real application.
 
 TEST_CASE("a device cannot be created for an invalid window", "[rhi][device][display]") {
-    auto platform = Platform::create({.video = false});
+    const auto platform = Platform::create({.video = false});
     REQUIRE(platform.has_value());
 
     const Window window;  // default-constructed: owns nothing
@@ -30,7 +30,7 @@ TEST_CASE("a device cannot be created for an invalid window", "[rhi][device][dis
 
     REQUIRE_FALSE(device.has_value());
     CHECK(device.error().code() == ErrorCode::InvalidArgument);
-    CHECK(device.error().message().find("window") != std::string::npos);
+    CHECK(device.error().message().contains("window"));
 }
 
 TEST_CASE("device creation under the dummy driver fails with an actionable error",
@@ -62,11 +62,11 @@ TEST_CASE("device creation under the dummy driver fails with an actionable error
 TEST_CASE("a default-constructed device is inert", "[rhi][device][display]") {
     // A Device that was never created, or was moved from, must answer every query rather
     // than dereference nothing. This is the state a moved-from device is left in.
-    auto platform = Platform::create({.video = false});
+    const auto platform = Platform::create({.video = false});
     REQUIRE(platform.has_value());
 
     const Window window;
-    auto device = Device::create({}, window);
+    const auto device = Device::create({}, window);
     REQUIRE_FALSE(device.has_value());
 
     // And a failed creation leaves no device behind to clean up, which is what makes the

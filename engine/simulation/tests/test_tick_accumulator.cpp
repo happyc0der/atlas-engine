@@ -23,7 +23,7 @@ constexpr std::uint64_t kFrame60Hz = 16'666'667;
 [[nodiscard]] TickAccumulator make(TickAccumulatorConfig config = {}) {
     auto accumulator = TickAccumulator::create(config);
     REQUIRE(accumulator.has_value());
-    return std::move(*accumulator);
+    return *accumulator;
 }
 
 /// Run a sequence of frame durations and return the total ticks planned.
@@ -314,15 +314,15 @@ TEST_CASE("total ticks match the closed form whenever the clamp never engages",
     constexpr std::uint32_t kRate = 100;
     auto accumulator = make({.ticks_per_second = kRate, .max_ticks_per_frame = 1'000'000});
 
-    auto seed = GENERATE(take(50, random(1U, 1'000'000U)));
+    const auto seed = GENERATE(take(50, random(1U, 1'000'000U)));
 
     std::vector<std::uint64_t> frames;
     frames.reserve(200);
     std::uint64_t state = seed;
     for (int i = 0; i < 200; ++i) {
         // A small deterministic generator: the point is a varied sequence, reproducibly.
-        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
-        frames.push_back(1'000'000 + (state >> 40) % 9'000'000);  // 1 ms to 10 ms
+        state = (state * 6364136223846793005ULL) + 1442695040888963407ULL;
+        frames.push_back(1'000'000 + ((state >> 40) % 9'000'000));  // 1 ms to 10 ms
     }
 
     const std::uint64_t elapsed = std::accumulate(frames.begin(), frames.end(), std::uint64_t{0});

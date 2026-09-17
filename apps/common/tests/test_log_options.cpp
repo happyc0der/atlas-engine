@@ -21,5 +21,5 @@ TEST_CASE("an unknown level is refused and the message lists the valid ones", "[
     const auto result = parse_severity("shouty");
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error().code() == ErrorCode::InvalidArgument);
-    CHECK(result.error().to_string().find("trace") != std::string::npos);
+    CHECK(result.error().to_string().contains("trace"));
 }

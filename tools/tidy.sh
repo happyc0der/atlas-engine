@@ -62,35 +62,84 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     fi
 fi
 
-FILES=()
+# Two passes over two sets of files.
+#
+# Production sources take the repository's configuration. Tests and benchmarks take
+# tools/clang-tidy-tests.yml, which inherits it and then disables the handful of checks that a
+# testing framework makes meaningless; the reasons are in that file. They were analysed by
+# nothing at all until M8, which is how several hundred findings accumulated unseen in code
+# that is as much a part of the project as the rest of it.
+PRODUCTION_FILES=()
 while IFS= read -r file; do
-    [[ -n "${file}" ]] && FILES+=("${file}")
+    [[ -n "${file}" ]] && PRODUCTION_FILES+=("${file}")
 done < <(
     find "${REPO_ROOT}/engine" "${REPO_ROOT}/apps" \
          -type f \( -name '*.cpp' \) \
          -not -path '*/tests/*' 2>/dev/null | sort
 )
 
-if [[ ${#FILES[@]} -eq 0 ]]; then
+TEST_FILES=()
+while IFS= read -r file; do
+    [[ -n "${file}" ]] && TEST_FILES+=("${file}")
+done < <(
+    {
+        find "${REPO_ROOT}/engine" "${REPO_ROOT}/apps" \
+             -type f \( -name '*.cpp' \) \
+             -path '*/tests/*' 2>/dev/null
+        find "${REPO_ROOT}/benchmarks" -type f \( -name '*.cpp' \) 2>/dev/null
+    } | sort
+)
+
+if [[ ${#PRODUCTION_FILES[@]} -eq 0 && ${#TEST_FILES[@]} -eq 0 ]]; then
     echo "no source files to analyse"
     exit 0
 fi
 
 echo "clang-tidy: $("${CLANG_TIDY_BIN}" --version | head -2 | tail -1)"
-echo "analysing ${#FILES[@]} file(s) from preset '${PRESET}'"
+echo "analysing ${#PRODUCTION_FILES[@]} production and ${#TEST_FILES[@]} test file(s) from preset '${PRESET}'"
 
-if [[ -n "${RUN_CLANG_TIDY_BIN}" ]]; then
-    # run-clang-tidy parallelises; -quiet suppresses the per-file banner.
-    "${RUN_CLANG_TIDY_BIN}" \
-        -p "${BUILD_DIR}" \
-        -clang-tidy-binary "${CLANG_TIDY_BIN}" \
-        -quiet \
-        "${RUN_EXTRA_ARGS[@]}" \
-        "${FILES[@]}"
-else
-    for file in "${FILES[@]}"; do
-        "${CLANG_TIDY_BIN}" -p "${BUILD_DIR}" "${TIDY_EXTRA_ARGS[@]}" "${file}"
-    done
-fi
+# analyse <config-file-or-empty> <file>...
+analyse() {
+    local config="$1"
+    shift
+    [[ $# -eq 0 ]] && return 0
+
+    local config_args=()
+    if [[ -n "${config}" ]]; then
+        config_args+=("-config-file=${config}")
+        # Diagnostics whose location is inside a header nobody here can edit. Replacing the
+        # global allocation functions makes the standard library's own declarations disagree
+        # with ours about parameter names, and the header-only image writer the asset
+        # benchmark calls has analyser findings of its own. Passed on the command line
+        # because the equivalent configuration-file key is not honoured by every version.
+        config_args+=("-exclude-header-filter=(vcpkg_installed|/usr/include/|/Library/Developer/|stb_)")
+    fi
+
+    # ${a[@]+"${a[@]}"} rather than "${a[@]}": under `set -u` the macOS system bash, which is
+    # still 3.2, treats expanding an empty array as an unbound variable where bash 5 on the
+    # continuous-integration image does not. The production pass has always had a non-empty
+    # extra-argument array on macOS, so this only became visible when a pass without one
+    # arrived.
+    if [[ -n "${RUN_CLANG_TIDY_BIN}" ]]; then
+        # run-clang-tidy parallelises; -quiet suppresses the per-file banner.
+        "${RUN_CLANG_TIDY_BIN}" \
+            -p "${BUILD_DIR}" \
+            -clang-tidy-binary "${CLANG_TIDY_BIN}" \
+            -quiet \
+            ${config_args[@]+"${config_args[@]}"} \
+            ${RUN_EXTRA_ARGS[@]+"${RUN_EXTRA_ARGS[@]}"} \
+            "$@"
+    else
+        local file
+        for file in "$@"; do
+            "${CLANG_TIDY_BIN}" -p "${BUILD_DIR}" \
+                ${config_args[@]+"${config_args[@]}"} \
+                ${TIDY_EXTRA_ARGS[@]+"${TIDY_EXTRA_ARGS[@]}"} "${file}"
+        done
+    fi
+}
+
+analyse "" "${PRODUCTION_FILES[@]}"
+analyse "${REPO_ROOT}/tools/clang-tidy-tests.yml" "${TEST_FILES[@]}"
 
 echo "clang-tidy clean"

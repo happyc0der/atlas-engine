@@ -20,19 +20,19 @@ using atlas::lab::testing::make_gpu_harness;
 namespace {
 
 struct Picker {
-    atlas::rhi::Device& device;
-    CellField& field;
-    CellIdPass& pass;
+    atlas::rhi::Device* device;
+    CellField* field;
+    CellIdPass* pass;
     std::vector<std::uint32_t> chunks;
 
     [[nodiscard]] std::optional<std::uint32_t> pick(std::uint32_t x, std::uint32_t y) {
-        auto frame = device.begin_frame().value();
-        field.cull(chunks);
-        REQUIRE(pass.render(frame, field, chunks).has_value());
-        REQUIRE(device.end_frame(std::move(frame)).has_value());
-        auto ticket = pass.request_pixel(x, y).value();
-        REQUIRE(device.wait_idle().has_value());
-        return CellIdPass::decode(device.take_readback(ticket).value());
+        auto frame = device->begin_frame().value();
+        field->cull(chunks);
+        REQUIRE(pass->render(frame, *field, chunks).has_value());
+        REQUIRE(device->end_frame(std::move(frame)).has_value());
+        const auto ticket = pass->request_pixel(x, y).value();
+        REQUIRE(device->wait_idle().has_value());
+        return CellIdPass::decode(device->take_readback(ticket).value());
     }
 };
 
@@ -45,14 +45,14 @@ TEST_CASE("the identifier pass agrees with the analytic inverse", "[lab][gpu][pi
     }
     // 16x16 cells in chunks of 4, fitted into 128 pixels: about 7.6 pixels per cell, so
     // sub-cell precision is being tested, not just "somewhere in the grid".
-    auto lab =
+    const auto lab =
         atlas::lab::generate({.width = 16, .height = 16, .chunk_size = 4, .seed = 1}).value();
     auto field = CellField::create(harness->device, {}).value();
     field.resize(128, 128);
     field.set_layout(lab.layout);
     auto pass = CellIdPass::create(harness->device, {}).value();
     REQUIRE(pass.resize(128, 128).has_value());
-    Picker picker{harness->device, field, pass, {}};
+    Picker picker{&harness->device, &field, &pass, {}};
 
     std::size_t checked = 0;
     std::size_t inside = 0;
@@ -78,7 +78,7 @@ TEST_CASE("the identifier pass crosses chunk boundaries correctly", "[lab][gpu][
     if (!harness) {
         SKIP("no graphics device available");
     }
-    auto lab =
+    const auto lab =
         atlas::lab::generate({.width = 16, .height = 16, .chunk_size = 4, .seed = 1}).value();
     auto field = CellField::create(harness->device, {}).value();
     field.resize(128, 128);
@@ -89,7 +89,7 @@ TEST_CASE("the identifier pass crosses chunk boundaries correctly", "[lab][gpu][
     field.camera().set_zoom(4.0F);
     auto pass = CellIdPass::create(harness->device, {}).value();
     REQUIRE(pass.resize(128, 128).has_value());
-    Picker picker{harness->device, field, pass, {}};
+    Picker picker{&harness->device, &field, &pass, {}};
 
     // Centre at world (0,0) puts the grid's corner in the middle of the window: the top-left
     // quadrant is outside the grid, and cells begin at pixel 64.

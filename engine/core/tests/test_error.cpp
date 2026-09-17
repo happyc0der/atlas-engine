@@ -39,8 +39,7 @@ TEST_CASE("an error carries code, message, and source location", "[core][error]"
     CHECK(error.message() == "no such thing");
     CHECK(error.native_code() == 0);
     // The location is where the Error was constructed, which is this file.
-    CHECK(std::string_view{error.where().file_name()}.find("test_error.cpp") !=
-          std::string_view::npos);
+    CHECK(std::string_view{error.where().file_name()}.contains("test_error.cpp"));
 }
 
 TEST_CASE("an error constructed from a code alone uses the code name as its message",

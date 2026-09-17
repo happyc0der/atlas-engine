@@ -13,7 +13,6 @@
 
 using atlas::math::Mat4;
 using atlas::math::Rect;
-using atlas::math::Vec2;
 using atlas::platform::Platform;
 using atlas::platform::Window;
 using atlas::renderer::Quad;

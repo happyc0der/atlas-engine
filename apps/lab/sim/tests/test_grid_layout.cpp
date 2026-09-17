@@ -11,7 +11,7 @@ TEST_CASE("a layout must be a whole number of chunks", "[lab][layout]") {
     const auto odd = GridLayout::create(10, 8, 4);
     REQUIRE_FALSE(odd.has_value());
     CHECK(odd.error().code() == ErrorCode::InvalidArgument);
-    CHECK(odd.error().to_string().find("10x8") != std::string::npos);
+    CHECK(odd.error().to_string().contains("10x8"));
 
     CHECK_FALSE(GridLayout::create(0, 8, 4).has_value());
     CHECK_FALSE(GridLayout::create(8, 8, 0).has_value());

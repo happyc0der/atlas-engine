@@ -69,7 +69,7 @@ TEST_CASE("a truncated save is refused and the world is unchanged", "[lab][save]
 
 TEST_CASE("a save whose grid row disagrees with its tables is caught after load", "[lab][save]") {
     LabHarness source(kSmall);
-    auto kernel = source.kernel(5);
+    const auto kernel = source.kernel(5);
     // Still a valid layout on its own, so the grid row's own check passes; only the
     // cross-table check can see that the cells table does not match it.
     atlas::lab::grid_table(source.lab.world, source.lab.ids).width = 32;
@@ -80,5 +80,5 @@ TEST_CASE("a save whose grid row disagrees with its tables is caught after load"
     REQUIRE(atlas::sim::load(target.lab.world, target_kernel, target.commands, bytes).has_value());
     const auto validated = atlas::lab::validate_world(target.lab.world, target.lab.ids);
     REQUIRE_FALSE(validated.has_value());
-    CHECK(validated.error().to_string().find("cells") != std::string::npos);
+    CHECK(validated.error().to_string().contains("cells"));
 }

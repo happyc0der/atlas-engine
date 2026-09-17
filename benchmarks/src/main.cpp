@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+// NOLINTNEXTLINE(misc-const-correctness): main's signature is fixed by the standard.
 int main(int argc, char** argv) {
     try {
         auto args = atlas::Args::parse(argc, argv);

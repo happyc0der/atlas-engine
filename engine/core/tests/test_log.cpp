@@ -38,6 +38,8 @@ class LogFixture {
 
     LogFixture(const LogFixture&) = delete;
     LogFixture& operator=(const LogFixture&) = delete;
+    LogFixture(LogFixture&&) = delete;
+    LogFixture& operator=(LogFixture&&) = delete;
 
     [[nodiscard]] std::vector<alog::LogBuffer::Entry> entries() const {
         return m_buffer->entries();
@@ -112,7 +114,7 @@ TEST_CASE("a disabled log call does not evaluate its arguments", "[core][log]") 
     alog::set_min_severity(alog::Severity::Error);
 
     int side_effects = 0;
-    const auto counted = [&side_effects]() -> int {
+    const auto counted = [&side_effects] -> int {
         ++side_effects;
         return 1;
     };
@@ -147,7 +149,7 @@ TEST_CASE("logging is safe from several threads at once", "[core][log]") {
     std::vector<std::jthread> threads;
     threads.reserve(kThreads);
     for (int t = 0; t < kThreads; ++t) {
-        threads.emplace_back([t]() {
+        threads.emplace_back([t] {
             for (int i = 0; i < kPerThread; ++i) {
                 ATLAS_LOG(kTest, alog::Severity::Info, "thread {} record {}", t, i);
             }
@@ -156,7 +158,7 @@ TEST_CASE("logging is safe from several threads at once", "[core][log]") {
     threads.clear();  // joins
 
     // Ordering across threads is not defined, but nothing may be lost or corrupted.
-    CHECK(fixture.size() == kThreads * kPerThread);
+    CHECK(fixture.size() == std::size_t{kThreads} * kPerThread);
 }
 
 TEST_CASE("removing a sink stops delivery to it", "[core][log]") {

@@ -9,9 +9,7 @@
 
 using atlas::ErrorCode;
 using atlas::lab::AdjacencyTable;
-using atlas::lab::GridLayout;
 using atlas::lab::GridTable;
-using atlas::lab::TableIds;
 using atlas::sim::SaveReader;
 using atlas::sim::SaveWriter;
 
@@ -20,7 +18,7 @@ namespace {
 void expect_refused(const atlas::Status& status, const char* fragment) {
     REQUIRE_FALSE(status.has_value());
     CHECK(status.error().code() == ErrorCode::MalformedData);
-    CHECK(status.error().to_string().find(fragment) != std::string::npos);
+    CHECK(status.error().to_string().contains(fragment));
 }
 
 }  // namespace
@@ -100,7 +98,7 @@ TEST_CASE("validate_world catches a grid row that disagrees with its tables", "[
     const auto mismatch = atlas::lab::validate_world(lab.world, lab.ids);
     REQUIRE_FALSE(mismatch.has_value());
     CHECK(mismatch.error().code() == ErrorCode::MalformedData);
-    CHECK(mismatch.error().to_string().find("cells") != std::string::npos);
+    CHECK(mismatch.error().to_string().contains("cells"));
 }
 
 TEST_CASE("cells read from a save must respect the owner and colour ranges", "[lab][tables]") {

@@ -24,7 +24,6 @@ using atlas::rhi::LoadOp;
 using atlas::rhi::Rect2D;
 using atlas::rhi::TextureFormat;
 using atlas::rhi::TextureHandle;
-using atlas::rhi::TextureUsage;
 
 namespace {
 
@@ -154,7 +153,7 @@ TEST_CASE("an offscreen pass clears its target and reads back", "[rhi][target][g
         read_now(harness->device, *texture, Rect2D{.x = 0, .y = 0, .extent = {32, 32}});
     REQUIRE(pixels.has_value());
     CHECK(pixels->format == TextureFormat::Rgba8Unorm);
-    REQUIRE(pixels->pixels.size() == 32 * 32 * 4);
+    REQUIRE(pixels->pixels.size() == std::size_t{32} * 32 * 4);
 
     // Channel order matters: a swapped red and blue would still be "a colour".
     const auto at = [&](std::size_t i) { return std::to_integer<int>(pixels->pixels[i]); };
@@ -233,12 +232,12 @@ TEST_CASE("an integer target clears to exactly zero", "[rhi][target][gpu]") {
         read_now(harness->device, *texture, Rect2D{.x = 0, .y = 0, .extent = {16, 16}});
     REQUIRE(pixels.has_value());
     CHECK(pixels->format == TextureFormat::R32Uint);
-    REQUIRE(pixels->pixels.size() == 16 * 16 * 4);
+    REQUIRE(pixels->pixels.size() == std::size_t{16} * 16 * 4);
 
     // Every pixel, not just the first: a clear that only took on part of the target would
     // be worse than one that did not work at all.
-    for (std::size_t i = 0; i < pixels->pixels.size(); ++i) {
-        REQUIRE(std::to_integer<int>(pixels->pixels[i]) == 0);
+    for (const std::byte pixel : pixels->pixels) {
+        REQUIRE(std::to_integer<int>(pixel) == 0);
     }
 
     harness->device.destroy_texture(*texture);

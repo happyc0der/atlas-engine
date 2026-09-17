@@ -30,7 +30,7 @@ using atlas::math::Vec4;
         auto result = measure("camera/view_projection", "1 camera", 20000, 2000, [&] {
             offset += 0.01F;
             camera.set_centre(Vec2{offset, offset});
-            volatile float sink = camera.view_projection().at(0, 0);
+            const volatile float sink = camera.view_projection().at(0, 0);
             (void)sink;
         });
         result.units_per_iteration = 1;
@@ -56,7 +56,7 @@ using atlas::math::Vec4;
             for (const auto& point : points) {
                 accumulator += (projection * point).x;
             }
-            volatile float sink = accumulator;
+            const volatile float sink = accumulator;
             (void)sink;
         });
         result.units_per_iteration = kPoints;

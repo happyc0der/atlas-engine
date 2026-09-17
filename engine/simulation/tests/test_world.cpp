@@ -177,7 +177,7 @@ TEST_CASE("a table hashes on its own for attribution", "[sim][world]") {
 }
 
 TEST_CASE("hashing an unknown table is an error", "[sim][world]") {
-    Fixture f;
+    const Fixture f;
     const auto hashed = f.world.table_hash(table_id("absent"));
     REQUIRE_FALSE(hashed.has_value());
     CHECK(hashed.error().code() == ErrorCode::NotFound);
@@ -195,7 +195,7 @@ TEST_CASE("clearing empties the tables but keeps them registered", "[sim][world]
 }
 
 TEST_CASE("table information reports names and row counts", "[sim][world]") {
-    Fixture f;
+    const Fixture f;
     const auto tables = f.world.tables();
     REQUIRE(tables.size() == 2);
 

@@ -7,7 +7,6 @@
 #include <utility>
 #include <vector>
 
-using atlas::ErrorCode;
 using atlas::Handle;
 using atlas::HandlePool;
 
@@ -72,7 +71,7 @@ TEST_CASE("a destroyed handle stops resolving", "[core][handle]") {
     // here would still look usable.
     CHECK(pool.get(*handle) == nullptr);
     CHECK_FALSE(pool.contains(*handle));
-    CHECK(pool.size() == 0);
+    CHECK(pool.empty());
 }
 
 TEST_CASE("destroying twice is safe and reported", "[core][handle]") {
@@ -136,7 +135,7 @@ TEST_CASE("slots are reused rather than growing without bound", "[core][handle]"
     // One slot, reused a hundred times. A pool that grew here would leak indices in any
     // workload that creates and destroys resources every frame.
     CHECK(pool.slot_count() == 1);
-    CHECK(pool.size() == 0);
+    CHECK(pool.empty());
 }
 
 TEST_CASE("many live values coexist", "[core][handle]") {
@@ -159,6 +158,7 @@ TEST_CASE("many live values coexist", "[core][handle]") {
 TEST_CASE("destroying some values leaves the rest resolvable", "[core][handle]") {
     TestPool pool;
     std::vector<TestHandle> handles;
+    handles.reserve(10);
     for (int i = 0; i < 10; ++i) {
         handles.push_back(*pool.insert(std::to_string(i)));
     }
@@ -229,7 +229,7 @@ TEST_CASE("clear destroys everything and invalidates every handle", "[core][hand
 
     pool.clear();
 
-    CHECK(pool.size() == 0);
+    CHECK(pool.empty());
     CHECK(pool.get(*first) == nullptr);
     CHECK(pool.get(*second) == nullptr);
 

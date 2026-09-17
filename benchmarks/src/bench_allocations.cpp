@@ -34,6 +34,8 @@ namespace atlas::bench {
 ///
 /// Namespace-scope and atomic because the replaced operators are global and may be called
 /// from any thread. Relaxed ordering: these are counters, not synchronisation.
+namespace {
+
 struct AllocationCounters {
     std::atomic<std::uint64_t> allocations{0};
     std::atomic<std::uint64_t> bytes{0};
@@ -44,6 +46,8 @@ AllocationCounters& allocation_counters() {
     static AllocationCounters instance;
     return instance;
 }
+
+}  // namespace
 
 }  // namespace atlas::bench
 
@@ -66,7 +70,7 @@ void operator delete(void* memory) noexcept {
     std::free(memory);
 }
 
-void operator delete(void* memory, std::size_t) noexcept {
+void operator delete(void* memory, std::size_t /*size*/) noexcept {
     std::free(memory);
 }
 
@@ -78,7 +82,7 @@ void operator delete[](void* memory) noexcept {
     std::free(memory);
 }
 
-void operator delete[](void* memory, std::size_t) noexcept {
+void operator delete[](void* memory, std::size_t /*size*/) noexcept {
     std::free(memory);
 }
 
@@ -89,7 +93,6 @@ using atlas::bench::Result;
 using atlas::math::Mat4;
 using atlas::math::Rect;
 using atlas::platform::Platform;
-using atlas::platform::Window;
 using atlas::renderer::Quad;
 using atlas::renderer::QuadBatch;
 using atlas::rhi::Device;
@@ -118,7 +121,8 @@ struct Counted {
     quads.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
         const auto x = static_cast<float>(i % 1000) * 4.0F;
-        const auto y = static_cast<float>(i / 1000) * 4.0F;
+        const std::size_t row = i / 1000;  // deliberately integral: it is a row index
+        const auto y = static_cast<float>(row) * 4.0F;
         quads.push_back(Quad{.bounds = Rect{.position = {x, y}, .size = {3.0F, 3.0F}}});
     }
     return quads;

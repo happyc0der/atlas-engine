@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -24,6 +25,13 @@ using atlas::assets::VirtualPath;
 
 namespace {
 
+/// A unique name per fixture, without casting `this` to an integer. The address would work and
+/// says the wrong thing: what is wanted is distinctness, not identity.
+[[nodiscard]] std::uint64_t next_scratch_id() {
+    static std::atomic<std::uint64_t> counter{0};
+    return counter.fetch_add(1, std::memory_order_relaxed);
+}
+
 /// Establish this thread as the main one.
 ///
 /// In an application the platform does this when it starts. These tests use the registry
@@ -40,7 +48,7 @@ class TempTree {
     TempTree() {
         std::error_code error;
         m_root = std::filesystem::temp_directory_path(error) /
-                 std::format("atlas-registry-{}", reinterpret_cast<std::uintptr_t>(this));
+                 std::format("atlas-registry-{}", next_scratch_id());
         std::filesystem::create_directories(m_root, error);
     }
 
@@ -174,7 +182,7 @@ TEST_CASE("a texture loads asynchronously and reaches Decoded", "[assets][regist
     REQUIRE(pixels.has_value());
     CHECK(pixels->width == 2);
     CHECK(pixels->height == 2);
-    CHECK(pixels->pixels.size() == 2 * 2 * 4);
+    CHECK(pixels->pixels.size() == std::size_t{2} * 2 * 4);
 
     // The first pixel is red, so the decode produced content rather than a blank of the
     // right size, and the channels are in the order the engine expects.
@@ -230,7 +238,7 @@ TEST_CASE("a missing file fails with a reason rather than stopping", "[assets][r
     const auto info = registry->info(*id);
     REQUIRE(info.has_value());
     CHECK_FALSE(info->error.empty());
-    CHECK(info->error.find("nowhere.png") != std::string::npos);
+    CHECK(info->error.contains("nowhere.png"));
     CHECK(registry->stats().failed == 1);
 }
 
@@ -440,7 +448,6 @@ TEST_CASE("a registry with work still in flight shuts down cleanly", "[assets][r
 namespace {
 
 using atlas::assets::ArtifactCache;
-using atlas::assets::kTextureImporterVersion;
 
 /// Load one texture through a registry backed by `cache_dir`, and return its stats.
 [[nodiscard]] atlas::assets::RegistryStats load_once(const TempTree& tree,

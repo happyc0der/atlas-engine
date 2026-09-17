@@ -52,7 +52,8 @@ TEST_CASE("chunk population totals are sums over the chunk's contiguous range", 
 }
 
 TEST_CASE("fill_snapshot reuses storage", "[lab][snapshot]") {
-    auto lab = atlas::lab::generate({.width = 8, .height = 4, .chunk_size = 4, .seed = 9}).value();
+    const auto lab =
+        atlas::lab::generate({.width = 8, .height = 4, .chunk_size = 4, .seed = 9}).value();
     CellSnapshot snapshot;
     atlas::lab::fill_snapshot(snapshot, lab.world, lab.ids, lab.layout, {});
     const auto* data = snapshot.color_band.data();

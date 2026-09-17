@@ -102,7 +102,8 @@ struct Harness {
     quads.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
         const auto x = static_cast<float>(i % 1000) * 4.0F;
-        const auto y = static_cast<float>(i / 1000) * 4.0F;
+        const std::size_t row = i / 1000;  // deliberately integral: it is a row index
+        const auto y = static_cast<float>(row) * 4.0F;
         quads.push_back(Quad{.bounds = Rect{.position = {x, y}, .size = {3.0F, 3.0F}}});
     }
     return quads;

@@ -125,7 +125,7 @@ TEST_CASE("a missing required option is an error naming the option", "[core][arg
     const auto value = args->value("scene");
     REQUIRE_FALSE(value.has_value());
     CHECK(value.error().code() == ErrorCode::NotFound);
-    CHECK(value.error().message().find("--scene") != std::string::npos);
+    CHECK(value.error().message().contains("--scene"));
 }
 
 TEST_CASE("asking for a value from a flag is an error", "[core][args]") {
@@ -157,7 +157,7 @@ TEST_CASE("an unqueried option is reported, so a typo is not silently ignored", 
     const auto status = args->reject_unknown();
     REQUIRE_FALSE(status.has_value());
     CHECK(status.error().code() == ErrorCode::InvalidArgument);
-    CHECK(status.error().message().find("--headles") != std::string::npos);
+    CHECK(status.error().message().contains("--headles"));
 }
 
 TEST_CASE("every option being queried leaves nothing unknown", "[core][args]") {

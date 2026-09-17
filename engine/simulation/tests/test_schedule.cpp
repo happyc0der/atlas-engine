@@ -60,7 +60,7 @@ TEST_CASE("a system identifier comes from its name", "[sim][schedule]") {
 }
 
 TEST_CASE("a system can be added and found", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {f.a}, {f.b})).has_value());
 
@@ -79,7 +79,7 @@ TEST_CASE("a nameless or empty system is refused", "[sim][schedule]") {
 }
 
 TEST_CASE("a duplicate system name is refused", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {}, {f.a})).has_value());
 
@@ -91,7 +91,7 @@ TEST_CASE("a duplicate system name is refused", "[sim][schedule]") {
 TEST_CASE("a system that reads and writes the same table is refused", "[sim][schedule]") {
     // Its own ordering would be ambiguous: compute sees the value from before its own
     // commit, which is almost never what the author meant and cannot be seen from outside.
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     const auto added = schedule.add(inert("one", {f.a, f.b}, {f.a}));
     REQUIRE_FALSE(added.has_value());
@@ -101,7 +101,7 @@ TEST_CASE("a system that reads and writes the same table is refused", "[sim][sch
 TEST_CASE("a committing system must declare its writes", "[sim][schedule]") {
     // Otherwise the conflict analysis believes it touches nothing and schedules it beside
     // anything at all.
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
 
     SystemDesc desc;
@@ -116,7 +116,7 @@ TEST_CASE("a committing system must declare its writes", "[sim][schedule]") {
 
 TEST_CASE("declaring a table the world does not have is refused", "[sim][schedule]") {
     // A misspelled table name would otherwise conflict with nothing.
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {}, {atlas::sim::table_id("typo")})).has_value());
 
@@ -127,7 +127,7 @@ TEST_CASE("declaring a table the world does not have is refused", "[sim][schedul
 }
 
 TEST_CASE("a schedule must be finalised before its batches exist", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {}, {f.a})).has_value());
     CHECK_FALSE(schedule.finalised());
@@ -139,7 +139,7 @@ TEST_CASE("a schedule must be finalised before its batches exist", "[sim][schedu
 }
 
 TEST_CASE("adding a system after finalising invalidates the batches", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {}, {f.a})).has_value());
     REQUIRE(schedule.finalise(f.world).has_value());
@@ -150,7 +150,7 @@ TEST_CASE("adding a system after finalising invalidates the batches", "[sim][sch
 }
 
 TEST_CASE("systems touching nothing in common share a batch", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {}, {f.a})).has_value());
     REQUIRE(schedule.add(inert("two", {}, {f.b})).has_value());
@@ -163,7 +163,7 @@ TEST_CASE("systems touching nothing in common share a batch", "[sim][schedule]")
 
 TEST_CASE("two readers of the same table share a batch", "[sim][schedule]") {
     // Nothing is being changed, so there is no conflict to separate them.
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {f.a}, {f.b})).has_value());
     REQUIRE(schedule.add(inert("two", {f.a}, {f.c})).has_value());
@@ -173,7 +173,7 @@ TEST_CASE("two readers of the same table share a batch", "[sim][schedule]") {
 }
 
 TEST_CASE("two writers of the same table are separated", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {}, {f.a})).has_value());
     REQUIRE(schedule.add(inert("two", {}, {f.a})).has_value());
@@ -185,7 +185,7 @@ TEST_CASE("two writers of the same table are separated", "[sim][schedule]") {
 }
 
 TEST_CASE("a reader and a writer of the same table are separated", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("writer", {}, {f.a})).has_value());
     REQUIRE(schedule.add(inert("reader", {f.a}, {f.b})).has_value());
@@ -196,7 +196,7 @@ TEST_CASE("a reader and a writer of the same table are separated", "[sim][schedu
 
 TEST_CASE("a writer and a reader in the other order are also separated", "[sim][schedule]") {
     // The conflict is symmetric, and a one-sided check would miss this direction.
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("reader", {f.a}, {f.b})).has_value());
     REQUIRE(schedule.add(inert("writer", {}, {f.a})).has_value());
@@ -208,7 +208,7 @@ TEST_CASE("a writer and a reader in the other order are also separated", "[sim][
 TEST_CASE("batches follow the declared order", "[sim][schedule]") {
     // Reproducibility, not packing quality. A cleverer grouping could produce fewer batches
     // and would have to stay stable against unrelated edits to be worth having.
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {}, {f.a})).has_value());
     REQUIRE(schedule.add(inert("two", {}, {f.a})).has_value());
@@ -223,7 +223,7 @@ TEST_CASE("batches follow the declared order", "[sim][schedule]") {
 }
 
 TEST_CASE("every system appears in exactly one batch", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {f.a}, {f.b})).has_value());
     REQUIRE(schedule.add(inert("two", {f.b}, {f.c})).has_value());
@@ -244,7 +244,7 @@ TEST_CASE("every system appears in exactly one batch", "[sim][schedule]") {
 TEST_CASE("no batch contains a conflicting pair", "[sim][schedule]") {
     // The property that matters for M8: everything inside a batch must be safe to run at the
     // same time. Checked directly rather than inferred from the batch count.
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {f.a}, {f.b})).has_value());
     REQUIRE(schedule.add(inert("two", {f.c}, {f.d})).has_value());
@@ -254,12 +254,8 @@ TEST_CASE("no batch contains a conflicting pair", "[sim][schedule]") {
 
     const auto systems = schedule.systems();
     const auto overlaps = [](std::span<const TableId> x, std::span<const TableId> y) {
-        for (const TableId id : x) {
-            if (std::ranges::find(y, id) != y.end()) {
-                return true;
-            }
-        }
-        return false;
+        return std::ranges::any_of(
+            x, [y](const TableId id) { return std::ranges::find(y, id) != y.end(); });
     };
 
     for (const auto& batch : schedule.batches()) {
@@ -277,7 +273,7 @@ TEST_CASE("no batch contains a conflicting pair", "[sim][schedule]") {
 }
 
 TEST_CASE("declarations are deduplicated", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.add(inert("one", {f.a, f.a, f.a}, {f.b, f.b})).has_value());
     REQUIRE(schedule.finalise(f.world).has_value());
@@ -288,7 +284,7 @@ TEST_CASE("declarations are deduplicated", "[sim][schedule]") {
 }
 
 TEST_CASE("an empty schedule finalises to no batches", "[sim][schedule]") {
-    Fixture f;
+    const Fixture f;
     Schedule schedule;
     REQUIRE(schedule.finalise(f.world).has_value());
     CHECK(schedule.finalised());

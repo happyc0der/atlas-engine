@@ -99,8 +99,11 @@ jobs:
       - name: Bootstrap vcpkg
         run: ./external/vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
+      # Benchmarks on, because clang-tidy now analyses them too and can only analyse what the
+      # compilation database describes. This step configures without building, which is all
+      # clang-tidy needs.
       - name: Configure
-        run: cmake --preset linux-clang-debug
+        run: cmake --preset linux-clang-debug -DATLAS_BUILD_BENCHMARKS=ON
 
       - name: Run clang-tidy
         env:

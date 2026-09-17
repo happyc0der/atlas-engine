@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -17,13 +18,20 @@ using atlas::assets::VirtualPath;
 
 namespace {
 
+/// A unique name per fixture, without casting `this` to an integer. The address would work and
+/// says the wrong thing: what is wanted is distinctness, not identity.
+[[nodiscard]] std::uint64_t next_scratch_id() {
+    static std::atomic<std::uint64_t> counter{0};
+    return counter.fetch_add(1, std::memory_order_relaxed);
+}
+
 /// A temporary directory tree that removes itself.
 class TempTree {
   public:
     TempTree() {
         std::error_code error;
         m_root = std::filesystem::temp_directory_path(error) /
-                 std::format("atlas-assets-{}", reinterpret_cast<std::uintptr_t>(this));
+                 std::format("atlas-assets-{}", next_scratch_id());
         std::filesystem::create_directories(m_root, error);
     }
 
@@ -77,7 +85,7 @@ TEST_CASE("nothing resolves before anything is mounted", "[assets][filesystem]")
     const auto resolved = filesystem.resolve(path_of("a.txt"));
 
     REQUIRE_FALSE(resolved.has_value());
-    CHECK(resolved.error().message().find("nothing is mounted") != std::string::npos);
+    CHECK(resolved.error().message().contains("nothing is mounted"));
 }
 
 TEST_CASE("a mounted file resolves and reads", "[assets][filesystem]") {
@@ -189,8 +197,8 @@ TEST_CASE("a missing file reports which roots were searched", "[assets][filesyst
     CHECK(resolved.error().code() == ErrorCode::AssetNotFound);
 
     // Naming the roots turns "not found" into something a reader can act on.
-    CHECK(resolved.error().message().find("base") != std::string::npos);
-    CHECK(resolved.error().message().find("mods") != std::string::npos);
+    CHECK(resolved.error().message().contains("base"));
+    CHECK(resolved.error().message().contains("mods"));
 }
 
 TEST_CASE("a symbolic link out of the mounted root is refused", "[assets][filesystem]") {

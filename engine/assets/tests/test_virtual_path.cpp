@@ -20,8 +20,9 @@ TEST_CASE("a simple path parses unchanged", "[assets][path]") {
 TEST_CASE("repeated and trailing separators are collapsed", "[assets][path]") {
     // Two paths that mean the same thing must normalise to the same text, or they would hash
     // to different identifiers and the same file would be loaded twice.
-    for (const auto text : {"textures//grass.png", "textures/grass.png/", "./textures/grass.png",
-                            "textures/./grass.png", "textures///grass.png//"}) {
+    for (const auto* const text :
+         {"textures//grass.png", "textures/grass.png/", "./textures/grass.png",
+          "textures/./grass.png", "textures///grass.png//"}) {
         INFO("input " << text);
         const auto path = VirtualPath::parse(text);
         REQUIRE(path.has_value());
@@ -40,7 +41,7 @@ TEST_CASE("upward traversal is refused", "[assets][path]") {
     // The whole reason this type exists. Resolving `..` correctly is possible; resolving it
     // subtly wrongly lets an asset pack read anything on the machine, so it is refused
     // outright and no legitimate asset path needs it.
-    for (const auto text :
+    for (const auto* const text :
          {"../secret", "textures/../../secret", "a/b/../../../etc/passwd", "..", "textures/.."}) {
         INFO("input " << text);
         const auto path = VirtualPath::parse(text);
@@ -50,7 +51,7 @@ TEST_CASE("upward traversal is refused", "[assets][path]") {
 }
 
 TEST_CASE("absolute paths are refused", "[assets][path]") {
-    for (const auto text : {"/etc/passwd", "/", "//server/share"}) {
+    for (const auto* const text : {"/etc/passwd", "/", "//server/share"}) {
         INFO("input " << text);
         const auto path = VirtualPath::parse(text);
         REQUIRE_FALSE(path.has_value());

@@ -7,8 +7,6 @@
 
 using atlas::ErrorCode;
 using atlas::platform::Platform;
-using atlas::platform::PlatformConfig;
-using atlas::platform::WindowDesc;
 
 TEST_CASE("a headless platform starts and stops cleanly", "[platform][lifetime]") {
     // No display is opened. This is the configuration continuous integration runs in, and
@@ -31,7 +29,7 @@ TEST_CASE("a headless platform refuses to create a window, and says why", "[plat
     // mystery somewhere else entirely.
     REQUIRE_FALSE(window.has_value());
     CHECK(window.error().code() == ErrorCode::DisplayUnavailable);
-    CHECK(window.error().message().find("video") != std::string::npos);
+    CHECK(window.error().message().contains("video"));
 }
 
 TEST_CASE("pumping a headless platform is safe and yields nothing", "[platform][lifetime]") {
@@ -59,7 +57,7 @@ TEST_CASE("a platform can be created and destroyed repeatedly", "[platform][life
     // SDL is a global library with reference-counted subsystems. Getting init and quit out
     // of balance shows up as a failure on the second run, not the first.
     for (int i = 0; i < 3; ++i) {
-        auto platform = Platform::create({.video = false});
+        const auto platform = Platform::create({.video = false});
         INFO("iteration " << i);
         REQUIRE(platform.has_value());
     }

@@ -118,7 +118,7 @@ TEST_CASE("a cycle is refused", "[scene][hierarchy]") {
     const auto status = scene.set_parent(a, c);
     REQUIRE_FALSE(status.has_value());
     CHECK(status.error().code() == ErrorCode::InvalidArgument);
-    CHECK(status.error().message().find("cycle") != std::string::npos);
+    CHECK(status.error().message().contains("cycle"));
 
     // And the tree is unchanged.
     CHECK(scene.parent(a) == StableId::None);
@@ -143,6 +143,9 @@ TEST_CASE("destroying a parent destroys its children", "[scene][hierarchy]") {
     const StableId grandchild = scene.create("grandchild");
 
     REQUIRE(scene.set_parent(child, root).has_value());
+    // set_parent takes (child, parent), so this reads as it means: the grandchild's parent
+    // is the child. The check sees two names it thinks are the wrong way round.
+    // NOLINTNEXTLINE(readability-suspicious-call-argument)
     REQUIRE(scene.set_parent(grandchild, child).has_value());
     REQUIRE(scene.size() == 3);
 

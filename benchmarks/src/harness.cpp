@@ -10,7 +10,7 @@
 #include <fstream>
 #include <thread>
 
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #endif
@@ -18,7 +18,7 @@
 namespace atlas::bench {
 namespace {
 
-#if defined(__APPLE__)
+#ifdef __APPLE__
 [[nodiscard]] std::string sysctl_string(const char* name) {
     std::size_t size = 0;
     if (sysctlbyname(name, nullptr, &size, nullptr, 0) != 0 || size == 0) {
@@ -62,7 +62,7 @@ namespace {
 Environment describe_environment() {
     Environment environment;
 
-#if defined(__APPLE__)
+#ifdef __APPLE__
     environment.cpu = sysctl_string("machdep.cpu.brand_string");
     environment.machine = sysctl_string("hw.model");
 #endif

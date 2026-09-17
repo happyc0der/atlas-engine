@@ -33,6 +33,11 @@ namespace {
 using atlas::bench::Result;
 
 /// Collects the encoder's output rather than letting it write a file.
+///
+/// `data` cannot be made const however much a linter would like it to be: the signature is
+/// dictated by stbi_write_png_to_func's function-pointer parameter. A const pointee compiles
+/// here and then fails to convert at the call site, which is how it was found.
+// NOLINTNEXTLINE(misc-const-correctness): the signature belongs to the library, not to us.
 void collect(void* context, void* data, int size) {
     auto* out = static_cast<std::vector<std::byte>*>(context);
     const auto* bytes = static_cast<const std::byte*>(data);
@@ -101,7 +106,7 @@ void collect(void* context, void* data, int size) {
 
         // Warm: read the cached entry. The same key the registry would compute.
         auto warm = atlas::bench::measure("assets/import_warm", label, iterations, 2, [&] {
-            auto loaded = cache->load_texture(key);
+            const auto loaded = cache->load_texture(key);
             if (!loaded) {
                 std::printf("assets: cache miss where a hit was expected\n");
             }
@@ -113,7 +118,7 @@ void collect(void* context, void* data, int size) {
         // Hashing the source is part of every cache lookup and is paid on hits and misses
         // alike, so it is reported on its own.
         auto hashing = atlas::bench::measure("assets/cache_key", label, iterations * 4, 4, [&] {
-            volatile std::uint64_t sink = atlas::assets::ArtifactCache::key_for(
+            const volatile std::uint64_t sink = atlas::assets::ArtifactCache::key_for(
                 "bench.png", png.size(), when, atlas::assets::kTextureImporterVersion);
             (void)sink;
         });

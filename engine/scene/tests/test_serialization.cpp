@@ -215,7 +215,7 @@ TEST_CASE("parentage is recorded once, on the child", "[scene][serialization]") 
 
     const auto text = to_text(scene);
     REQUIRE(text.has_value());
-    CHECK(text->find("children") == std::string::npos);
+    CHECK_FALSE(text->contains("children"));
 
     Scene loaded;
     REQUIRE(from_text(loaded, *text).has_value());
@@ -393,7 +393,7 @@ TEST_CASE("the world transform is not stored", "[scene][serialization]") {
     const Scene original = make_scene();
     const auto text = to_text(original);
     REQUIRE(text.has_value());
-    CHECK(text->find("world") == std::string::npos);
+    CHECK_FALSE(text->contains("world"));
 
     Scene loaded;
     REQUIRE(from_text(loaded, *text).has_value());
@@ -410,7 +410,7 @@ TEST_CASE("the output is readable", "[scene][serialization]") {
     const auto text = to_text(scene);
     REQUIRE(text.has_value());
 
-    CHECK(text->find("\"format\": \"atlas-scene\"") != std::string::npos);
-    CHECK(text->find("\n") != std::string::npos);
+    CHECK(text->contains("\"format\": \"atlas-scene\""));
+    CHECK(text->contains('\n'));
     CHECK(text->back() == '\n');
 }

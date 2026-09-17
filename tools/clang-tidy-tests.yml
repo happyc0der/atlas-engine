@@ -1,0 +1,75 @@
+# Atlas static analysis, for tests and benchmarks.
+#
+# Same checks as the repository root, which this inherits, minus the ones that a testing
+# framework or a benchmark makes meaningless. Nothing here relaxes a check because fixing it
+# would be tedious: every entry is a case where the check is reporting something that is not
+# true of the code, and the reason is recorded beside it.
+#
+# Applied by tools/tidy.sh as a second pass, rather than by dropping a .clang-tidy into each
+# of the dozen test directories, so that there is one place to read and one place to change.
+---
+InheritParentConfig: true
+
+Checks: >
+  -bugprone-unchecked-optional-access,
+  -bugprone-use-after-move,
+  -bugprone-throwing-static-initialization,
+  -bugprone-signed-bitwise,
+  -cppcoreguidelines-no-malloc,
+  -clang-analyzer-cplusplus.Move,
+  -readability-inconsistent-declaration-parameter-name,
+  -clang-analyzer-security.ArrayBound,
+  -clang-analyzer-optin.portability.UnixAPI
+
+# Rationale, one per entry:
+#
+#   bugprone-unchecked-optional-access — Catch2's REQUIRE aborts the test when it fails, so
+#       `REQUIRE(x.has_value()); x->f();` is guarded. The check's dataflow analysis cannot see
+#       through the macro and reports every access after one. Seventy-eight of these, all of
+#       them the same false positive.
+#
+#   bugprone-use-after-move — `REQUIRE(f(std::move(x)))` moves x exactly once, but Catch2's
+#       expression decomposition mentions the expression twice in the expansion, so the check
+#       sees a second use that never runs. Verified by reading every one of the six sites
+#       before disabling it rather than assuming.
+#
+#   bugprone-throwing-static-initialization — a TEST_CASE is a static registration object by
+#       construction. That is how the framework works, and it is not a choice the test made.
+#
+#   bugprone-signed-bitwise — off for the same reason it is off in engine/rhi/src and
+#       engine/tools/src: the platform headers these exercise define their flags as signed
+#       integers, and the arithmetic is theirs rather than ours.
+#
+#   clang-analyzer-cplusplus.Move — the analyser's version of the use-after-move false
+#       positive above, with the same cause and the same six sites.
+#
+#   readability-inconsistent-declaration-parameter-name — replacing global operator new means
+#       our definitions meet the standard library's declarations, whose parameter names are
+#       not ours to choose. The diagnostic is reported against the library's header.
+#
+#   clang-analyzer-security.ArrayBound, clang-analyzer-optin.portability.UnixAPI — both fire
+#       inside the vendored header-only image writer that the asset benchmark calls, not in
+#       any Atlas code. WarningsAsErrors promotes them past the header filter, so they cannot
+#       be excluded by path. The same code runs under the address sanitizer, which would catch
+#       a real out-of-bounds access in it.
+#
+#   cppcoreguidelines-no-malloc — benchmarks/src/bench_allocations.cpp replaces global
+#       operator new and delete with counting versions, which must call malloc because they
+#       are what everything else's allocation goes through. Counting allocations is the entire
+#       purpose of that file.
+
+CheckOptions:
+  # `(void)` is this project's explicit marker for a deliberately discarded result, used in
+  # test teardown and in benchmark bodies whose value is the timing rather than the result.
+  # The check fires even on a cast to void by default, which turns the marker into noise; with
+  # this set it still reports a discarded result that nobody marked.
+  - key: bugprone-unused-return-value.AllowCastToVoid
+    value: 'true'
+
+  # The k prefix exists so that a constant is recognisable where it is used far from where it
+  # is defined. A test fixture is defined three lines above its use, and `kRect` reads worse
+  # than `rect` there. Type, member, function and namespace naming are all still enforced.
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: aNy_CasE
+  - key: readability-identifier-naming.ConstexprVariablePrefix
+    value: ''

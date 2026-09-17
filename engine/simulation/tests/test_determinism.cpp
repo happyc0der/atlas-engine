@@ -222,7 +222,7 @@ TEST_CASE("a divergence is detected and attributed to a system", "[sim][determin
 
     REQUIRE(result->divergence->first_system.has_value());
     CHECK(*result->divergence->first_system == atlas::sim::system_id("increment values"));
-    CHECK(result->divergence->description.find("increment values") != std::string::npos);
+    CHECK(result->divergence->description.contains("increment values"));
 }
 
 TEST_CASE("playback stops at the first divergence", "[sim][determinism]") {

@@ -42,7 +42,7 @@ struct Ran {
 }  // namespace
 
 TEST_CASE("a save round-trips the state, tick and seed", "[sim][save]") {
-    Ran source;
+    const Ran source;
     const auto bytes = save(source.h.world, source.kernel, source.h.commands);
     REQUIRE(bytes.has_value());
 
@@ -90,7 +90,7 @@ TEST_CASE("a loaded simulation continues identically", "[sim][save]") {
 }
 
 TEST_CASE("the header can be read without loading", "[sim][save]") {
-    Ran source;
+    const Ran source;
     const auto bytes = save(source.h.world, source.kernel, source.h.commands);
     REQUIRE(bytes.has_value());
 
@@ -103,7 +103,7 @@ TEST_CASE("the header can be read without loading", "[sim][save]") {
 }
 
 TEST_CASE("saving the same state twice produces the same bytes", "[sim][save]") {
-    Ran source;
+    const Ran source;
     const auto first = save(source.h.world, source.kernel, source.h.commands);
     const auto second = save(source.h.world, source.kernel, source.h.commands);
     REQUIRE(first.has_value());
@@ -132,7 +132,7 @@ TEST_CASE("an empty buffer is refused", "[sim][save]") {
 TEST_CASE("a save from a newer build is refused", "[sim][save]") {
     // Reading it would silently drop whatever the newer version added, and the first sign
     // would be data disappearing on the next save.
-    Ran source;
+    const Ran source;
     auto bytes = save(source.h.world, source.kernel, source.h.commands);
     REQUIRE(bytes.has_value());
 
@@ -147,7 +147,7 @@ TEST_CASE("a save from a newer build is refused", "[sim][save]") {
 TEST_CASE("every truncation of a save is refused", "[sim][save]") {
     // Not only the obvious ones. A file cut at any point must fail rather than read past its
     // end or half-populate the world.
-    Ran source;
+    const Ran source;
     const auto bytes = save(source.h.world, source.kernel, source.h.commands);
     REQUIRE(bytes.has_value());
 
@@ -166,7 +166,7 @@ TEST_CASE("every truncation of a save is refused", "[sim][save]") {
 TEST_CASE("a corrupted save fails its integrity check", "[sim][save]") {
     // The stored hash is a statement about the state, so a flipped byte anywhere in the
     // tables is caught even though the file is still structurally valid.
-    Ran source;
+    const Ran source;
     auto bytes = save(source.h.world, source.kernel, source.h.commands);
     REQUIRE(bytes.has_value());
 
@@ -186,7 +186,7 @@ TEST_CASE("a corrupted save fails its integrity check", "[sim][save]") {
 TEST_CASE("a failed load leaves the world empty rather than half-populated", "[sim][save]") {
     // An empty world is a state a caller can recognise and recover from. A world holding the
     // file's rows in some tables and the previous state in others is not.
-    Ran source;
+    const Ran source;
     auto bytes = save(source.h.world, source.kernel, source.h.commands);
     REQUIRE(bytes.has_value());
 
@@ -203,7 +203,7 @@ TEST_CASE("a failed load leaves the world empty rather than half-populated", "[s
 }
 
 TEST_CASE("a save whose tables the build does not have is refused", "[sim][save]") {
-    Ran source;
+    const Ran source;
     const auto bytes = save(source.h.world, source.kernel, source.h.commands);
     REQUIRE(bytes.has_value());
 
@@ -241,7 +241,7 @@ TEST_CASE("command sequence numbers survive a save", "[sim][save]") {
 }
 
 TEST_CASE("trailing bytes are refused", "[sim][save]") {
-    Ran source;
+    const Ran source;
     auto bytes = save(source.h.world, source.kernel, source.h.commands);
     REQUIRE(bytes.has_value());
     bytes->push_back(std::byte{0});

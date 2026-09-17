@@ -14,7 +14,6 @@ using atlas::platform::Window;
 using atlas::rhi::Backend;
 using atlas::rhi::BufferHandle;
 using atlas::rhi::Device;
-using atlas::rhi::Frame;
 using atlas::rhi::ShaderFormat;
 
 // These need a real graphics device and are labelled "gpu" so that a hosted runner, which
@@ -114,7 +113,7 @@ TEST_CASE("an abandoned frame does not wedge the device", "[rhi][device][gpu]") 
     }
 
     {
-        auto frame = harness->device.begin_frame();
+        const auto frame = harness->device.begin_frame();
         REQUIRE(frame.has_value());
         // Dropped without submitting, which is what happens when an error aborts a frame.
     }
@@ -193,7 +192,7 @@ TEST_CASE("an upload that does not fit is refused rather than truncated", "[rhi]
     REQUIRE_FALSE(status.has_value());
     CHECK(status.error().code() == ErrorCode::OutOfRange);
     // The message must name the buffer, or the report is useless when there are hundreds.
-    CHECK(status.error().message().find("small") != std::string::npos);
+    CHECK(status.error().message().contains("small"));
 
     harness->device.destroy_buffer(*buffer);
 }

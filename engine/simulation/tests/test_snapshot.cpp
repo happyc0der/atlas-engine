@@ -34,7 +34,7 @@ using Channel = SnapshotChannel<Frame>;
 }  // namespace
 
 TEST_CASE("a channel starts empty", "[sim][snapshot]") {
-    Channel channel;
+    const Channel channel;
     CHECK(channel.empty());
     CHECK(channel.latest() == nullptr);
     CHECK(channel.published() == 0);
