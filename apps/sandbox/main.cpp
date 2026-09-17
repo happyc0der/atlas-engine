@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -120,6 +121,7 @@ Options:
   --no-audio             Open no audio device. On by default when there is a window.
   --audio-driver NAME    SDL audio driver, e.g. dummy.
   --edit-check           Apply and undo edits to the demo scene headlessly, then exit.
+  --scene-check          Check the demo scene's shape and composition headlessly, then exit.
   --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
   --hot-reload           Re-read assets whose files change while running.
   --cache-dir PATH       Keep decoded assets here between runs, so a repeated import is a
@@ -292,6 +294,117 @@ void step_simulation(atlas::Tick tick) {
     return atlas::ok();
 }
 
+/// The demonstration scene's shape and composition, with no device.
+///
+/// The scene the sandbox shows has had no automated coverage of any kind: no test runs
+/// `--scene`, `SceneDemo`'s own methods are unreachable without a graphics device, and there is
+/// no image comparison anywhere in the repository. That was tolerable while the scene was a
+/// fixed demonstration. It stops being tolerable in the milestone that replaces how it moves,
+/// because there would be nothing to measure the replacement against.
+///
+/// So this pins what must stay true across that change, and nothing that must not. It asserts
+/// the hierarchy the demonstration exists to show, and the one property that makes an editor
+/// usable on it: **after an edit, recomposing makes the drawn position agree with the authored
+/// one.** It deliberately says nothing about how anything moves.
+[[nodiscard]] atlas::Status run_scene_check() {
+    atlas::mark_main_thread();
+
+    auto built = atlas::sandbox::SceneDemo::build_demo_scene(atlas::assets::AssetId{});
+    if (!built) {
+        return std::unexpected(built.error());
+    }
+    atlas::scene::Scene scene = std::move(*built);
+
+    // A parent with children, at least one of which has a child of its own. That is the whole
+    // point of the demonstration: relative transforms composing down a tree.
+    atlas::scene::StableId parent = atlas::scene::StableId::None;
+    for (const atlas::scene::StableId root : scene.roots()) {
+        if (!scene.children(root).empty()) {
+            parent = root;
+        }
+    }
+    if (!atlas::scene::valid(parent)) {
+        return atlas::fail(atlas::ErrorCode::NotFound,
+                           "the demonstration scene has no root with children");
+    }
+    const auto children = scene.children(parent);
+    atlas::scene::StableId grandchild = atlas::scene::StableId::None;
+    for (const atlas::scene::StableId child : children) {
+        if (!scene.children(child).empty()) {
+            grandchild = scene.children(child).front();
+        }
+    }
+    if (!atlas::scene::valid(grandchild)) {
+        return atlas::fail(atlas::ErrorCode::NotFound,
+                           "the demonstration scene has no third level, so composition past one "
+                           "step is not being shown at all");
+    }
+
+    // Where the grandchild is drawn before anything moves.
+    scene.update_transforms();
+    const auto* composed = scene.world_transform(grandchild);
+    if (composed == nullptr) {
+        return atlas::fail(atlas::ErrorCode::Internal, "the grandchild has no world transform");
+    }
+    const float before_x = composed->matrix.at(0, 3);
+    const float before_y = composed->matrix.at(1, 3);
+
+    // Move the top of the tree through the history, exactly as the inspector does.
+    constexpr float kShiftX = 17.0F;
+    constexpr float kShiftY = -5.0F;
+    const auto* local = scene.local_transform(parent);
+    if (local == nullptr) {
+        return atlas::fail(atlas::ErrorCode::Internal, "the parent has no local transform");
+    }
+    atlas::scene::LocalTransform moved = *local;
+    moved.position.x += kShiftX;
+    moved.position.y += kShiftY;
+
+    atlas::edit::History history{scene};
+    if (auto status =
+            history.apply(std::make_unique<atlas::edit::SetLocalTransform>(parent, moved));
+        !status) {
+        return status;
+    }
+
+    // The history does not recompose — it bumps a revision and leaves that to whoever is
+    // watching. This is the step the application itself was missing while paused, which is why
+    // an edit changed the number and not the picture.
+    scene.update_transforms();
+    composed = scene.world_transform(grandchild);
+    if (composed == nullptr) {
+        return atlas::fail(atlas::ErrorCode::Internal,
+                           "the grandchild lost its world transform after an edit");
+    }
+
+    // Two levels down, so this fails if composition stops at the first step.
+    constexpr float kTolerance = 1e-3F;
+    const float moved_x = composed->matrix.at(0, 3) - before_x;
+    const float moved_y = composed->matrix.at(1, 3) - before_y;
+    if (std::abs(moved_x - kShiftX) > kTolerance || std::abs(moved_y - kShiftY) > kTolerance) {
+        return atlas::fail(
+            atlas::ErrorCode::Internal,
+            std::format("moving the root by ({}, {}) moved its grandchild by ({}, {})", kShiftX,
+                        kShiftY, moved_x, moved_y));
+    }
+
+    // And undoing puts it back, which is the property the inspector's undo button promises.
+    if (!history.undo()) {
+        return atlas::fail(atlas::ErrorCode::Internal, "undo failed");
+    }
+    scene.update_transforms();
+    composed = scene.world_transform(grandchild);
+    if (composed == nullptr || std::abs(composed->matrix.at(0, 3) - before_x) > kTolerance ||
+        std::abs(composed->matrix.at(1, 3) - before_y) > kTolerance) {
+        return atlas::fail(atlas::ErrorCode::Internal,
+                           "undoing the move did not put the grandchild back");
+    }
+
+    std::printf("scene check: %zu entities, composition reaches depth 3, edits recompose\n",
+                scene.size());
+    return atlas::ok();
+}
+
 [[nodiscard]] atlas::Status run(int argc, const char* const* argv) {
     auto args = atlas::Args::parse(argc, argv);
     if (!args) {
@@ -309,6 +422,10 @@ void step_simulation(atlas::Tick tick) {
 
     if (args->has("edit-check")) {
         return run_edit_check();
+    }
+
+    if (args->has("scene-check")) {
+        return run_scene_check();
     }
 
     const auto options = read_options(*args);

@@ -44,6 +44,11 @@ EXCEPTION_ALLOWLIST: dict[str, str] = {
 }
 
 # Third-party include prefixes that indicate a dependency leaking into a public header.
+# Every third-party library this project declares. A library missing from here is invisible to
+# the public-header check below: the primary enforcement is that PRIVATE links do not propagate,
+# so a leaking header fails to compile in a consumer, but this is the backstop and a backstop
+# with a hole in it is worth less than it looks. `nlohmann/` was missing until M13, which is the
+# milestone that gave the JSON reader a second consumer and so widened what it could have hidden.
 THIRD_PARTY_PREFIXES = (
     "tracy/",
     "SDL3/",
@@ -52,6 +57,7 @@ THIRD_PARTY_PREFIXES = (
     "imgui",
     "catch2/",
     "stb_",
+    "nlohmann/",
 )
 
 ATLAS_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*[<"]atlas/([A-Za-z0-9_]+)/')

@@ -29,6 +29,7 @@ set(_atlas_headless_cases
     headless_reaches_exact_tick
     unbounded_throughput
     edit_round_trip
+    scene_composition
     headless_needs_a_bound
     rejects_unknown_option
     rejects_bad_values

@@ -26,6 +26,7 @@ set(ATLAS_MODULES
     audio
     scene
     edit
+    animation
     simulation
     runtime
     tools
@@ -53,6 +54,12 @@ set(ATLAS_MODULE_DEPS_scene             "core;math;assets;rhi" CACHE INTERNAL ""
 # tools so the command layer is testable without a UI library, and so a panel can be handed a
 # History without ever seeing a mutable Scene.
 set(ATLAS_MODULE_DEPS_edit              "core;scene" CACHE INTERNAL "")
+# animation: clip evaluation and the derived pose it writes. Listed before it exists, as this
+# file's own policy asks, so that the shape is reviewable rather than arriving with the code.
+# Depends on scene because the pose is a scene component, and on assets because a clip is an
+# asset like any other. It must never depend on renderer or simulation: animation is
+# presentation, it is hashed nowhere, and what draws the result is not its concern.
+set(ATLAS_MODULE_DEPS_animation         "core;math;assets;scene" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_simulation        "core;tasks" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_runtime           "core;math;platform;rhi;renderer;assets;scene;simulation" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_rhi_internal      "core;platform;rhi" CACHE INTERNAL "")

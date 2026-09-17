@@ -131,7 +131,6 @@ class SceneDemo {
     std::size_t m_saved_bytes = 0;
 
     math::OrthoCamera m_camera;
-    std::vector<scene::StableId> m_orbiting;
     app::CameraControls m_camera_controls{.drag_button = platform::MouseButton::Left};
     app::CameraController m_camera_controller{m_camera_controls};
 };

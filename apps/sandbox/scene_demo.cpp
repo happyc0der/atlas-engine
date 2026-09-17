@@ -218,12 +218,6 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
     }
     demo.m_saved_bytes = saved->size();
 
-    for (const auto& view : (*demo.m_scene).entities()) {
-        if (view.parent != scene::StableId::None && (*demo.m_scene).sprite(view.id) != nullptr) {
-            demo.m_orbiting.push_back(view.id);
-        }
-    }
-
     // The view starts from the scene's own active camera rather than from a constant here.
     // Otherwise the Camera component would be written to the file, read back, and then
     // ignored, which is a component that looks supported and is not. After this the view is
@@ -270,8 +264,7 @@ SceneDemo::SceneDemo(SceneDemo&& other) noexcept
       m_scene(std::move(other.m_scene)), m_history(std::move(other.m_history)),
       m_animating(other.m_animating), m_save_path(std::move(other.m_save_path)),
       m_saved_bytes(other.m_saved_bytes), m_camera(other.m_camera),
-      m_orbiting(std::move(other.m_orbiting)), m_camera_controls(other.m_camera_controls),
-      m_camera_controller(other.m_camera_controller) {}
+      m_camera_controls(other.m_camera_controls), m_camera_controller(other.m_camera_controller) {}
 
 SceneDemo& SceneDemo::operator=(SceneDemo&& other) noexcept {
     if (this != &other) {
@@ -286,7 +279,6 @@ SceneDemo& SceneDemo::operator=(SceneDemo&& other) noexcept {
         m_save_path = std::move(other.m_save_path);
         m_saved_bytes = other.m_saved_bytes;
         m_camera = other.m_camera;
-        m_orbiting = std::move(other.m_orbiting);
         m_camera_controls = other.m_camera_controls;
         m_camera_controller = other.m_camera_controller;
     }
@@ -356,8 +348,11 @@ renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
         if (!m_warned_rotation && (std::abs(m[1]) > kRotationTolerance * scale_x ||
                                    std::abs(m[4]) > kRotationTolerance * scale_y)) {
             m_warned_rotation = true;
-            ATLAS_LOG_WARN(kApp, "a sprite carries a rotation the batcher cannot draw; it is drawn "
-                                 "axis-aligned, and this is reported once per scene");
+            // Once per demonstration, not once per scene: the flag is a member, so loading a
+            // different scene into the same object stays quiet. That was worth correcting and
+            // not worth a mechanism, because M13 removes the limitation this reports.
+            ATLAS_LOG_WARN(kApp, "a sprite carries a rotation the batcher cannot draw; it is "
+                                 "drawn axis-aligned, and this is reported once per run");
         }
         const float width = sprite->size.x * scale_x;
         const float height = sprite->size.y * scale_y;

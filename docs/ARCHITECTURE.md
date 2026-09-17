@@ -22,6 +22,7 @@ graph TD
   audio[atlas::audio<br/>output device, mixer, voices]
   scene[atlas::scene<br/>presentation entities, transforms,<br/>hierarchy, serialization]
   edit[atlas::edit<br/>undoable scene commands, history]
+  animation[atlas::animation<br/>clips, evaluation, derived pose]
   simulation[atlas::simulation<br/>ticks, commands, systems, hashing]
   runtime[atlas::runtime<br/>deferred: composition, main loop]
   tools[atlas::tools<br/>editor shell, panels]
@@ -53,6 +54,10 @@ graph TD
   scene --> rhi
   edit --> core
   edit --> scene
+  animation --> core
+  animation --> math
+  animation --> assets
+  animation --> scene
   simulation --> core
   simulation --> tasks
   runtime --> assets
@@ -136,7 +141,7 @@ Three distinct notions of time:
 | Notion | Representation | Drives |
 |---|---|---|
 | Real time | `SteadyClock` in core, nanoseconds | UI responsiveness, frame pacing, the accumulator input |
-| Render time | seconds since start, plus `alpha` in [0,1) | Interpolation and visual effects |
+| Render time | seconds since start, plus `alpha` in [0,1) | Visual effects. **`alpha` is computed and, as of M13, interpolates nothing**: its only readers pace a headless frame. Snapshot interpolation is the consumer it was added for and is deferred; see DEFERRED.md. |
 | Simulation time | `Tick`, a 64-bit integer counter | Authoritative state, commands, hashes |
 
 Rendering never defines simulation correctness. Simulation advances in fixed logical ticks,

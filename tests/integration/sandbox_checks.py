@@ -276,12 +276,27 @@ def case_audio_clip_loads_and_reloads(binary: str) -> None:
     expect_contains(text, "1 voices peak, 0 underruns, 1 clips", "the displaced clip was released")
 
 
+
+def case_scene_composition(binary: str) -> None:
+    # The demonstration scene had no automated coverage of any kind before M13: no test ran
+    # --scene, its methods need a graphics device, and nothing in the repository compares
+    # images. This pins the two things that must survive the milestone that changes how it
+    # moves — the hierarchy it exists to demonstrate, and that an edit recomposes into the
+    # drawn position — and says nothing about how anything moves.
+    result = run(binary, ["--scene-check"])
+    expect_exit(result, 0, "the scene check")
+    expect_contains(output_of(result), "composition reaches depth 3",
+                    "the scene still has three levels to compose through")
+    expect_contains(output_of(result), "edits recompose", "an edit reaches the drawn position")
+
+
 CASES = {
     "version": case_version,
     "help": case_help,
     "headless_lifecycle": case_headless_lifecycle,
     "headless_reaches_exact_tick": case_headless_reaches_exact_tick,
     "edit_round_trip": case_edit_round_trip,
+    "scene_composition": case_scene_composition,
     "unbounded_throughput": case_unbounded_throughput,
     "headless_needs_a_bound": case_headless_needs_a_bound,
     "rejects_unknown_option": case_rejects_unknown_option,
