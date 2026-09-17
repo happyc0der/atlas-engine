@@ -452,6 +452,52 @@ and one property. A statistical suite would be better evidence than it, and the 
 adopted hash scores 32.0 where the one it replaced scored 30.7 is a reason to think the change
 is safe, not a proof of it.
 
+## Instance compaction, M8: four bytes a cell
+
+The correction above left the cell field as the largest single cost in the frame: 7.11 ms of
+processor time to submit a million cells, linear at about 6.8 nanoseconds each, with every drawn
+cell written three times at forty-eight bytes before it reached the graphics processor.
+
+**The prediction, written down first.** Forty-eight bytes an instance is right for a sprite,
+which can be anywhere, any size, showing any part of any texture. A grid cell can be none of
+those: its rectangle follows from its index, because cells are stored chunk-major and a run of
+consecutive chunks is a contiguous range of them. Sending only the colour would take the
+per-cell traffic from about 144 bytes to about 8. If the path is bandwidth-bound that is 7.11 ms
+to roughly 0.4 ms; allowing for loop and submission overhead, the prediction was **0.8 to
+1.5 ms**.
+
+**The prediction was wrong twice, in opposite directions, and that is the useful part.**
+
+Compaction alone gave 2.23 ms — a 3.2x gain where 5 to 9 was predicted. Traffic had fallen
+eighteen-fold and time only threefold, so the path was no longer bandwidth-bound and something
+else had become the limit. It was `std::vector::push_back`: a capacity check and a size
+increment per cell, which had been invisible while each cell also moved 144 bytes. Writing
+through a pointer into storage sized once by `set_layout` removed it.
+
+| Cells | Before | Compacted | And without push_back | |
+|---|---|---|---|---|
+| 10k | 93 us | 55 us | **27 us** | 3.4x |
+| 100k | 708 us | 246 us | **67 us** | 10.6x |
+| 1M | 7.11 ms | 2.23 ms | **303 us** | **23.5x** |
+
+At a million cells that is 0.29 nanoseconds a cell and about 28 GB/s of traffic, which is what
+bandwidth-bound actually looks like on this machine. The final figure is better than the
+original prediction, which had been made for the wrong reason: the estimate of the traffic was
+about right, and the estimate of what else the loop was doing was absent.
+
+**What it cost elsewhere.** The instance buffer is 4 MB at a million cells rather than 48 MB,
+and the 48 MB of resident per-cell geometry is gone entirely — `set_layout` is now one
+allocation and no per-cell work, where it used to build a rectangle for every cell. The shader
+derives each cell's rectangle from its instance index and a per-run uniform, which is the
+identifier pass's technique applied to the picture: the second call site, which is what
+justified having it at all rather than a third shader repeating it.
+
+**The picture is unchanged**, verified by rendering the same seed before and after and comparing
+every byte: 17% of channel values differ and every one of them by exactly one of 255. That is
+the quantisation moving, not the geometry — the old path sent a float colour that the graphics
+processor rounded when writing an eight-bit target, and the new one rounds before upload. A
+geometry error would not look like that.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:

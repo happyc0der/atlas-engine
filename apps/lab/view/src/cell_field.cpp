@@ -68,9 +68,55 @@ struct Palettes {
     Palette colour = make_categorical(kColorCount);
 };
 
+/// The same palettes packed as red-green-blue-alpha bytes, which is what a cell instance is.
+/// Built once; the inner loop becomes a byte load and a four-byte store.
+using PackedPalette = std::array<std::uint32_t, 256>;
+
+[[nodiscard]] std::uint32_t pack(const rhi::Colour& colour) noexcept {
+    const auto channel = [](float value) {
+        // lround rather than a cast of value plus a half: the two agree for everything in
+        // range here, and the idiom they disagree about is the one clang-tidy is right to
+        // distrust.
+        return static_cast<std::uint32_t>(std::lround(std::clamp(value, 0.0F, 1.0F) * 255.0F));
+    };
+    return channel(colour.r) | (channel(colour.g) << 8U) | (channel(colour.b) << 16U) |
+           (channel(colour.a) << 24U);
+}
+
+[[nodiscard]] PackedPalette pack_palette(const Palette& palette) {
+    PackedPalette packed{};
+    for (std::size_t i = 0; i < packed.size(); ++i) {
+        packed[i] = pack(palette[i]);
+    }
+    return packed;
+}
+
 const Palettes& palettes() {
     static const Palettes kPalettes;
     return kPalettes;
+}
+
+}  // namespace
+
+namespace {
+
+struct PackedPalettes {
+    PackedPalette region = pack_palette(palettes().region);
+    PackedPalette owner = pack_palette(palettes().owner);
+    PackedPalette population = pack_palette(palettes().population);
+    PackedPalette colour = pack_palette(palettes().colour);
+};
+
+[[nodiscard]] const PackedPalette& packed_palette_for(MapMode mode) {
+    static const PackedPalettes kPacked;
+    switch (mode) {
+    case MapMode::RegionValue: return kPacked.region;
+    case MapMode::OwnerIndex: return kPacked.owner;
+    case MapMode::PopulationValue: return kPacked.population;
+    case MapMode::ColorIndex:
+    case MapMode::Count: break;
+    }
+    return kPacked.colour;
 }
 
 }  // namespace
@@ -95,31 +141,11 @@ Result<CellField> CellField::create(rhi::Device& device, const Config& config) {
     field.m_device = &device;
     field.m_cell_size = config.cell_size;
 
-    auto batch = renderer::QuadBatch::create(device, {.shader_directory = config.shader_directory});
-    if (!batch) {
-        return std::unexpected(std::move(batch).error().context("creating the cell batch"));
+    auto renderer = CellRenderer::create(device, {.shader_directory = config.shader_directory});
+    if (!renderer) {
+        return std::unexpected(std::move(renderer).error().context("creating the cell renderer"));
     }
-    field.m_batch = std::move(*batch);
-
-    // One white texel: the sprite shader multiplies the texture by the instance colour, so a
-    // white texture makes the colour the whole story.
-    auto white = device.create_texture({.width = 1, .height = 1, .debug_name = "cell white"});
-    if (!white) {
-        return std::unexpected(std::move(white).error());
-    }
-    field.m_white = *white;
-    constexpr std::array<std::byte, 4> kWhite{std::byte{255}, std::byte{255}, std::byte{255},
-                                              std::byte{255}};
-    if (auto status = device.upload_texture(field.m_white, kWhite); !status) {
-        return std::unexpected(std::move(status).error().context("uploading the white texel"));
-    }
-    auto sampler = device.create_sampler({.min_filter = rhi::Filter::Nearest,
-                                          .mag_filter = rhi::Filter::Nearest,
-                                          .debug_name = "cell sampler"});
-    if (!sampler) {
-        return std::unexpected(std::move(sampler).error());
-    }
-    field.m_sampler = *sampler;
+    field.m_renderer = std::move(*renderer);
     return field;
 }
 
@@ -128,61 +154,53 @@ CellField::~CellField() {
 }
 
 CellField::CellField(CellField&& other) noexcept
-    : m_device(std::exchange(other.m_device, nullptr)), m_batch(std::move(other.m_batch)),
-      m_white(std::exchange(other.m_white, {})), m_sampler(std::exchange(other.m_sampler, {})),
+    : m_device(std::exchange(other.m_device, nullptr)), m_renderer(std::move(other.m_renderer)),
       m_layout(other.m_layout), m_cell_size(other.m_cell_size), m_camera(other.m_camera),
       m_pixel_width(other.m_pixel_width), m_pixel_height(other.m_pixel_height),
-      m_quads(std::move(other.m_quads)), m_scratch(std::move(other.m_scratch)),
-      m_visible(std::move(other.m_visible)), m_dragging(other.m_dragging) {}
+      m_colours(std::move(other.m_colours)), m_visible(std::move(other.m_visible)),
+      m_runs(std::move(other.m_runs)), m_dragging(other.m_dragging) {}
 
 CellField& CellField::operator=(CellField&& other) noexcept {
     if (this != &other) {
         release();
         m_device = std::exchange(other.m_device, nullptr);
-        m_batch = std::move(other.m_batch);
-        m_white = std::exchange(other.m_white, {});
-        m_sampler = std::exchange(other.m_sampler, {});
+        m_renderer = std::move(other.m_renderer);
         m_layout = other.m_layout;
         m_cell_size = other.m_cell_size;
         m_camera = other.m_camera;
         m_pixel_width = other.m_pixel_width;
         m_pixel_height = other.m_pixel_height;
-        m_quads = std::move(other.m_quads);
-        m_scratch = std::move(other.m_scratch);
+        m_colours = std::move(other.m_colours);
         m_visible = std::move(other.m_visible);
+        m_runs = std::move(other.m_runs);
         m_dragging = other.m_dragging;
     }
     return *this;
 }
 
 void CellField::release() noexcept {
-    if (m_device == nullptr) {
-        return;
-    }
-    m_device->destroy_sampler(m_sampler);
-    m_device->destroy_texture(m_white);
+    // The renderer owns the only device resources now: there is no per-cell geometry and no
+    // white texel to multiply a colour by.
     m_device = nullptr;
 }
 
-void CellField::set_layout(const GridLayout& layout) {
-    ATLAS_ZONE_NAMED("cell field geometry");
+Status CellField::set_layout(const GridLayout& layout) {
     m_layout = layout;
-    m_quads.resize(layout.cell_count());
-    for (std::uint32_t i = 0; i < layout.cell_count(); ++i) {
-        const CellCoords at = layout.cell_coords(i);
-        m_quads[i].bounds = {
-            .position = {static_cast<float>(at.x) * m_cell_size,
-                         static_cast<float>(at.y) * m_cell_size},
-            .size = {m_cell_size, m_cell_size},
-        };
+    if (auto status = m_renderer.set_layout(layout); !status) {
+        return status;
     }
-    m_scratch.resize(layout.cells_per_chunk());
+    // Sized for the whole grid, because the whole grid can be visible. Sized once so that a
+    // frame neither allocates nor grows; there is no per-cell geometry to build.
+    m_colours.assign(layout.cell_count(), 0);
     m_visible.clear();
     m_visible.reserve(layout.chunk_count());
+    m_runs.clear();
+    m_runs.reserve(layout.chunk_count());
     reset_camera();
-    ATLAS_LOG_INFO(kLab, "cell field: {}x{} cells in {} chunks of {}, {} KiB of geometry",
+    ATLAS_LOG_INFO(kLab, "cell field: {}x{} cells in {} chunks of {}, {} KiB of instance data",
                    layout.width(), layout.height(), layout.chunk_count(), layout.chunk_size(),
-                   (m_quads.size() * sizeof(renderer::Quad)) / 1024);
+                   (static_cast<std::uint64_t>(layout.cell_count()) * bytes_per_cell()) / 1024);
+    return ok();
 }
 
 void CellField::resize(std::uint32_t pixel_width, std::uint32_t pixel_height) {
@@ -250,29 +268,51 @@ CellField::DrawStats CellField::draw(rhi::RenderPass& pass, const CellSnapshot& 
     ATLAS_ZONE_NAMED("cell field draw");
     DrawStats stats;
     m_visible.clear();
-    if (snapshot.layout != m_layout || m_quads.empty()) {
+    m_runs.clear();
+    if (snapshot.layout != m_layout || m_layout.empty()) {
         return stats;
     }
 
     const auto values = band(snapshot, mode);
-    const Palette& palette = palette_for(mode);
+    const PackedPalette& palette = packed_palette_for(mode);
     cull(m_visible);
 
-    m_batch.begin(pass, m_camera.view_projection());
-    m_batch.set_texture(m_white, m_sampler);
-    const std::uint32_t per_chunk = m_layout.cells_per_chunk();
+    // Consecutive chunks become one run, which is one contiguous range of cells and therefore
+    // one draw. Fitted to the whole grid this is a single run over every chunk.
     for (const std::uint32_t chunk : m_visible) {
-        const std::uint32_t first = m_layout.chunk_first_cell(chunk);
-        for (std::uint32_t i = 0; i < per_chunk; ++i) {
-            renderer::Quad& quad = m_scratch[i];
-            quad.bounds = m_quads[first + i].bounds;
-            quad.colour = palette[values[first + i]];
+        if (!m_runs.empty() && m_runs.back().first_chunk + m_runs.back().chunk_count == chunk) {
+            ++m_runs.back().chunk_count;
+        } else {
+            m_runs.push_back(ChunkRun{.first_chunk = chunk, .chunk_count = 1});
         }
-        m_batch.add(std::span<const renderer::Quad>{m_scratch});
     }
-    stats.batch = m_batch.end();
+
+    // Written through a pointer into storage that is already the grid's size, rather than
+    // pushed onto a vector: push_back's capacity check per cell cost more than the upload it
+    // was feeding. The buffer is sized once in set_layout and never grows here.
+    const std::uint32_t per_chunk = m_layout.cells_per_chunk();
+    std::uint32_t used = 0;
+    std::uint32_t* out = m_colours.data();
+    for (const ChunkRun& run : m_runs) {
+        const std::uint8_t* source = values.data() + m_layout.chunk_first_cell(run.first_chunk);
+        const std::uint32_t cells = run.chunk_count * per_chunk;
+        for (std::uint32_t i = 0; i < cells; ++i) {
+            out[used + i] = palette[source[i]];
+        }
+        used += cells;
+    }
+
+    if (auto status =
+            m_renderer.draw(pass, m_camera.view_projection(), m_layout, m_cell_size,
+                            std::span<const std::uint32_t>{m_colours.data(), used}, m_runs);
+        !status) {
+        ATLAS_LOG_ERROR(kLab, "drawing the cell field failed: {}", status.error());
+        return stats;
+    }
+
+    stats.cells = m_renderer.stats();
     stats.visible_chunks = static_cast<std::uint32_t>(m_visible.size());
-    stats.visible_cells = stats.visible_chunks * per_chunk;
+    stats.visible_cells = stats.cells.cells;
     return stats;
 }
 

@@ -9,20 +9,22 @@
 /// a (band, palette) pair; switching one changes which span and which palette the draw loop
 /// reads, and nothing is reallocated. That is tested directly, not assumed.
 ///
-/// Culling is per chunk against the camera's visible bounds. Each visible chunk is one
-/// contiguous run of cells, coloured into a preallocated scratch and handed to the batch in
-/// one call. Nothing here allocates per frame once the layout is set.
+/// Culling is per chunk against the camera's visible bounds. Consecutive visible chunks are
+/// merged into runs, and a run is a contiguous range of cells because of the chunk-major
+/// ordering, so it is one draw. Colours are packed run by run into a buffer that is uploaded
+/// once and is four bytes a cell: the rectangle follows from the instance index, so nothing
+/// else has to be sent. Nothing here allocates per frame once the layout is set.
 ///
 /// Thread affinity: main thread; it owns device resources.
 
 #include <atlas/core/result.hpp>
+#include <atlas/lab/cell_renderer.hpp>
 #include <atlas/lab/grid_layout.hpp>
 #include <atlas/lab/snapshot.hpp>
 #include <atlas/math/camera.hpp>
 #include <atlas/math/vector.hpp>
 #include <atlas/platform/event.hpp>
 #include <atlas/platform/input.hpp>
-#include <atlas/renderer/quad_batch.hpp>
 #include <atlas/rhi/device.hpp>
 
 #include <array>
@@ -50,7 +52,7 @@ class CellField {
     };
 
     struct DrawStats {
-        renderer::BatchStats batch;
+        CellDrawStats cells;
         std::uint32_t visible_chunks = 0;
         std::uint32_t visible_cells = 0;
     };
@@ -64,9 +66,12 @@ class CellField {
     CellField(CellField&& other) noexcept;
     CellField& operator=(CellField&& other) noexcept;
 
-    /// Build the geometry for a layout. O(cells), once; and again only after a load whose
-    /// layout differs.
-    void set_layout(const GridLayout& layout);
+    /// Adopt a layout, sizing the colour buffer for it.
+    ///
+    /// Failure: whatever sizing the instance buffer reports. There is no per-cell geometry to
+    /// build: a cell's rectangle is derived in the shader from its index, so this is O(1) work
+    /// plus one allocation, where it used to hold forty-eight bytes of geometry per cell.
+    [[nodiscard]] Status set_layout(const GridLayout& layout);
 
     [[nodiscard]] const GridLayout& layout() const noexcept { return m_layout; }
 
@@ -88,6 +93,9 @@ class CellField {
         return m_visible;
     }
 
+    /// The runs the last draw submitted: consecutive visible chunks merged.
+    [[nodiscard]] std::span<const ChunkRun> visible_runs() const noexcept { return m_runs; }
+
     /// The chunks visible to the camera as it is now, into a caller-owned vector. The same
     /// test draw() applies, so the picking pass and the picture agree on what is on screen.
     void cull(std::vector<std::uint32_t>& out) const;
@@ -105,26 +113,30 @@ class CellField {
     /// The GPU pass is tested against this.
     [[nodiscard]] std::optional<std::uint32_t> cell_at_screen(math::Vec2 screen) const noexcept;
 
-    /// The geometry's identity, for the test that a mode switch rebuilds nothing.
-    [[nodiscard]] const renderer::Quad* geometry_data() const noexcept { return m_quads.data(); }
+    /// What one cell costs on the wire, and where its colours live. For the test that a mode
+    /// switch rebuilds nothing: there is no geometry to rebuild any more, and the colour buffer
+    /// neither moves nor changes size.
+    [[nodiscard]] static constexpr std::uint32_t bytes_per_cell() noexcept {
+        return CellRenderer::kBytesPerCell;
+    }
 
-    [[nodiscard]] std::size_t geometry_size() const noexcept { return m_quads.size(); }
+    [[nodiscard]] const std::uint32_t* colours_data() const noexcept { return m_colours.data(); }
+
+    [[nodiscard]] std::size_t colours_capacity() const noexcept { return m_colours.size(); }
 
   private:
     void release() noexcept;
 
     rhi::Device* m_device = nullptr;
-    renderer::QuadBatch m_batch;
-    rhi::TextureHandle m_white;
-    rhi::SamplerHandle m_sampler;
+    CellRenderer m_renderer;
     GridLayout m_layout;
     float m_cell_size = 8.0F;
     math::OrthoCamera m_camera;
     std::uint32_t m_pixel_width = 1;
     std::uint32_t m_pixel_height = 1;
-    std::vector<renderer::Quad> m_quads;    ///< Geometry, in cell order; never recoloured.
-    std::vector<renderer::Quad> m_scratch;  ///< One chunk's worth, coloured per draw.
+    std::vector<std::uint32_t> m_colours;  ///< Visible cells, packed run by run, four bytes each.
     std::vector<std::uint32_t> m_visible;
+    std::vector<ChunkRun> m_runs;
     bool m_dragging = false;
 };
 

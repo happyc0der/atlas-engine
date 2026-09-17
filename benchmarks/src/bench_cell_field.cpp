@@ -126,7 +126,10 @@ std::vector<Result> run() {
             return results;
         }
         field->resize(1280, 720);
-        field->set_layout(lab->layout);  // also fits the camera, so every chunk is visible
+        if (auto status = field->set_layout(lab->layout); !status) {
+            std::printf("cell field: skipped, %s\n", status.error().to_string().c_str());
+            continue;
+        }
 
         if (render_once(*harness, *field, *snapshot, MapMode::ColorIndex) == 0) {
             std::printf("cell field: skipped %ux%u, no swapchain image available\n", side, side);

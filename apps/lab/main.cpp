@@ -310,7 +310,9 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
                        layout->width(), layout->height(), layout->chunk_size());
         simulation.lab.layout = *layout;
         if (field != nullptr) {
-            field->set_layout(*layout);
+            if (auto s = field->set_layout(*layout); !s) {
+                ATLAS_LOG_ERROR(kApp, "resizing the cell field failed: {}", s.error());
+            }
         }
     }
     return *layout;
@@ -513,7 +515,9 @@ struct Phases {
         }
         field = std::move(*cells);
         field->resize(window.pixel_size().width, window.pixel_size().height);
-        field->set_layout(sim.lab.layout);
+        if (auto s = field->set_layout(sim.lab.layout); !s) {
+            return std::unexpected(std::move(s).error().context("sizing the cell field"));
+        }
         auto ids =
             atlas::lab::CellIdPass::create(*device, {.shader_directory = options->shader_dir});
         if (!ids) {
@@ -868,9 +872,9 @@ struct Phases {
                         values[4] = std::string{atlas::lab::to_string(mode)};
                         values[5] = std::format("{} of {}", last_draw.visible_chunks,
                                                 sim.lab.layout.chunk_count());
-                        values[6] = std::format("{} quads, {} draws, {} KiB", last_draw.batch.quads,
-                                                last_draw.batch.draw_calls,
-                                                last_draw.batch.bytes_uploaded / 1024);
+                        values[6] = std::format("{} cells, {} draws, {} KiB", last_draw.cells.cells,
+                                                last_draw.cells.draw_calls,
+                                                last_draw.cells.bytes_uploaded / 1024);
                         values[7] = phase(phases.events);
                         values[8] = phase(phases.simulation);
                         values[9] = phase(phases.snapshot);

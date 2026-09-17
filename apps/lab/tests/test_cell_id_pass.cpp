@@ -49,7 +49,7 @@ TEST_CASE("the identifier pass agrees with the analytic inverse", "[lab][gpu][pi
         atlas::lab::generate({.width = 16, .height = 16, .chunk_size = 4, .seed = 1}).value();
     auto field = CellField::create(harness->device, {}).value();
     field.resize(128, 128);
-    field.set_layout(lab.layout);
+    REQUIRE(field.set_layout(lab.layout).has_value());
     auto pass = CellIdPass::create(harness->device, {}).value();
     REQUIRE(pass.resize(128, 128).has_value());
     Picker picker{&harness->device, &field, &pass, {}};
@@ -82,7 +82,7 @@ TEST_CASE("the identifier pass crosses chunk boundaries correctly", "[lab][gpu][
         atlas::lab::generate({.width = 16, .height = 16, .chunk_size = 4, .seed = 1}).value();
     auto field = CellField::create(harness->device, {}).value();
     field.resize(128, 128);
-    field.set_layout(lab.layout);
+    REQUIRE(field.set_layout(lab.layout).has_value());
     // One cell fills 32 pixels: pixel 31 is the last column of cell 0, pixel 32 the first
     // of cell 1, and pixels 127/128 straddle the first chunk boundary.
     field.camera().set_centre({0.0F, 0.0F});

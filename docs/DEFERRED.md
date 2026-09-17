@@ -137,16 +137,15 @@ integration ran for the first time. What it found is recorded in
   no longer what stands between the lab and its target, which is worth knowing before M8 spends
   effort on it. The lab's catch-up limit went back to the scheduler's default of 8 for the same
   reason: the low limit was a symptom of the slow tick and, measured, now costs dropped ticks.
-- **Instance compaction for the cell field.** Each drawn cell is a 48-byte quad instance
-  rebuilt from the snapshot every frame: 48 MB a frame at a million visible cells, 61 streamed
-  flushes, and 7.11 ms of processor time measured by `atlas_bench --filter cell_field`. (An
-  earlier 8.3 ms figure here was the display's refresh interval rather than the engine's work;
-  see the correction in `docs/PERFORMANCE.md`.) The identifier pass already derives every cell's
-  rectangle in the shader
-  from its instance index and a per-chunk uniform, with no vertex buffer at all; the colour
-  pass could do the same with one byte per cell. **Promoted by the hash change:** drawing is now
-  7.11 ms of processor time at a million cells, which is the largest single cost in the frame
-  and the next thing worth measuring, where before it was second to hashing.
+- **Instance compaction for the cell field.** ~~Each drawn cell is a 48-byte quad instance
+  rebuilt from the snapshot every frame.~~ **Done in M8.** Four bytes a cell, the rectangle
+  derived in the shader from the instance index and a per-run uniform, which is the identifier
+  pass's technique applied to the picture. Submitting a million cells went from 7.11 ms to
+  303 us, the instance buffer from 48 MB to 4 MB, and the resident per-cell geometry to nothing.
+  Two thirds of that gain came not from the compaction but from what the compaction revealed:
+  a `push_back` per cell that had been hidden behind the copies it was feeding. The picture is
+  unchanged to within one least significant bit, checked byte by byte. See
+  `docs/PERFORMANCE.md`.
 - **Snapshot pooling.** Building the snapshot costs 1.44 ms at a million cells, once per frame
   after the last tick, and allocates a fresh one each time. The counter is in the overlay; the
   pool is built when the counter says the allocation, not the fill, is what costs.

@@ -19,12 +19,16 @@ TEST_CASE("a map-mode switch reads a different band and rebuilds no geometry", "
         atlas::lab::generate({.width = 16, .height = 16, .chunk_size = 4, .seed = 3}).value();
     auto field = CellField::create(harness->device, {}).value();
     field.resize(128, 128);
-    field.set_layout(lab.layout);
+    REQUIRE(field.set_layout(lab.layout).has_value());
     const auto snapshot = atlas::lab::build_snapshot(lab.world, lab.ids, lab.layout, {});
 
-    const auto* geometry = field.geometry_data();
-    const auto size = field.geometry_size();
-    REQUIRE(size == 256);
+    // There is no per-cell geometry to rebuild any more: a cell's rectangle is derived in the
+    // shader from its instance index, so what a mode switch must not disturb is the colour
+    // buffer. Its address and capacity standing still is the strongest available statement
+    // that nothing was reallocated between the two draws below.
+    const auto* colours = field.colours_data();
+    const auto capacity = field.colours_capacity();
+    REQUIRE(capacity >= 256);
 
     // Draw in two modes into an offscreen target and read both back. Offscreen, because an
     // offscreen pass works whether or not a swapchain image is available this frame.
@@ -42,6 +46,11 @@ TEST_CASE("a map-mode switch reads a different band and rebuilds no geometry", "
             const auto stats = field.draw(pass, *snapshot, mode);
             CHECK(stats.visible_chunks == 16);
             CHECK(stats.visible_cells == 256);
+            // Four bytes a cell, which is the whole point of the compacted path: the sprite
+            // batcher's instance is forty-eight. Sixteen consecutive chunks are one run and
+            // therefore one draw.
+            CHECK(stats.cells.bytes_uploaded == std::uint64_t{256} * CellField::bytes_per_cell());
+            CHECK(stats.cells.draw_calls == 1);
             pass.end();
         }
         REQUIRE(harness->device.end_frame(std::move(frame)).has_value());
@@ -54,8 +63,8 @@ TEST_CASE("a map-mode switch reads a different band and rebuilds no geometry", "
     const auto colour_pixels = draw_and_read(MapMode::ColorIndex);
     const auto owner_pixels = draw_and_read(MapMode::OwnerIndex);
 
-    CHECK(field.geometry_data() == geometry);
-    CHECK(field.geometry_size() == size);
+    CHECK(field.colours_data() == colours);
+    CHECK(field.colours_capacity() == capacity);
     CHECK(colour_pixels != owner_pixels);
     harness->device.destroy_texture(target);
 }
@@ -69,7 +78,7 @@ TEST_CASE("culling keeps only the chunks the camera can see", "[lab][gpu]") {
         atlas::lab::generate({.width = 64, .height = 64, .chunk_size = 8, .seed = 3}).value();
     auto field = CellField::create(harness->device, {}).value();
     field.resize(128, 128);
-    field.set_layout(lab.layout);
+    REQUIRE(field.set_layout(lab.layout).has_value());
     std::vector<std::uint32_t> visible;
 
     field.cull(visible);

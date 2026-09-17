@@ -5,6 +5,7 @@
 atlas_add_app_library(lab_view
     SOURCES
         src/cell_field.cpp
+        src/cell_renderer.cpp
         src/cell_id_pass.cpp
     DEPENDS
         atlas::lab_sim

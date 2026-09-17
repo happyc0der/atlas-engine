@@ -24,6 +24,32 @@ struct ShaderInfo {
     std::uint32_t uniform_buffers = 0;
 };
 
+inline constexpr ShaderInfo kCellFragment{
+    .name = "cell",
+    .stage = "fragment",
+    .spirv_file = "cell.frag.spv",
+    .spirv_entry_point = "main",
+    .msl_file = "cell.frag.msl",
+    .msl_entry_point = "main0",
+    .samplers = 0,
+    .storage_textures = 0,
+    .storage_buffers = 0,
+    .uniform_buffers = 0,
+};
+
+inline constexpr ShaderInfo kCellVertex{
+    .name = "cell",
+    .stage = "vertex",
+    .spirv_file = "cell.vert.spv",
+    .spirv_entry_point = "main",
+    .msl_file = "cell.vert.msl",
+    .msl_entry_point = "main0",
+    .samplers = 0,
+    .storage_textures = 0,
+    .storage_buffers = 0,
+    .uniform_buffers = 1,
+};
+
 inline constexpr ShaderInfo kCellIdFragment{
     .name = "cell_id",
     .stage = "fragment",
@@ -104,6 +130,8 @@ inline constexpr ShaderInfo kTriangleVertex{
 
 /// Every cooked shader, so that one can be found by name and stage.
 inline constexpr const ShaderInfo* kAll[] = {
+    &kCellFragment,
+    &kCellVertex,
     &kCellIdFragment,
     &kCellIdVertex,
     &kSpriteFragment,
