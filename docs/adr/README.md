@@ -18,5 +18,4 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0006](0006-shader-toolchain.md) | Shader toolchain | Accepted |
 | [0007](0007-scene-file-format.md) | Scene file format | Accepted |
 | [0008](0008-numeric-and-save-policy.md) | Numeric policy and the simulation save format | Accepted |
-
-Planned: 0009 scripting decision (M9).
+| [0009](0009-scripting-decision.md) | Scripting: deferred, with the boundary decided now | Accepted |

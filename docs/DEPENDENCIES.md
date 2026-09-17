@@ -122,6 +122,14 @@ formatting are served by `std::format`, hashing by a first-party canonical hash 
 algorithm identity is versioned, and math by a small first-party header. Each would be
 adopted only with a recorded need.
 
+**lua** and **sol2**, considered in M9 and not adopted
+([ADR-0009](adr/0009-scripting-decision.md)). Both are GPL-compatible and neither is the
+problem: there is no caller. The engine has no game rules, so most of what a script API would
+expose is the application's API rather than the engine's, and the one scripting-shaped need
+that has arisen — a deterministic synthetic command source for headless runs — is sixteen lines
+of C++. The ADR records the trigger for revisiting, and that WebAssembly is evaluated against
+Lua when it fires.
+
 nlohmann-json was on this list until M5. The recorded need is the scene file format
 ([ADR-0007](adr/0007-scene-file-format.md)): the file is untrusted input, and a hand-written
 parser for untrusted input is the kind of code this project should not be writing when a

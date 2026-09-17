@@ -10,11 +10,13 @@
 ///
 /// Thread affinity: main thread only.
 
+#include <atlas/assets/registry.hpp>
 #include <atlas/core/result.hpp>
 #include <atlas/edit/history.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/rhi/device.hpp>
 #include <atlas/scene/scene.hpp>
+#include <atlas/tools/panels.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -82,6 +84,31 @@ class DebugUi {
     /// Selection is the panel's own state, not the scene's, and is remembered across frames.
     /// A selected entity that has since been destroyed is dropped silently.
     void scene_panel(std::string_view title, edit::History& history);
+
+    /// Records from a log buffer, with severity and category filters.
+    ///
+    /// The buffer is taken by const reference and is never emptied here: the panel reports that
+    /// the user asked, and whoever owns the buffer decides. The filter is the panel's own state
+    /// and persists across frames.
+    ///
+    /// Reads the buffer only when its push count has changed, because `entries()` copies every
+    /// record under a lock and this is called every frame. A worker thread logging while this
+    /// draws is fine; that is what the buffer's lock is for.
+    LogConsoleReport log_console_panel(std::string_view title, const log::LogBuffer& buffer);
+
+    /// Time controls, display mode, and save and load, as buttons.
+    ///
+    /// Returns what the user asked for rather than doing it. The application applies the
+    /// request through the same path its keyboard shortcuts use, so a button and a key cannot
+    /// mean different things. A frame in which nothing was clicked returns an empty request.
+    [[nodiscard]] SimulationControlsRequest
+    simulation_controls_panel(std::string_view title, const SimulationControlsView& view);
+
+    /// What the asset registry holds, and what state each asset is in.
+    ///
+    /// Read-only by signature. With hot reload on, the load count is the visible proof that a
+    /// changed file was picked up, which nothing showed before.
+    void asset_panel(std::string_view title, const assets::Registry& registry);
 
     /// The entity currently selected in the scene panel, if any.
     [[nodiscard]] std::optional<scene::StableId> selected_entity() const noexcept;

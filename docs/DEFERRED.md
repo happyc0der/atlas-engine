@@ -123,6 +123,34 @@ integration ran for the first time. What it found is recorded in
   hardware concurrency minus one, and the acceptance path reporting one hash at every worker
   count. The partitioning rule that makes it hold is in docs/DETERMINISM.md.
 
+### M9 — tooling and the scripting decision
+
+- **Memory and allocation counters.** The blueprint lists them among the editor's panels. There
+  is no custom allocator to instrument — the charter defers one until a recorded limitation
+  justifies it — so a panel would report what the operating system reports, which is already
+  available and not attributable to anything. Tracy in the `macos-profile` preset covers
+  allocations when the question actually arises. Revisit if the allocator is ever built.
+- **Record and play as buttons.** The controls panel shows whether a replay is being recorded
+  and how many commands it holds, but cannot start or stop it: `record_applied_commands` is
+  set when the kernel is built. A setter would let a recording begin mid-run, and a replay that
+  does not start at tick zero cannot reproduce the run it came from. The status rows are the
+  useful half; the buttons would be a trap.
+- **A simulation reset button.** F9 reloads from a file, which is the existing lifecycle path
+  and is what the panel's Load does. Regenerating a world from its seed without a file is a new
+  path, and nothing has asked for one.
+- **Dock layout persistence and multiple viewports.** `IniFilename` is deliberately null, so
+  the overlay writes nothing to disk and every run starts in a known state. Panels place
+  themselves once and are then left alone. Multiple viewports are on the charter's deferred
+  list, and the bar is a measured limitation rather than a preference.
+
+- **Embedded scripting.** Decided in [ADR-0009](adr/0009-scripting-decision.md): deferred, with
+  the boundary fixed now so that adopting it later changes no existing signature. Nothing
+  outside the tick reaches simulation state except through a command, and nothing runs *during*
+  a tick. The trigger is all three of: a recorded limitation a stamped command list cannot
+  express; `CommandQueue`, `CommandHandler`, `SnapshotHeader` and the three format versions
+  unchanged for two consecutive milestones; and the edit infrastructure existing, which it now
+  does. WebAssembly is evaluated against Lua when that fires, on determinism grounds.
+
 ### M7 — Strategy Lab
 
 - **Column-level read and write sets.** The schedule's granularity is the table, so the lab's
@@ -214,8 +242,9 @@ integration ran for the first time. What it found is recorded in
   - **Reparent by drag.** The command exists; the gesture needs drag-and-drop targets on every
     tree node and visible feedback when a cycle is refused. A parent field in the inspector is
     the same command with a fraction of the surface, and comes first.
-  - **Widgets for the lab's simulation controls**, which are still keyboard only. That is
-    M9's editor-usability slice rather than this one.
+  - ~~**Widgets for the lab's simulation controls.**~~ **Built**, along with a log console and
+    an asset status panel. Keys and buttons now produce the same request type and are applied
+    by one function, so the two cannot drift.
 - **The sandbox's zoom anchor on a high-density display.** `DemoScene` hands the pointer's
   logical coordinates to a camera whose viewport is in pixels, so a wheel zoom anchors at half
   the intended point on a two-times display. The lab converts; the sandbox should too. Found

@@ -307,7 +307,13 @@ void step_simulation(atlas::Tick tick) {
     }
 
     const atlas::app::LogSession logging;
-    if (const auto status = atlas::app::configure_logging(options->log_level, options->log_file);
+    // Owned here, so it dies with this function and the sink registry's weak reference to
+    // it simply stops resolving. Four thousand records is a few seconds of a busy frame loop
+    // and about a megabyte, which is worth having when something goes wrong once.
+    const auto log_buffer = std::make_shared<atlas::log::LogBuffer>(4096);
+
+    if (const auto status =
+            atlas::app::configure_logging(options->log_level, options->log_file, log_buffer);
         !status) {
         return status;
     }
@@ -602,10 +608,17 @@ void step_simulation(atlas::Tick tick) {
                         }};
                         overlay->stats_panel("Atlas", stats);
 
-                        // Read-only: the panel takes the scene by const reference, so no
-                        // widget can reach past the validation Scene performs.
+                        // The panel takes the history, not the scene. The history exposes
+                        // its scene as const and changes it only through undoable commands,
+                        // so a widget still cannot reach past the validation Scene performs.
                         if (scene_demo.has_value()) {
                             overlay->scene_panel("Scene", scene_demo->history());
+                        }
+
+                        overlay->asset_panel("Assets", *registry);
+
+                        if (overlay->log_console_panel("Log", *log_buffer).clear_requested) {
+                            log_buffer->clear();
                         }
 
                         prepared_overlay = overlay->end_frame(*frame);

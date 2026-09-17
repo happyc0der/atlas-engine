@@ -5,6 +5,7 @@
 #include <atlas/edit/command.hpp>
 #include <atlas/rhi/internal/sdl_gpu_access.hpp>
 #include <atlas/tools/debug_ui.hpp>
+#include <atlas/tools/panels.hpp>
 
 #include <SDL3/SDL_gpu.h>
 
@@ -17,6 +18,7 @@
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace atlas::tools {
 namespace {
@@ -78,6 +80,19 @@ struct DebugUi::Impl {
     /// Selection belongs to the panel, not to the scene. Putting it in the scene would make
     /// a save file depend on what an engineer happened to have clicked.
     std::optional<scene::StableId> selected;
+
+    /// The log console's own state. The filter is a view setting, like selection.
+    LogFilter log_filter;
+    /// A fixed buffer because that is what ImGui::InputText writes into. A std::string sized
+    /// to fit would work too, but only by being resized to its capacity and then trimmed at
+    /// the terminator on every read, which reads like a mistake even when it is not.
+    std::array<char, 64> log_category_input{};
+    bool log_autoscroll = true;
+    /// Copied from the buffer only when its push count changes, because copying it is a lock
+    /// and an allocation per record and this runs every frame.
+    std::vector<log::LogBuffer::Entry> log_cache;
+    std::uint64_t log_seen_pushes = 0;
+    bool log_cache_valid = false;
 
     Impl() = default;
     Impl(const Impl&) = delete;
@@ -500,6 +515,223 @@ void DebugUi::scene_panel(std::string_view title, edit::History& history) {
     ImGui::End();
 
     m_impl->selected = selected;
+}
+
+LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::LogBuffer& buffer) {
+    LogConsoleReport report;
+    if (m_impl == nullptr || !m_impl->frame_open) {
+        return report;
+    }
+    ImGui::SetCurrentContext(m_impl->context);
+
+    // The buffer is shared with every thread that logs, and entries() copies it whole under a
+    // lock. Comparing the push count first turns that into one cheap locked read per frame,
+    // and the count is monotonic so eviction cannot make a change look like no change.
+    const std::uint64_t pushes = buffer.push_count();
+    if (!m_impl->log_cache_valid || pushes != m_impl->log_seen_pushes) {
+        m_impl->log_cache = buffer.entries();
+        m_impl->log_seen_pushes = pushes;
+        m_impl->log_cache_valid = true;
+    }
+
+    // Below the asset panel rather than on top of it. Every panel here places itself once and
+    // is then left alone, so the first-open layout is the only chance to not look broken.
+    ImGui::SetNextWindowPos(ImVec2(400.0F, 510.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(620.0F, 280.0F), ImGuiCond_FirstUseEver);
+
+    const std::string window_title{title};
+    if (ImGui::Begin(window_title.c_str())) {
+        constexpr std::array<const char*, 6> kSeverities{"trace",   "debug", "info",
+                                                         "warning", "error", "fatal"};
+        int severity = static_cast<int>(m_impl->log_filter.min_severity);
+        ImGui::SetNextItemWidth(120.0F);
+        if (ImGui::Combo("severity", &severity, kSeverities.data(),
+                         static_cast<int>(kSeverities.size()))) {
+            m_impl->log_filter.min_severity = static_cast<log::Severity>(severity);
+        }
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(160.0F);
+        if (ImGui::InputText("category", m_impl->log_category_input.data(),
+                             m_impl->log_category_input.size())) {
+            m_impl->log_filter.category_substring = m_impl->log_category_input.data();
+        }
+
+        ImGui::SameLine();
+        ImGui::Checkbox("follow", &m_impl->log_autoscroll);
+
+        ImGui::SameLine();
+        report.clear_requested = ImGui::Button("Clear");
+
+        ImGui::Separator();
+
+        if (ImGui::BeginChild("records", ImVec2(0.0F, -ImGui::GetFrameHeightWithSpacing()))) {
+            for (const auto& entry : m_impl->log_cache) {
+                if (!matches(entry, m_impl->log_filter)) {
+                    ++report.hidden;
+                    continue;
+                }
+                ++report.shown;
+                ImGui::TextUnformatted(std::format("{:<7} [{}] {}", log::to_string(entry.severity),
+                                                   entry.category, entry.message)
+                                           .c_str());
+            }
+            if (m_impl->log_autoscroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+                ImGui::SetScrollHereY(1.0F);
+            }
+        }
+        ImGui::EndChild();
+
+        ImGui::TextUnformatted(std::format("{} shown, {} hidden, {} held of {}", report.shown,
+                                           report.hidden, buffer.size(), buffer.capacity())
+                                   .c_str());
+    }
+    ImGui::End();
+    return report;
+}
+
+SimulationControlsRequest DebugUi::simulation_controls_panel(std::string_view title,
+                                                             const SimulationControlsView& view) {
+    SimulationControlsRequest request;
+    if (m_impl == nullptr || !m_impl->frame_open) {
+        return request;
+    }
+    ImGui::SetCurrentContext(m_impl->context);
+
+    ImGui::SetNextWindowPos(ImVec2(400.0F, 20.0F), ImGuiCond_FirstUseEver);
+    // Wide enough for the mode buttons on one line. Sized from the longest name a caller has
+    // rather than guessed: at 360 the lab's fourth mode ran off the edge of the panel.
+    ImGui::SetNextWindowSize(ImVec2(600.0F, 210.0F), ImGuiCond_FirstUseEver);
+
+    const std::string window_title{title};
+    if (ImGui::Begin(window_title.c_str())) {
+        const bool paused = view.speed.policy == sim::SpeedPolicy::Paused;
+        if (ImGui::Button(paused ? "Resume" : "Pause")) {
+            // Resuming to normal speed rather than to whatever it was before: the panel does
+            // not know what that was, and the application does. It may substitute.
+            request.speed = paused ? sim::Speed::normal() : sim::Speed::paused();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Step")) {
+            request.single_step = true;
+        }
+
+        ImGui::SameLine();
+        for (const std::uint32_t factor : {1U, 2U, 4U, 8U}) {
+            if (ImGui::Button(std::format("{}x", factor).c_str())) {
+                request.speed = sim::Speed::times(factor);
+            }
+            ImGui::SameLine();
+        }
+        if (ImGui::Button("Unbounded")) {
+            request.speed = sim::Speed::unbounded();
+        }
+
+        ImGui::Separator();
+
+        if (!view.modes.empty()) {
+            ImGui::TextUnformatted("display mode");
+            for (std::size_t index = 0; index < view.modes.size(); ++index) {
+                const bool current = index == view.mode_index;
+                ImGui::BeginDisabled(current);
+                const std::string label{view.modes[index]};
+                if (ImGui::Button(label.c_str())) {
+                    request.mode_index = index;
+                }
+                ImGui::EndDisabled();
+                // Wrap rather than run off the edge: a caller with more modes, or longer
+                // names, must not lose the last of them off the side of the panel.
+                if (index + 1 < view.modes.size()) {
+                    const float next_width =
+                        ImGui::CalcTextSize(std::string{view.modes[index + 1]}.c_str()).x +
+                        (ImGui::GetStyle().FramePadding.x * 2.0F);
+                    if (ImGui::GetContentRegionAvail().x > next_width) {
+                        ImGui::SameLine();
+                    }
+                }
+            }
+            ImGui::Separator();
+        }
+
+        if (ImGui::Button("Reset view")) {
+            request.reset_view = true;
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!view.can_save);
+        if (ImGui::Button("Save")) {
+            request.save = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!view.can_load);
+        if (ImGui::Button("Load")) {
+            request.load = true;
+        }
+        ImGui::EndDisabled();
+
+        ImGui::Separator();
+        ImGui::TextUnformatted(
+            std::format("tick {} at {}", view.tick, speed_name(view.speed)).c_str());
+        // Status, not a control. Recording is chosen when the kernel is built, so that a replay
+        // always covers a whole run rather than starting from wherever a button was pressed.
+        ImGui::TextUnformatted(
+            view.recording ? std::format("recording: {} commands", view.recorded_commands).c_str()
+                           : "not recording");
+    }
+    ImGui::End();
+    return request;
+}
+
+void DebugUi::asset_panel(std::string_view title, const assets::Registry& registry) {
+    if (m_impl == nullptr || !m_impl->frame_open) {
+        return;
+    }
+    ImGui::SetCurrentContext(m_impl->context);
+
+    ImGui::SetNextWindowPos(ImVec2(400.0F, 250.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(620.0F, 240.0F), ImGuiCond_FirstUseEver);
+
+    const std::string window_title{title};
+    if (ImGui::Begin(window_title.c_str())) {
+        const auto stats = registry.stats();
+        ImGui::TextUnformatted(
+            std::format("{} assets: {} ready, {} failed, {} loading, {} awaiting finalisation",
+                        stats.total, stats.ready, stats.failed, stats.in_progress,
+                        stats.awaiting_finalisation)
+                .c_str());
+        ImGui::TextUnformatted(
+            std::format("cache: {} hits, {} misses", stats.cache_hits, stats.cache_misses).c_str());
+        ImGui::Separator();
+
+        if (ImGui::BeginTable("assets", 5,
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+                                  ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("path");
+            ImGui::TableSetupColumn("state");
+            ImGui::TableSetupColumn("loads");
+            ImGui::TableSetupColumn("bytes");
+            ImGui::TableSetupColumn("error");
+            ImGui::TableHeadersRow();
+
+            // Ordered by path, which the registry guarantees, so rows do not jump about
+            // between frames as assets finish loading.
+            for (const auto& info : registry.all()) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(std::string{info.path.text()}.c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(std::string{assets::to_string(info.state)}.c_str());
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextUnformatted(std::format("{}", info.load_count).c_str());
+                ImGui::TableSetColumnIndex(3);
+                ImGui::TextUnformatted(std::format("{}", info.bytes).c_str());
+                ImGui::TableSetColumnIndex(4);
+                ImGui::TextUnformatted(info.error.c_str());
+            }
+            ImGui::EndTable();
+        }
+    }
+    ImGui::End();
 }
 
 void DebugUi::select_entity(scene::StableId id) noexcept {

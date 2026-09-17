@@ -200,3 +200,36 @@ TEST_CASE("a buffer reports the capacity it was given", "[core][log]") {
     CHECK(buffer.capacity() == 16);
     CHECK(buffer.size() == 0);
 }
+
+TEST_CASE("a buffer counts every record it was ever given", "[core][log]") {
+    // Distinct from size(), which is what is currently held. A viewer polling for new records
+    // needs to know that something arrived even when eviction kept the size the same, and
+    // needs to know it without copying the whole buffer to compare.
+    atlas::log::LogBuffer buffer{2};
+    CHECK(buffer.push_count() == 0);
+
+    const auto record = [](std::string_view message) {
+        return atlas::log::Record{
+            .timestamp = std::chrono::system_clock::now(),
+            .thread = std::this_thread::get_id(),
+            .category = atlas::log::category::kApp,
+            .severity = atlas::log::Severity::Info,
+            .message = message,
+            .where = std::source_location::current(),
+        };
+    };
+
+    buffer.push(record("one"));
+    buffer.push(record("two"));
+    buffer.push(record("three"));
+
+    // Capacity two, so one was evicted: the size stopped growing and the count did not.
+    CHECK(buffer.size() == 2);
+    CHECK(buffer.push_count() == 3);
+
+    // Clearing empties the buffer without rewriting history: a viewer that cleared the display
+    // must not then be told that everything it had already seen is new again.
+    buffer.clear();
+    CHECK(buffer.size() == 0);
+    CHECK(buffer.push_count() == 3);
+}

@@ -131,6 +131,15 @@ class LogBuffer {
     /// Records currently held, oldest first.
     [[nodiscard]] std::vector<Entry> entries() const;
     [[nodiscard]] std::size_t size() const;
+
+    /// How many records have ever been pushed, including those since evicted.
+    ///
+    /// For a reader that wants to know whether anything is new without copying the buffer to
+    /// find out: `entries()` allocates a vector and copies every record under the lock, which
+    /// is fine once but not once a frame. A viewer compares this against what it saw last and
+    /// re-reads only when it changed. Monotonic, so it also distinguishes "nothing logged"
+    /// from "everything logged was evicted".
+    [[nodiscard]] std::uint64_t push_count() const;
     [[nodiscard]] std::size_t capacity() const noexcept;
     void clear();
 

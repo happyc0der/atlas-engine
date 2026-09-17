@@ -188,6 +188,7 @@ struct LogBuffer::Impl {
     mutable std::mutex mutex;
     std::deque<Entry> entries;
     std::size_t capacity;
+    std::uint64_t pushes = 0;
 
     explicit Impl(std::size_t cap) : capacity(cap == 0 ? 1 : cap) {}
 };
@@ -198,6 +199,7 @@ LogBuffer::~LogBuffer() = default;
 
 void LogBuffer::push(const Record& record) {
     const std::scoped_lock lock{m_impl->mutex};
+    ++m_impl->pushes;
     if (m_impl->entries.size() >= m_impl->capacity) {
         m_impl->entries.pop_front();
     }
@@ -218,6 +220,11 @@ std::vector<LogBuffer::Entry> LogBuffer::entries() const {
 std::size_t LogBuffer::size() const {
     const std::scoped_lock lock{m_impl->mutex};
     return m_impl->entries.size();
+}
+
+std::uint64_t LogBuffer::push_count() const {
+    const std::scoped_lock lock{m_impl->mutex};
+    return m_impl->pushes;
 }
 
 std::size_t LogBuffer::capacity() const noexcept {

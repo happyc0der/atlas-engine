@@ -121,7 +121,7 @@ declaration. Its only permitted consumer is `atlas::rhi`.
 | simulation | Ticks, commands, system contracts, RNG, hashing, replay, snapshots | Contains game rules |
 | runtime | Composition, main loop, subsystem lifetimes | Depends on tools or editor code |
 | edit | Undoable scene commands, the history that applies them | Holds a UI type; is the simulation's command queue; is depended on by anything that draws |
-| tools | Editor shell, panels | Is depended on by runtime modules |
+| tools | Editor shell, panels: statistics, scene, log console, simulation controls, asset status | Is depended on by runtime modules |
 | apps | Composition roots and demonstrations | Hold reusable engine logic |
 
 ## Time model

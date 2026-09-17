@@ -12,11 +12,15 @@ atlas_define_sdl3_target()
 atlas_add_module(tools
     SOURCES
         src/debug_ui.cpp
+        src/panels.cpp
     HEADERS
         include/atlas/tools/debug_ui.hpp
+        include/atlas/tools/panels.hpp
     DEPENDS
         core
+        assets
         edit
+        simulation
         platform
         rhi
         rhi_internal

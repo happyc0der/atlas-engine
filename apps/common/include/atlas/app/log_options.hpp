@@ -9,6 +9,7 @@
 #include <atlas/core/log.hpp>
 #include <atlas/core/result.hpp>
 
+#include <memory>
 #include <string_view>
 
 namespace atlas::app {
@@ -22,7 +23,13 @@ namespace atlas::app {
 ///
 /// Failure: whatever parse_severity or the file sink reports, with "configuring logging"
 /// as context.
-[[nodiscard]] Status configure_logging(std::string_view level, std::string_view log_file);
+/// Set the severity floor and attach the sinks.
+///
+/// `buffer`, when it has not expired, receives every record as well, for a log console panel to
+/// read. Held weakly and passed in rather than created here, so the buffer belongs to whoever
+/// wanted one and there is no process-wide object nobody owns.
+[[nodiscard]] Status configure_logging(std::string_view level, std::string_view log_file,
+                                       std::weak_ptr<log::LogBuffer> buffer = {});
 
 /// Tears down the process-wide logging configuration when the run ends.
 ///

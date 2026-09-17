@@ -15,6 +15,7 @@
 #include <atlas/core/args.hpp>
 #include <atlas/core/assert.hpp>
 #include <atlas/core/build_info.hpp>
+#include <atlas/core/hash.hpp>
 #include <atlas/core/log.hpp>
 #include <atlas/core/profile.hpp>
 #include <atlas/core/time.hpp>
@@ -33,6 +34,7 @@
 #include <atlas/simulation/tick_accumulator.hpp>
 #include <atlas/tasks/worker_pool.hpp>
 #include <atlas/tools/debug_ui.hpp>
+#include <atlas/tools/panels.hpp>
 
 #include "file_bytes.hpp"
 
@@ -435,6 +437,19 @@ struct Phases {
                                           .count());
 }
 
+/// Display-mode names in enumeration order, for the controls panel.
+///
+/// Built from to_string so the panel and the status row cannot disagree about what a mode is
+/// called, and sized from MapMode::Count so adding one fails to compile here rather than
+/// quietly leaving a button missing.
+const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode::Count)>
+    kMapModeNames{
+        atlas::lab::to_string(atlas::lab::MapMode::RegionValue),
+        atlas::lab::to_string(atlas::lab::MapMode::OwnerIndex),
+        atlas::lab::to_string(atlas::lab::MapMode::PopulationValue),
+        atlas::lab::to_string(atlas::lab::MapMode::ColorIndex),
+};
+
 [[nodiscard]] std::string_view speed_name(const atlas::sim::Speed& speed) {
     using atlas::sim::SpeedPolicy;
     switch (speed.policy) {
@@ -471,7 +486,13 @@ struct Phases {
     }
 
     const atlas::app::LogSession logging;
-    if (const auto status = atlas::app::configure_logging(options->log_level, options->log_file);
+    // Owned here, so it dies with this function and the sink registry's weak reference to
+    // it simply stops resolving. Four thousand records is a few seconds of a busy frame loop
+    // and about a megabyte, which is worth having when something goes wrong once.
+    const auto log_buffer = std::make_shared<atlas::log::LogBuffer>(4096);
+
+    if (const auto status =
+            atlas::app::configure_logging(options->log_level, options->log_file, log_buffer);
         !status) {
         return status;
     }
@@ -636,8 +657,80 @@ struct Phases {
     std::uint64_t frame_index = 0;
     bool quit = false;
     bool captured = false;
+    // From the last tick of the most recent frame, for the determinism rows. Rejected is the
+    // one worth watching: a command that fails validation is logged and dropped, and a run
+    // quietly dropping every command looks exactly like a run nobody is sending any.
+    std::size_t last_applied = 0;
+    std::size_t last_rejected = 0;
+
     atlas::lab::MapMode mode = options->map_mode;
     atlas::sim::Speed resume_speed = accumulator->speed();
+
+    // Keys and buttons both produce a request and both come through here. Two code paths that
+    // did the same things separately would drift, and the one that drifted would be the one
+    // nobody tested.
+    const auto apply_controls = [&](const atlas::tools::SimulationControlsRequest& request) {
+        if (request.empty()) {
+            return;
+        }
+        if (request.speed.has_value()) {
+            // Remember what to come back to before pausing, so resuming restores the speed
+            // rather than dropping to 1x. The panel cannot do this: it does not know the
+            // previous speed, which is why it asks for normal and is corrected here.
+            if (request.speed->policy == atlas::sim::SpeedPolicy::Paused) {
+                resume_speed = accumulator->speed();
+                accumulator->set_speed(atlas::sim::Speed::paused());
+            } else if (accumulator->speed().policy == atlas::sim::SpeedPolicy::Paused &&
+                       request.speed->policy == atlas::sim::SpeedPolicy::Realtime &&
+                       request.speed->numerator == 1 && request.speed->denominator == 1) {
+                accumulator->set_speed(resume_speed);
+            } else {
+                accumulator->set_speed(*request.speed);
+            }
+        }
+        if (request.single_step) {
+            accumulator->set_speed(
+                atlas::sim::Speed{.policy = atlas::sim::SpeedPolicy::SingleStep});
+            accumulator->request_single_step();
+        }
+        if (request.mode_index.has_value() &&
+            *request.mode_index < static_cast<std::size_t>(atlas::lab::MapMode::Count)) {
+            mode = static_cast<atlas::lab::MapMode>(*request.mode_index);
+        }
+        if (request.reset_view && field.has_value()) {
+            field->reset_camera();
+        }
+        if (request.save) {
+            if (options->save_path.empty()) {
+                ATLAS_LOG_WARN(kApp, "save requested with no --save path");
+            } else if (auto s = atlas::lab::save_world_to(std::filesystem::path{options->save_path},
+                                                          sim.lab.world, *sim.kernel, sim.commands);
+                       !s) {
+                ATLAS_LOG_ERROR(kApp, "save failed: {}", s.error());
+            } else {
+                ATLAS_LOG_INFO(kApp, "saved '{}' at tick {}", options->save_path,
+                               sim.kernel->current_tick());
+            }
+        }
+        if (request.load) {
+            if (options->load_path.empty() && options->save_path.empty()) {
+                ATLAS_LOG_WARN(kApp, "load requested with neither --load nor --save path");
+            } else {
+                const std::filesystem::path path{options->load_path.empty() ? options->save_path
+                                                                            : options->load_path};
+                if (auto s = load_guarded(path, sim, *accumulator,
+                                          field.has_value() ? &*field : nullptr);
+                    !s) {
+                    ATLAS_LOG_ERROR(kApp, "load failed: {}", s.error());
+                } else {
+                    last_hash = sim.lab.world.hash();
+                    if (device.has_value()) {
+                        publish();
+                    }
+                }
+            }
+        }
+    };
     atlas::lab::CellField::DrawStats last_draw;
     Phases phases;
 
@@ -693,64 +786,29 @@ struct Phases {
                 }
                 using atlas::platform::Key;
                 using atlas::sim::Speed;
+                atlas::tools::SimulationControlsRequest from_key;
                 switch (key->key) {
                 case Key::Escape: quit = true; break;
                 case Key::Space:
-                    if (accumulator->speed().policy == atlas::sim::SpeedPolicy::Paused) {
-                        accumulator->set_speed(resume_speed);
-                    } else {
-                        resume_speed = accumulator->speed();
-                        accumulator->set_speed(Speed::paused());
-                    }
+                    from_key.speed = accumulator->speed().policy == atlas::sim::SpeedPolicy::Paused
+                                         ? Speed::normal()
+                                         : Speed::paused();
                     break;
-                case Key::Period:
-                    accumulator->set_speed(Speed{.policy = atlas::sim::SpeedPolicy::SingleStep});
-                    accumulator->request_single_step();
+                case Key::Period: from_key.single_step = true; break;
+                case Key::Num1: from_key.speed = Speed::normal(); break;
+                case Key::Num2: from_key.speed = Speed::times(2); break;
+                case Key::Num3: from_key.speed = Speed::times(4); break;
+                case Key::Num4: from_key.speed = Speed::times(8); break;
+                case Key::U: from_key.speed = Speed::unbounded(); break;
+                case Key::M:
+                    from_key.mode_index = static_cast<std::size_t>(atlas::lab::next(mode));
                     break;
-                case Key::Num1: accumulator->set_speed(Speed::normal()); break;
-                case Key::Num2: accumulator->set_speed(Speed::times(2)); break;
-                case Key::Num3: accumulator->set_speed(Speed::times(4)); break;
-                case Key::Num4: accumulator->set_speed(Speed::times(8)); break;
-                case Key::U: accumulator->set_speed(Speed::unbounded()); break;
-                case Key::M: mode = atlas::lab::next(mode); break;
-                case Key::R:
-                    if (field.has_value()) {
-                        field->reset_camera();
-                    }
-                    break;
-                case Key::F5:
-                    if (options->save_path.empty()) {
-                        ATLAS_LOG_WARN(kApp, "F5 pressed with no --save path");
-                    } else if (auto s = atlas::lab::save_world_to(
-                                   std::filesystem::path{options->save_path}, sim.lab.world,
-                                   *sim.kernel, sim.commands);
-                               !s) {
-                        ATLAS_LOG_ERROR(kApp, "save failed: {}", s.error());
-                    } else {
-                        ATLAS_LOG_INFO(kApp, "saved '{}' at tick {}", options->save_path,
-                                       sim.kernel->current_tick());
-                    }
-                    break;
-                case Key::F9:
-                    if (options->load_path.empty() && options->save_path.empty()) {
-                        ATLAS_LOG_WARN(kApp, "F9 pressed with neither --load nor --save path");
-                    } else {
-                        const auto path = std::filesystem::path{
-                            options->load_path.empty() ? options->save_path : options->load_path};
-                        if (auto s = load_guarded(path, sim, *accumulator,
-                                                  field.has_value() ? &*field : nullptr);
-                            !s) {
-                            ATLAS_LOG_ERROR(kApp, "load failed: {}", s.error());
-                        } else {
-                            last_hash = sim.lab.world.hash();
-                            if (device.has_value()) {
-                                publish();
-                            }
-                        }
-                    }
-                    break;
+                case Key::R: from_key.reset_view = true; break;
+                case Key::F5: from_key.save = true; break;
+                case Key::F9: from_key.load = true; break;
                 default: break;
                 }
+                apply_controls(from_key);
             }
         }
         if (field.has_value() && !(overlay.has_value() && overlay->wants_mouse())) {
@@ -836,6 +894,8 @@ struct Phases {
             }
             ++ticks_run;
             last_hash = report->state_hash;
+            last_applied = report->commands_applied;
+            last_rejected = report->commands_rejected;
             if (recorder.has_value()) {
                 recorder->record_commands(report->applied_commands);
                 recorder->record_tick(*report);
@@ -885,7 +945,7 @@ struct Phases {
                     }
 
                     atlas::tools::DebugUi::PreparedFrame prepared{};
-                    std::array<std::string, 13> values;
+                    std::array<std::string, 16> values;
                     if (overlay.has_value()) {
                         overlay->begin_frame(static_cast<float>(frame_ns) / 1'000'000'000.0F,
                                              frame->swapchain_extent().width,
@@ -912,7 +972,12 @@ struct Phases {
                         values[10] = phase(phases.draw);
                         values[11] = phase(phases.present);
                         values[12] = std::format("{:.2f}", field->camera().zoom());
-                        const std::array<atlas::tools::Stat, 13> stats{{
+                        values[13] = std::format("{:#018x}", sim.kernel->seed());
+                        values[14] = std::format(
+                            "{} applied, {} rejected, {} late, {} pending", last_applied,
+                            last_rejected, sim.kernel->late_commands(), sim.commands.pending());
+                        values[15] = std::format("{}", atlas::kHashAlgorithmVersion);
+                        const std::array<atlas::tools::Stat, 16> stats{{
                             {.label = "frame", .value = values[0]},
                             {.label = "tick", .value = values[1]},
                             {.label = "state hash", .value = values[2]},
@@ -926,8 +991,29 @@ struct Phases {
                             {.label = "draw (cpu)", .value = values[10]},
                             {.label = "acquire+present", .value = values[11]},
                             {.label = "zoom", .value = values[12]},
+                            {.label = "seed", .value = values[13]},
+                            {.label = "commands", .value = values[14]},
+                            {.label = "hash version", .value = values[15]},
                         }};
                         overlay->stats_panel("Strategy Lab", stats);
+
+                        const atlas::tools::SimulationControlsView view{
+                            .speed = accumulator->speed(),
+                            .tick = sim.kernel->current_tick(),
+                            .modes = kMapModeNames,
+                            .mode_index = static_cast<std::size_t>(mode),
+                            .can_save = !options->save_path.empty(),
+                            .can_load = !options->load_path.empty() || !options->save_path.empty(),
+                            .recording = recorder.has_value(),
+                            .recorded_commands = recorder.has_value()
+                                                     ? recorder->replay().commands.size()
+                                                     : std::uint64_t{0},
+                        };
+                        apply_controls(overlay->simulation_controls_panel("Controls", view));
+
+                        if (overlay->log_console_panel("Log", *log_buffer).clear_requested) {
+                            log_buffer->clear();
+                        }
                         prepared = overlay->end_frame(*frame);
                     }
 
