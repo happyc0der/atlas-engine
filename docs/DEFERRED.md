@@ -8,7 +8,7 @@ records, and a reason nobody can find is a reason nobody can challenge.
 A deferral is not a to-do. Each entry says what would have to become true for the work to be
 worth doing; several will never become true, and that is a fine outcome.
 
-Last reviewed 2026-09-15, after M6.
+Last reviewed 2026-09-17, after M8.
 
 ## Open gaps in the infrastructure
 
@@ -61,9 +61,12 @@ integration ran for the first time. What it found is recorded in
 
 - **A render graph.** ADR-0002 set the bar at two real multi-pass features, so that it is
   designed against something rather than imagined. **Status changed in M7:** capture's
-  offscreen-then-blit and the identifier-target picking pass are those two. The question is
-  live for M8, and the design must be checked against both implementations, in particular
-  against what each does with target lifetime and pass ordering, before a line is written.
+  offscreen-then-blit and the identifier-target picking pass are those two. **M8 did not take
+  it up, and that was right rather than an oversight:** M8 was profile-guided, and no profile
+  pointed at pass ordering or target lifetime. The cost that did show up in the frame was
+  instance data, which compaction fixed without touching pass structure. The bar is still met
+  and the design must still be checked against both implementations; what is missing is a
+  measurement or a third pass that makes hand-ordering the bottleneck.
 - **Rotated sprites.** The batcher draws axis-aligned rectangles. A scene can express a
   rotation the renderer cannot draw. First deferred in M3 with "picked up when the renderer
   next changes, in M7". The renderer changed in M7 and this was deferred again, on a stated
@@ -113,8 +116,11 @@ integration ran for the first time. What it found is recorded in
 - **Save migration code.** There is no second format version to migrate from, and migration for
   an imagined change would be untested code. The version check makes deferring it safe: a file
   this build cannot read is refused rather than misread.
-- **Worker-count invariance.** M8 by plan. M6 proves single-threaded replay determinism and
-  ships the contract M8 needs; doing both at once would double the debugging surface.
+- ~~**Worker-count invariance.** M8 by plan.~~ **Done in M8.** M6's contract needed no
+  change, which was the point of deferring it: the compute phase moved onto workers as a
+  scheduling change. Proved two ways — a test comparing an unsplit baseline against 1, 2, 4 and
+  hardware concurrency minus one, and the acceptance path reporting one hash at every worker
+  count. The partitioning rule that makes it hold is in docs/DETERMINISM.md.
 
 ### M7 — Strategy Lab
 
@@ -122,7 +128,12 @@ integration ran for the first time. What it found is recorded in
   two writers of `cells` (one touches `region_value`, the other `owner_index`) land in separate
   batches: three batches for four systems, observed and asserted in the lab's tests. Column
   sets would let them share one. Recorded from a single observation rather than acted on; M8's
-  parallel scheduling is where it earns a decision.
+  parallel scheduling was to be where it earned a decision. **M8 decided not to, on a
+  measurement:** parallelising *within* a batch, across rows, gave 2.38x, and the three
+  serialised batches were never the limit — the hash and the commit phase were. Column sets
+  would let two systems share a batch that is already fast. The sharper condition is a workload
+  where the batch boundaries rather than the rows dominate a profile, which one million cells
+  over four systems does not produce.
 - **The world hash's cost.** ~~Two ways out, both M8 work.~~ **Done in M8, and neither of those
   two was the answer.** Measurement killed both: hashing only the tables a tick wrote saves
   nothing, because the tables it writes are the whole cost, and parallel hashing would buy 13%
@@ -138,6 +149,23 @@ integration ran for the first time. What it found is recorded in
   measurement was right about a tick that no longer exists, which is the ordinary condition of
   optimisation work rather than a mistake: what a candidate is worth depends on what else has
   been done.
+
+  **Still not built at the end of M8, and the reason is not a performance one.** After the
+  commit swap the tick is 694 microseconds and the hash is about 40% of it, which makes this
+  the largest remaining item by some distance. Every way of hashing in parallel — per-table
+  chunks combined in table order, or a tree over block hashes — produces a different value from
+  the sequential hash of the same state. That is not a bug to be engineered away: a hash whose
+  value depends on nothing but the bytes is exactly what makes the current one splittable
+  *without* changing the answer, and a parallel scheme buys speed by giving that up. So it
+  spends `kHashAlgorithmVersion` 3, invalidates every save and replay in existence, and
+  re-records every golden value, a fortnight after version 2 did the same.
+
+  **The condition is therefore an owner's decision rather than a measurement**, and it is the
+  only item in this file shaped that way. What would make it worth taking: a tick where the
+  hash dominates by more than it does now, or a batch of format-breaking changes worth paying
+  the one migration for together. What would make it unnecessary: hashing less, rather than
+  faster — the lab hashes every table every tick because its systems write every row every
+  tick, and a workload with genuinely cold tables would make dirty-table hashing live again.
 - **A single-threaded tick at a million cells.** ~~33 ms, so 60 ticks a second is out of reach
   at that size until M8's parallel simulation.~~ **2.0 ms since the hash change**, and the lab
   holds 60 ticks a second at a million cells with a 10.7 ms median frame. Parallel simulation is

@@ -15,9 +15,9 @@ Status legend: **done**, *in progress*, planned.
 | M4 | Asset pipeline | L | **done** |
 | M5 | Scene and serialization | M | **done** |
 | M6 | Simulation kernel | L | **done** |
-| M7 | Strategy Lab (engine v0.1) | L | next |
-| M8 | Performance hardening and parallel simulation | L | planned |
-| M9 | Tooling and scripting decision | S–M | planned |
+| M7 | Strategy Lab (engine v0.1) | L | **done** |
+| M8 | Performance hardening and parallel simulation | L | **done** |
+| M9 | Tooling and scripting decision | S–M | next |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -316,7 +316,7 @@ Deferred with reasons rather than silently:
 - **No save migration code.** There is no second format version to migrate from, and writing
   migration for an imagined change would be writing untested code. The version check is what
   makes deferring it safe: a file this build cannot read is refused rather than misread.
-- **Worker-count invariance belongs to M8**, as planned. M6 proves single-threaded replay
+- **Worker-count invariance belonged to M8**, and M8 proved it. M6 proves single-threaded replay
   determinism and ships the contract that M8 needs; doing both at once would double the
   debugging surface.
 
@@ -402,7 +402,8 @@ What it proves, with no game rules anywhere:
   boundaries; the integration check reimplements the index formula in Python.
 - **Four mock systems**, one per access pattern, all integer arithmetic. The schedule's
   batching was observed and then asserted: three batches, the two writers of `cells`
-  serialised because write sets are table-granular. Recorded for M8, not redesigned.
+  serialised because write sets are table-granular. Recorded for M8, which did not take it up:
+parallelism within a batch proved the larger prize. See docs/DEFERRED.md.
 - **The kernel's tick is authoritative.** The accumulator only decides how many ticks to run,
   is committed with what the kernel ran through the shared clamp, is re-synchronised after a
   load, and is compared against the kernel every frame under a debug assertion. A save at 200
@@ -449,7 +450,7 @@ viewport (recorded). All in `docs/DEFERRED.md`.
 One requirement is met with a stated qualification (shaders bypass the registry) and none is
 unmet. Not claimed, because not measured: bit-identical simulation across compilers beyond the
 golden scenario on three platforms; graphics-processor time; and anything about
-multi-threaded execution, which is M8.
+multi-threaded execution, which M8 went on to measure.
 
 ## M8 — Performance hardening and parallel simulation
 
@@ -462,6 +463,74 @@ sanitizer and threshold hardening.
 - Identical per-tick hashes across worker counts 1, 2, 4, and hardware concurrency minus one.
 - ASan, UBSan, and TSan configurations clean for covered tests.
 - Performance regression thresholds recorded for this machine and for CI where stable.
+
+### What was built
+
+M7 handed over a million-cell tick of 13.05 ms and a headline finding: the world hash was 88%
+of it. Every change below was made because a measurement pointed at it, and three candidates
+were killed by measurement instead. Full numbers and method are in `docs/PERFORMANCE.md`.
+
+- **A new hash algorithm, `kHashAlgorithmVersion` 2.** Four independent chains over 32-byte
+  blocks with a final mix, replacing byte-at-a-time FNV-1a for bulk data. **11.6 ms to
+  0.37 ms.** `hash_string` stays FNV-1a: identifiers are short, compile-time, and their cost
+  never appeared in a profile. Avalanche improved from 30.67 to 32.02 bits, measured, because
+  a faster hash that mixes worse is not a faster hash. The golden values were re-recorded, and
+  the change was proved value-only by restoring the old algorithm and watching the old values
+  come back.
+- **`atlas::tasks`**, a fixed worker pool with a deterministic `parallel_for`. The partition
+  depends only on the count and the grain, never on how many workers there are, which is what
+  makes worker-count invariance a property of the work rather than of the schedule. Dispatch
+  costs about 140 ns a chunk, measured before anything was built on it. A use-after-free found
+  by ThreadSanitizer fixed the waiting rule: the caller waits for workers to be out, not merely
+  for chunks to be done.
+- **The compute phase runs on the pool.** A batch holding more than one system is dispatched
+  across workers, and each lab system splits its rows at a grain of 16,384. Commit stays serial
+  in declared order, because that order is what makes two systems writing one table
+  deterministic. **2.07x**, the bottom of the predicted range.
+- **Commit swaps instead of copying.** The 2.07x measurement showed the remaining serial work,
+  and most of it was the commit phase copying each heavy system's scratch into its table: eight
+  megabytes a tick, for nothing, since compute rewrites every row first. Swapping took the
+  sequential tick from 1.960 ms to **1.650 ms** and the parallel one to **694 us**, moving the
+  speedup to **2.38x** — because it removed serial work, which is the only kind that changes a
+  ratio. The contract that makes the swap safe is enforced by a test that predicts every row's
+  new value from its old one.
+- **Instance compaction for the cell field.** Four bytes a cell instead of a 48-byte quad, with
+  the rectangle derived in the shader from the instance index. Submission **7.11 ms to 303 us**
+  and the per-frame buffer 48 MB to 4 MB. Two thirds of the gain came from what compaction
+  revealed rather than from compaction itself: a `push_back` per cell.
+- **Regression thresholds**, and this is where a guess became a measurement. The 1.25x gate is
+  now justified by four consecutive runs of all thirty-four scenarios: 1.03x spread at the
+  median, never above 1.15x. The two scenarios that exceeded the gate on noise alone both
+  measure under two microseconds, so anything under ten microseconds is now reported but cannot
+  fail a comparison.
+
+**Measured and deliberately not built:** hashing only the tables a tick wrote (saves nothing —
+the lab writes almost every table every tick); snapshot pooling (1.9%, because the allocator
+already recycles); parallel hashing (rejected at 2.0 ms, then reopened when the tick shrank —
+see below).
+
+**A correction M8 made to M7's report.** M7 recorded that drawing a million cells cost 8.3 ms.
+It did not: 8.3 ms is 120 Hz, and the frame was waiting for the display. Four thousand cells
+produced the same figure, which is what gave it away. Three documents were corrected and the
+cell-field benchmark now excludes presentation.
+
+### Exit criteria, against what was done
+
+| Criterion | Status |
+|---|---|
+| Profile-guided changes only, with before and after | **Met.** Every change above has a recorded before, after, and a prediction written down in advance; three candidates were dropped when the measurement disagreed, and one rejection was reversed when the tick it was weighed against no longer existed. |
+| Identical per-tick hashes across worker counts 1, 2, 4, and hardware concurrency minus one | **Met**, in tests and by the acceptance path: `atlas_lab --headless --grid 1024` reports `0xd7f4f889cb0f848d` at 0, 4 and 13 workers, at 588, 1372 and 1387 ticks a second. |
+| ASan, UBSan and TSan clean | **Met.** The address preset has always been `-fsanitize=address,undefined`, so every "ASan clean" result this milestone was also UBSan clean; the thread lane found the pool's use-after-free before any parallel result was reported. |
+| Regression thresholds for this machine and for CI where stable | **Met for this machine**, with the threshold derived from measured noise. **Not enforced in CI, as a decision:** the same comparison measures 31x here and about 7x on a shared Windows runner, and a check that fails for reasons unrelated to the change is one people rerun until it passes. |
+
+**Cumulative: the million-cell tick went from 13.05 ms to 694 us, about 19x**, and the cell
+field's submission path from 7.11 ms to 303 us separately.
+
+**Left open, deliberately.** Parallel hashing is now the top candidate at roughly 40% of the
+tick, and it is not taken: every scheme that splits the hash changes its value, which spends
+`kHashAlgorithmVersion` 3 and invalidates saves and replays. That is an owner's decision, not a
+performance one. The render graph and column-level read/write sets were both marked "live for
+M8" and both went untaken; `docs/DEFERRED.md` records why and what would change it.
 
 ## M9 — Tooling and scripting decision
 
@@ -517,18 +586,24 @@ hardware has ever run this code.
 ## Risks and deferred work
 
 Everything consciously not built is listed, with its reason and what would change the
-decision, in [DEFERRED.md](DEFERRED.md). Top risks, as of 2026-09-15:
+decision, in [DEFERRED.md](DEFERRED.md). Top risks, as of 2026-09-17:
 
-- **Nothing has ever been verified anywhere but this machine.** There is no git remote, so
-  the three continuous-integration workflows have never run. Windows has never been compiled
-  by anything. This is the largest risk in the project and it grows with every milestone.
 - **The renderer is verified on one graphics processor and one software rasteriser.** The
   llvmpipe check covers Vulkan; Direct3D 12 remains unbuilt and unverified, and no real
-  non-Apple hardware has ever run this code.
+  non-Apple hardware has ever run this code. This is now the largest risk in the project.
+- **No local Windows machine.** Windows is compiled and tested on every push, which is what
+  retired the risk that used to lead this list, but nobody has ever watched the sandbox or the
+  lab draw a frame there. A Windows failure that a test does not express would not be seen.
+  The plan asked for a decision by M3 on hardware or a virtual machine; it is still open.
 - Cross-architecture float divergence between arm64 and x86_64 (M6); mitigated by
-  integer-first authoritative state and `-ffp-contract=off` from M0. The arm64-to-arm64
-  comparison across two toolchains has been made and agrees; x86_64 remains unmeasured.
-- No local Windows machine. The plan asked for a decision by M3 on acquiring hardware or a
-  virtual machine, and M3 passed without the question being put. It is still open.
-- Snapshot copy cost growth (M6–M8); mitigated by presentation-only snapshots and
-  measurement before optimisation.
+  integer-first authoritative state and `-ffp-contract=off` from M0. **Retired as a risk for
+  the golden scenario**, which agrees across arm64 and x86_64 and on Windows, and remains open
+  for any float that enters authoritative state later.
+- **Continuous integration depends on the repository staying public.** The billing limit for
+  private repositories was reached in M8 at about 103 billed minutes a push, mostly from the
+  macOS multiplier. Going public removed the meter. A future decision to make it private again
+  brings the whole risk back, and the fix would be to drop lanes rather than to pay per push.
+
+Retired since the last review: "nothing has ever been verified anywhere but this machine",
+which four workflows over six jobs on three platforms have answered, and snapshot copy cost
+growth, which M8 measured and found not worth pooling.

@@ -9,8 +9,9 @@
 3. Never compare a debug build to a release build, or results from different machines.
 4. A benchmark regression triggers a review. Editing the benchmark to make it pass is
    forbidden.
-5. Budgets are set only after a baseline exists on the target machine. There are no
-   budgets yet, because there is no baseline yet.
+5. Budgets are set only after a baseline exists on the target machine. Since M8 there is a
+   baseline and a threshold: a scenario more than 1.25x slower than the recorded baseline
+   fails `tools/bench_baseline.py compare`. See "Regression thresholds, M8".
 
 ## Counters
 
@@ -239,8 +240,9 @@ drain, compute, commit, hash. The systems themselves cost 1.5 ms between them, a
 that use a random stream are negligible because they touch a thousandth of the cells. The
 lab first observed 33 ms per tick, not 13, because the kernel was also recording per-system
 hashes, which walk the written tables again; those exist to attribute a replay divergence,
-so the lab now records them only while recording. Hashing strategy is M8's first question and
-`docs/DEFERRED.md` records the two candidate answers.
+so the lab now records them only while recording. Hashing strategy became M8's first change;
+both candidates recorded here were killed by measurement, and the answer turned out to be a
+faster algorithm rather than hashing less. See "Hashing, M8's first change" below.
 
 The frame, measured with the application itself (`atlas_lab`, Release, `--no-overlay`, the
 window fitted to the whole grid, frame times from `FrameCounters` over 120 frames):
@@ -656,7 +658,25 @@ it is understood and intended, which is why recording refuses a dirty tree.
 
 ## Optimisation candidates
 
-Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:
-batching draw submissions, frustum and chunk culling, compact data layouts, dirty-range
-snapshot publication, cached derived data, a faster state-hash algorithm, and reduced
-synchronisation in the commit phase.
+Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.
+
+Five of the seven originally listed here have since been done, which is what the list is for:
+batching draw submissions (M3), frustum and chunk culling (M7), compact data layouts (M8's
+instance compaction), a faster state-hash algorithm (M8, `kHashAlgorithmVersion` 2), and
+reduced synchronisation in the commit phase (M8's scratch swap, which removed the copy rather
+than the synchronisation).
+
+Still hypotheses:
+
+- **Dirty-range snapshot publication.** Publish only the cells that changed. The lab's systems
+  write every row every tick, so there is no dirty range to find in the one workload that
+  exists; a workload with cold regions would change that.
+- **Cached derived data.** Chunk aggregates are recomputed into the snapshot each publication.
+  Never appeared in a profile.
+- **Filling only the displayed palette band.** The snapshot carries all four bands so a map-mode
+  switch rebuilds nothing. Filling one would cut snapshot work by roughly three quarters and
+  make switching modes cost a rebuild. That is a decision about what the lab is for, not an
+  optimisation, and it is not taken.
+- **Hashing in parallel.** The largest remaining item at about 40% of the tick, and the only
+  one gated on an owner's decision rather than a measurement: it changes the hash value and so
+  spends `kHashAlgorithmVersion` 3. See `docs/DEFERRED.md`.
