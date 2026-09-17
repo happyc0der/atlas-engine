@@ -162,6 +162,78 @@ Status RemoveSprite::revert(scene::Scene& scene) {
     return ok();
 }
 
+// --- SetAnimator ---------------------------------------------------------------------------
+
+SetAnimator::SetAnimator(scene::StableId id, const scene::Animator& animator)
+    : m_id(id), m_after(animator) {}
+
+Status SetAnimator::apply(scene::Scene& scene) {
+    if (auto present = require_present(scene, m_id, "set the animator of"); !present) {
+        return present;
+    }
+    if (!m_captured) {
+        const auto* current = scene.animator(m_id);
+        m_before = current != nullptr ? std::optional{*current} : std::nullopt;
+        m_captured = true;
+    }
+    scene.set_animator(m_id, m_after);
+    return ok();
+}
+
+Status SetAnimator::revert(scene::Scene& scene) {
+    if (auto present = require_present(scene, m_id, "restore the animator of"); !present) {
+        return present;
+    }
+    if (m_before.has_value()) {
+        scene.set_animator(m_id, *m_before);
+    } else {
+        scene.remove_animator(m_id);
+    }
+    return ok();
+}
+
+bool SetAnimator::merge(const Command& later) {
+    const auto* other = dynamic_cast<const SetAnimator*>(&later);
+    if (other == nullptr || other->m_id != m_id) {
+        return false;
+    }
+    // The later value replaces ours; the before-image stays the one captured at the start of
+    // the drag, which is what one undo must restore.
+    m_after = other->m_after;
+    return true;
+}
+
+// --- RemoveAnimator ------------------------------------------------------------------------
+
+RemoveAnimator::RemoveAnimator(scene::StableId id) : m_id(id) {}
+
+Status RemoveAnimator::apply(scene::Scene& scene) {
+    if (auto present = require_present(scene, m_id, "remove the animator of"); !present) {
+        return present;
+    }
+    if (!m_captured) {
+        const auto* current = scene.animator(m_id);
+        if (current == nullptr) {
+            // Refused rather than recorded as a no-op: an undo of this would have to invent an
+            // animator the entity never had.
+            return fail(ErrorCode::NotFound, std::format("entity {} has no animator to remove",
+                                                         static_cast<std::uint64_t>(m_id)));
+        }
+        m_before = *current;
+        m_captured = true;
+    }
+    scene.remove_animator(m_id);
+    return ok();
+}
+
+Status RemoveAnimator::revert(scene::Scene& scene) {
+    if (auto present = require_present(scene, m_id, "restore the animator of"); !present) {
+        return present;
+    }
+    scene.set_animator(m_id, m_before);
+    return ok();
+}
+
 // --- SetCamera ------------------------------------------------------------------------------
 
 SetCamera::SetCamera(scene::StableId id, const scene::Camera& camera) : m_id(id), m_after(camera) {}
@@ -323,6 +395,9 @@ Status Destroy::apply(scene::Scene& scene) {
             if (const auto* camera = scene.camera(id); camera != nullptr) {
                 record.camera = *camera;
             }
+            if (const auto* animator = scene.animator(id); animator != nullptr) {
+                record.animator = *animator;
+            }
             m_subtree.push_back(std::move(record));
 
             const auto children = scene.children(id);
@@ -354,6 +429,9 @@ Status Destroy::revert(scene::Scene& scene) {
         }
         if (record.camera.has_value()) {
             scene.set_camera(record.id, *record.camera);
+        }
+        if (record.animator.has_value()) {
+            scene.set_animator(record.id, *record.animator);
         }
 
         if (scene::valid(record.parent)) {

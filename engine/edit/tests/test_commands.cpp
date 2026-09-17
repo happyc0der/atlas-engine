@@ -11,13 +11,16 @@
 
 using atlas::edit::Create;
 using atlas::edit::Destroy;
+using atlas::edit::RemoveAnimator;
 using atlas::edit::RemoveCamera;
 using atlas::edit::RemoveSprite;
 using atlas::edit::Rename;
 using atlas::edit::Reparent;
+using atlas::edit::SetAnimator;
 using atlas::edit::SetCamera;
 using atlas::edit::SetLocalTransform;
 using atlas::edit::SetSprite;
+using atlas::scene::Animator;
 using atlas::scene::Scene;
 using atlas::scene::StableId;
 
@@ -159,6 +162,65 @@ TEST_CASE("setting and removing a camera round-trips", "[edit][commands]") {
         REQUIRE_FALSE(status.has_value());
         CHECK(status.error().code() == atlas::ErrorCode::NotFound);
     }
+}
+
+TEST_CASE("setting an animator where there was none round-trips", "[edit][commands]") {
+    Fixture fixture = make_fixture();
+    REQUIRE(fixture.scene.animator(fixture.child) == nullptr);
+    SetAnimator command{fixture.child, Animator{.start_ms = 250, .speed = 2.0F}};
+    check_round_trip(fixture.scene, command);
+    // The undo removed an animator rather than restoring one, which is the branch a fixture
+    // with an animator everywhere would never reach.
+    CHECK(fixture.scene.animator(fixture.child) == nullptr);
+}
+
+TEST_CASE("removing an animator round-trips", "[edit][commands]") {
+    Fixture fixture = make_fixture();
+    fixture.scene.set_animator(fixture.child, Animator{.start_ms = 100});
+    RemoveAnimator command{fixture.child};
+    check_round_trip(fixture.scene, command);
+}
+
+TEST_CASE("removing an animator that is not there is refused", "[edit][commands]") {
+    // An undo of this would have to invent an animator the entity never had, which is the
+    // same reasoning as the sprite it mirrors.
+    Fixture fixture = make_fixture();
+    RemoveAnimator command{fixture.child};
+    const auto status = command.apply(fixture.scene);
+    REQUIRE_FALSE(status.has_value());
+    CHECK(status.error().code() == atlas::ErrorCode::NotFound);
+}
+
+TEST_CASE("animator edits merge into one step", "[edit][commands]") {
+    // A scrub is a drag: dozens of values a second, and one thing the person did. Merging is
+    // what makes a single undo put it back where it started.
+    const Fixture fixture = make_fixture();
+    SetAnimator first{fixture.child, Animator{.start_ms = 10}};
+    const SetAnimator second{fixture.child, Animator{.start_ms = 20}};
+    CHECK(first.merge(second));
+
+    // But not across entities: two different things were adjusted, and one undo must not
+    // revert both.
+    const SetAnimator elsewhere{fixture.root, Animator{.start_ms = 30}};
+    CHECK_FALSE(first.merge(elsewhere));
+}
+
+TEST_CASE("destroying an animated entity keeps its animator", "[edit][commands]") {
+    // The failure this guards against is silent. Destroy captures a fixed list of components,
+    // and a component added to the scene without being added to that list is simply lost when
+    // an entity is destroyed and the destroy is undone.
+    Fixture fixture = make_fixture();
+    fixture.scene.set_animator(fixture.child,
+                               Animator{.start_ms = 750, .speed = 0.5F, .playing = false});
+
+    Destroy command{fixture.child};
+    check_round_trip(fixture.scene, command);
+
+    const auto* restored = fixture.scene.animator(fixture.child);
+    REQUIRE(restored != nullptr);
+    CHECK(restored->start_ms == 750);
+    CHECK(restored->speed == 0.5F);
+    CHECK_FALSE(restored->playing);
 }
 
 TEST_CASE("reparenting round-trips", "[edit][commands]") {

@@ -10,6 +10,7 @@ std::string_view to_string(AssetType type) noexcept {
     case AssetType::Texture: return "texture";
     case AssetType::Shader: return "shader";
     case AssetType::AudioClip: return "audio clip";
+    case AssetType::AnimationClip: return "animation clip";
     }
     return "unrecognised";
 }

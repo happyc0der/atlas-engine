@@ -34,6 +34,8 @@ enum class AssetType : std::uint8_t {
     /// Audio decoded in full and held in memory: a click, a short loop, anything played often
     /// enough that decoding it twice would be the wasteful part.
     AudioClip = 3,
+    /// An animation clip: keys, timings and a frame grid.
+    AnimationClip = 4,
 };
 
 [[nodiscard]] std::string_view to_string(AssetType type) noexcept;

@@ -144,6 +144,44 @@ class SetSprite final : public Command {
     bool m_captured = false;
 };
 
+/// Give an entity a clip to play, or change the one it has.
+///
+/// Merges with a previous `SetAnimator` on the same entity, so scrubbing a start time or
+/// dragging a speed is one undo step rather than one per frame of the drag.
+class SetAnimator final : public Command {
+  public:
+    SetAnimator(scene::StableId id, const scene::Animator& animator);
+
+    [[nodiscard]] Status apply(scene::Scene& scene) override;
+    [[nodiscard]] Status revert(scene::Scene& scene) override;
+    [[nodiscard]] bool merge(const Command& later) override;
+
+    [[nodiscard]] std::string_view label() const noexcept override { return "set animator"; }
+
+  private:
+    scene::StableId m_id;
+    scene::Animator m_after;
+    std::optional<scene::Animator> m_before;
+    bool m_captured = false;
+};
+
+/// Stop an entity animating. Fails with `NotFound` when it has no animator, rather than
+/// recording a no-op whose undo would have to invent one.
+class RemoveAnimator final : public Command {
+  public:
+    explicit RemoveAnimator(scene::StableId id);
+
+    [[nodiscard]] Status apply(scene::Scene& scene) override;
+    [[nodiscard]] Status revert(scene::Scene& scene) override;
+
+    [[nodiscard]] std::string_view label() const noexcept override { return "remove animator"; }
+
+  private:
+    scene::StableId m_id;
+    scene::Animator m_before;
+    bool m_captured = false;
+};
+
 /// Remove an entity's sprite. Fails with `NotFound` when it has none, rather than recording a
 /// command that would undo into a sprite the entity never had.
 class RemoveSprite final : public Command {
@@ -270,6 +308,11 @@ class Destroy final : public Command {
         scene::LocalTransform transform;
         std::optional<scene::SpriteRenderData> sprite;
         std::optional<scene::Camera> camera;
+        /// The clip it was playing. Absent means it was not animating — and the pose it
+        /// happened to be in is deliberately not here, because a pose is what playback made of
+        /// an entity rather than anything an undo owes it. Restoring the animator restarts the
+        /// clip, which is also what loading a file does.
+        std::optional<scene::Animator> animator;
     };
 
     scene::StableId m_id;

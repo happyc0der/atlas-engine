@@ -387,6 +387,160 @@ TEST_CASE("an over-long name is refused", "[scene][serialization]") {
     CHECK(status.error().code() == ErrorCode::MalformedData);
 }
 
+TEST_CASE("a version 1 file loads, and gains only a version number", "[scene][migration]") {
+    // The property ADR-0012 decided, asserted literally rather than described. Version 2 only
+    // appends a component, so a version 1 document is already a valid version 2 one with that
+    // component absent — and re-saving it must produce itself with the version changed and
+    // nothing else. If that ever stops being true, the change was not a pure append and needs
+    // migration code, which is what this failing would be telling whoever broke it.
+    //
+    // The version 1 text is derived from the writer rather than typed out, and that is the
+    // point rather than a shortcut: the claim is about a file this project wrote, and a
+    // hand-typed document differs from one in whitespace, which would make this a test of
+    // indentation. A hand-written document is parsed by the case below instead.
+    Scene authored = make_scene();
+    const auto as_version_two = to_text(authored);
+    REQUIRE(as_version_two.has_value());
+
+    std::string as_version_one = *as_version_two;
+    const auto at = as_version_one.find("\"version\": 2");
+    REQUIRE(at != std::string::npos);
+    as_version_one.replace(at, std::string_view{"\"version\": 2"}.size(), "\"version\": 1");
+
+    Scene loaded;
+    REQUIRE(from_text(loaded, as_version_one).has_value());
+    CHECK(loaded.size() == authored.size());
+
+    // Nothing gained an animator, because a version 1 writer never produced the key.
+    CHECK(loaded.animators().empty());
+
+    const auto resaved = to_text(loaded);
+    REQUIRE(resaved.has_value());
+    CHECK(*resaved == *as_version_two);
+}
+
+TEST_CASE("a hand-written version 1 document loads", "[scene][migration]") {
+    // Typed out, so this covers what the derived case above cannot: a file somebody wrote
+    // rather than one this project produced. It asserts what was read, not the bytes that
+    // come back, because the two differ in whitespace and that difference means nothing.
+    const std::string version_one = R"({
+  "format": "atlas-scene",
+  "version": 1,
+  "entities": [
+    {"id": 1, "name": "root", "transform": {"position": [1.5, -2.5], "rotation": 0.25,
+     "scale": [2.0, 3.0]}},
+    {"id": 2, "name": "child", "parent": 1, "camera": {"zoom": 2.5, "active": true}}
+  ]
+})";
+
+    Scene scene;
+    REQUIRE(from_text(scene, version_one).has_value());
+    CHECK(scene.size() == 2);
+    CHECK(scene.animators().empty());
+
+    const auto* local = scene.local_transform(static_cast<StableId>(1));
+    REQUIRE(local != nullptr);
+    CHECK(local->position.x == 1.5F);
+    CHECK(scene.parent(static_cast<StableId>(2)) == static_cast<StableId>(1));
+}
+
+TEST_CASE("a version 2 file round-trips with its animator", "[scene][migration]") {
+    const std::string version_two = R"({
+  "format": "atlas-scene",
+  "version": 2,
+  "entities": [
+    {
+      "id": 1,
+      "name": "spinner",
+      "animator": {
+        "clip": 999,
+        "start_ms": 250,
+        "speed": 1.5,
+        "playing": false,
+        "loop": "ping-pong"
+      }
+    }
+  ]
+})";
+
+    Scene scene;
+    REQUIRE(from_text(scene, version_two).has_value());
+
+    const auto* animator = scene.animator(static_cast<StableId>(1));
+    REQUIRE(animator != nullptr);
+    CHECK(animator->clip.value() == 999);
+    CHECK(animator->start_ms == 250);
+    CHECK(animator->speed == 1.5F);
+    CHECK_FALSE(animator->playing);
+    CHECK(animator->loop == 2);
+
+    // Round-tripped by value rather than by bytes. A hand-typed document differs from the
+    // writer's own output in whitespace, and that difference says nothing; what matters is
+    // that every field comes back meaning what it meant.
+    const auto resaved = to_text(scene);
+    REQUIRE(resaved.has_value());
+
+    Scene again;
+    REQUIRE(from_text(again, *resaved).has_value());
+    const auto* reloaded = again.animator(static_cast<StableId>(1));
+    REQUIRE(reloaded != nullptr);
+    CHECK(reloaded->clip == animator->clip);
+    CHECK(reloaded->start_ms == animator->start_ms);
+    CHECK(reloaded->speed == animator->speed);
+    CHECK(reloaded->playing == animator->playing);
+    CHECK(reloaded->loop == animator->loop);
+
+    // And the writer's own output is stable, which is the canonical-bytes property the rest
+    // of this file pins for every other component.
+    const auto third = to_text(again);
+    REQUIRE(third.has_value());
+    CHECK(*third == *resaved);
+}
+
+TEST_CASE("the animator is written after the camera", "[scene][migration]") {
+    // ADR-0007 fixes the component order and ADR-0012 appends to it. A component inserted into
+    // the middle changes the bytes of every file already written, so where this key sits is
+    // part of the format rather than a formatting preference.
+    Scene scene;
+    const StableId id = scene.create("thing");
+    scene.set_camera(id, Camera{});
+    scene.set_animator(id, atlas::scene::Animator{});
+
+    const auto text = to_text(scene);
+    REQUIRE(text.has_value());
+    const auto camera_at = text->find("\"camera\"");
+    const auto animator_at = text->find("\"animator\"");
+    REQUIRE(camera_at != std::string::npos);
+    REQUIRE(animator_at != std::string::npos);
+    CHECK(camera_at < animator_at);
+}
+
+TEST_CASE("an animator a file cannot mean is refused", "[scene][migration]") {
+    const auto refused = [](std::string_view animator_body) {
+        const std::string text = std::format(R"({{
+  "format": "atlas-scene",
+  "version": 2,
+  "entities": [{{"id": 1, "name": "x", "animator": {}}}]
+}})",
+                                             animator_body);
+        Scene scene;
+        return !from_text(scene, text).has_value();
+    };
+
+    // A loop mode that is not one of the three. Guessing would play the file differently from
+    // what it says while looking like it worked.
+    CHECK(refused(R"({"loop": "backwards"})"));
+    // A speed outside what the animator will clamp to. The file and the clamp have to agree,
+    // or a round trip would change how fast it plays.
+    CHECK(refused(R"({"speed": 1000.0})"));
+    CHECK(refused(R"({"speed": -1.0})"));
+    // A start so far into a clip that narrowing it would turn it into a small, plausible
+    // number: the classic silent truncation.
+    CHECK(refused(R"({"start_ms": 99999999999})"));
+    // And something that is not an object at all.
+    CHECK(refused(R"("loop")"));
+}
+
 TEST_CASE("the world transform is not stored", "[scene][serialization]") {
     // It is derived from the local transforms, and a file that stored both could disagree
     // with itself. Loading must recompute it.

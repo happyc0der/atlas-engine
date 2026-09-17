@@ -202,6 +202,14 @@ struct Registry::Impl {
             completion.audio = std::move(*imported);
             break;
         }
+        case AssetType::AnimationClip:
+            // The type exists because a scene file records it: an asset identifier carries its
+            // type in the hash, so the number had to be fixed when the scene format gained an
+            // animator, one slice before the importer arrived. Requesting one in this build is
+            // a clear failure rather than an asset that decodes into nothing.
+            completion.error = std::format(
+                "'{}' is an animation clip, which this build cannot import yet", job.path.text());
+            break;
         case AssetType::Unknown:
             completion.error = std::format("'{}' has no importer for its type", job.path.text());
             break;

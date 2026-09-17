@@ -62,8 +62,21 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   treated as hostile input. A failed load changes nothing.
 - The scene is edited only through `edit::History`, which applies undoable commands and
   exposes its scene as const. Panels take the history, never a mutable `Scene&`, so the
-  compiler still enforces that no widget bypasses validation. An application that animates
-  the scene directly must say so and must not animate what the user can edit.
+  compiler still enforces that no widget bypasses validation.
+- **Authored components belong to the history; derived ones belong to whoever computes them,
+  and neither writes the other's fields** (ADR-0012). The animator writes only
+  `AnimationPose`, which is composed on top of the authored transform and never serialised, so
+  an entity can be edited while it plays. This replaced an earlier rule forbidding an
+  application to animate what the user can edit; that rule made the editor unusable on the one
+  scene it existed to edit.
+- A component added to the scene is added in five places or it is added wrongly: the component,
+  the `Scene` accessors, `EntityView`'s flags, the serialiser's fixed key order — appended,
+  never inserted — and `edit::Destroy`'s record with both its loops. Miss the last and
+  destroying the entity then undoing loses the component in silence.
+- Recompose world transforms every frame, unconditionally. The history deliberately does not:
+  it bumps a revision and leaves that to whoever is watching. Something that recomposes only
+  sometimes recomposes wrongly, which is how an edit came to change a number and not the
+  picture.
 - `simulation` contains tick scheduling, commands, hashing, and system contracts.
   It contains no game rules.
 - A tick is always: drain and apply commands, compute, commit, hash. Nothing reaches

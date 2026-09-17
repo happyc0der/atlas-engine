@@ -9,10 +9,15 @@
 /// the same file. Without that, a version-control diff of a scene would be noise, and any
 /// future hash of scene state would depend on the order things happened to be created.
 ///
-/// **Versioned.** Every file records the schema version it was written with. A file from a
-/// newer version is refused rather than half-understood. Migration is written when the first
-/// real schema change happens; the policy is recorded now, the code is not, because a
-/// migration with nothing to migrate is untested by construction.
+/// **Versioned, and since version 2 the rule is written down.** Every file records the schema
+/// version it was written with. A file from a newer version is refused rather than
+/// half-understood; a file from an older one is read.
+///
+/// The rule, decided by ADR-0012: **a version that only appends components needs no migration
+/// code at all.** A component added at version N+1 is read when its key is present and left
+/// absent when it is not, and a writer at version N never produces the key — so an older file
+/// is already a valid newer one with some components missing. Migration code is required only
+/// for a change that is not a pure append: a renamed key, a changed unit, a split field.
 ///
 /// **Untrusted.** A scene file may come from anywhere. Counts, lengths, references and
 /// numbers are validated before anything is allocated or indexed, and parsing never throws
@@ -30,8 +35,20 @@ namespace atlas::scene {
 /// The schema version this build writes.
 ///
 /// Incremented whenever the meaning or the shape of the format changes. See
-/// docs/adr/0007-scene-file-format.md.
-inline constexpr std::uint32_t kSceneFormatVersion = 1;
+/// docs/adr/0007-scene-file-format.md and docs/adr/0012-scene-format-v2.md.
+///
+/// | Version | Change |
+/// |---|---|
+/// | 1 | M5. Name, transform, sprite, camera. |
+/// | 2 | M13. Appends `animator`. A version 1 file loads unchanged, with no animators. |
+inline constexpr std::uint32_t kSceneFormatVersion = 2;
+
+/// The oldest version this build reads.
+///
+/// One, and it will stay one until a change that is not a pure append makes reading an old
+/// file cost something. Refusing an old file is a decision to abandon it, and the bar for that
+/// is higher than the bar for adding a key.
+inline constexpr std::uint32_t kMinSceneFormatVersion = 1;
 
 /// Serialise to text.
 ///

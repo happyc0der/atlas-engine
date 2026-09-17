@@ -5,9 +5,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <format>
 #include <limits>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlas::scene {
@@ -26,6 +29,42 @@ using Json = nlohmann::ordered_json;
 /// after.
 constexpr std::size_t kMaxEntities = 1'000'000;
 constexpr std::size_t kMaxNameLength = 1024;
+
+/// An animator cannot start more than a day into a clip. Not a meaningful limit on authoring —
+/// no clip is a day long — but a bound on a number that arrives from a file and is narrowed
+/// into a smaller field, which is where a silent truncation would otherwise live.
+constexpr std::uint64_t kMaxAnimatorStartMs = 86'400'000;
+
+/// And cannot run more than a hundred times normal speed, which is the same bound the animator
+/// itself clamps to. The two must agree, or a file would round-trip into something that plays
+/// at a different speed from the one it records.
+constexpr float kMaxAnimatorSpeed = 100.0F;
+
+/// A loop mode's name, for the file. Unknown values are written as "once", which is what the
+/// animator does with them too: the two must agree, or a hand-edited file would round-trip into
+/// something that plays differently from what it says.
+[[nodiscard]] std::string_view animation_loop_name(std::uint8_t loop) {
+    switch (loop) {
+    case 0: return "once";
+    case 1: return "loop";
+    case 2: return "ping-pong";
+    default: return "once";
+    }
+}
+
+/// The stored value for a loop mode's name, or nothing when the name is not one.
+[[nodiscard]] std::optional<std::uint8_t> animation_loop_value(std::string_view name) {
+    if (name == "once") {
+        return 0;
+    }
+    if (name == "loop") {
+        return 1;
+    }
+    if (name == "ping-pong") {
+        return 2;
+    }
+    return std::nullopt;
+}
 
 [[nodiscard]] Json write_vec2(const math::Vec2& v) {
     return Json::array({v.x, v.y});
@@ -155,8 +194,24 @@ Result<std::string> to_text(const Scene& scene) {
             entry["camera"] = std::move(node);
         }
 
+        // Appended after camera, per ADR-0007's rule that new components go at the end: a
+        // component inserted into the middle changes the bytes of every file already written.
+        if (const auto* animator = scene.animator(view.id)) {
+            Json node;
+            node["clip"] = animator->clip.value();
+            node["start_ms"] = animator->start_ms;
+            node["speed"] = animator->speed;
+            node["playing"] = animator->playing;
+            // As a word, because the file is read by people and a number here would mean
+            // looking up which one is ping-pong every time.
+            node["loop"] = animation_loop_name(animator->loop);
+            entry["animator"] = std::move(node);
+        }
+
         // The world transform is deliberately absent: it is derived from the local ones, and
-        // a file that stored both could disagree with itself.
+        // a file that stored both could disagree with itself. The animation pose is absent for
+        // the same reason and a stronger one: it is what playback made of the entity rather
+        // than what anyone authored, so a file recording it would change every frame.
         entities.push_back(std::move(entry));
     }
 
@@ -203,10 +258,21 @@ Status from_text(Scene& scene, std::string_view text) {
                               "Use a newer build.",
                               version, kSceneFormatVersion)));
     }
-    if (version == 0) {
+    if (version < kMinSceneFormatVersion) {
+        // Zero is not a version, and anything below the floor is one this build has abandoned.
+        // One message rather than two, because the answer is the same either way.
         return std::unexpected(
-            Error(ErrorCode::VersionMismatch, "schema version 0 is not a version"));
+            Error(ErrorCode::VersionMismatch,
+                  std::format("the scene file is version {}, and this build reads no older than {}",
+                              version, kMinSceneFormatVersion)));
     }
+
+    // Anything in [kMinSceneFormatVersion, kSceneFormatVersion] is read by the one path below,
+    // and there is deliberately no branch on the version after this point. That is the whole
+    // of ADR-0012's rule: every version so far has only appended components, and a component
+    // is read when its key is present and left absent when it is not, so an older file is
+    // already a valid newer one with some keys missing. The day a change is not a pure append
+    // is the day this comment is replaced by a migration and not before.
 
     if (!root.contains("entities") || !root["entities"].is_array()) {
         return std::unexpected(
@@ -385,6 +451,69 @@ Status from_text(Scene& scene, std::string_view text) {
             camera.zoom = node.value("zoom", 1.0F);
             camera.active = node.value("active", false);
             loaded.set_camera(id, camera);
+        }
+
+        // Appended at version 2. A version 1 file has no such key and gets no animator, which
+        // is the whole of the migration: absent means absent.
+        if (entry.contains("animator")) {
+            const Json& node = entry["animator"];
+            if (!node.is_object()) {
+                return std::unexpected(
+                    Error(ErrorCode::MalformedData,
+                          std::format("entity {} has an animator that is not an object", raw_id)));
+            }
+
+            Animator animator;
+            if (node.contains("clip")) {
+                if (!node["clip"].is_number_unsigned()) {
+                    return std::unexpected(
+                        Error(ErrorCode::MalformedData,
+                              std::format("entity {}'s animator has a clip that is not an "
+                                          "identifier",
+                                          raw_id)));
+                }
+                animator.clip = assets::AssetId::from_raw(node["clip"].get<std::uint64_t>(),
+                                                          assets::AssetType::AnimationClip);
+            }
+
+            // Bounded before it is narrowed. A start of four billion milliseconds is not a
+            // scene anyone authored, and truncating it into the field would make it a small
+            // number that looks deliberate.
+            const auto start = node.value("start_ms", std::uint64_t{0});
+            if (start > kMaxAnimatorStartMs) {
+                return std::unexpected(
+                    Error(ErrorCode::MalformedData,
+                          std::format("entity {}'s animator starts at {} ms, past the limit of {}",
+                                      raw_id, start, kMaxAnimatorStartMs)));
+            }
+            animator.start_ms = static_cast<std::uint32_t>(start);
+
+            animator.speed = node.value("speed", 1.0F);
+            if (!std::isfinite(animator.speed) || animator.speed < 0.0F ||
+                animator.speed > kMaxAnimatorSpeed) {
+                return std::unexpected(
+                    Error(ErrorCode::MalformedData,
+                          std::format("entity {}'s animator has a speed of {}, outside [0, {}]",
+                                      raw_id, animator.speed, kMaxAnimatorSpeed)));
+            }
+
+            animator.playing = node.value("playing", true);
+
+            // Refused rather than defaulted. A name that is not one of the three is a file
+            // that means something this build does not understand, and guessing "once" would
+            // play it differently from what it says while looking like it worked.
+            const auto loop_name = node.value("loop", std::string{"loop"});
+            const auto loop = animation_loop_value(loop_name);
+            if (!loop.has_value()) {
+                return std::unexpected(
+                    Error(ErrorCode::MalformedData,
+                          std::format("entity {}'s animator loops '{}', which is not once, loop "
+                                      "or ping-pong",
+                                      raw_id, loop_name)));
+            }
+            animator.loop = *loop;
+
+            loaded.set_animator(id, animator);
         }
     }
 
