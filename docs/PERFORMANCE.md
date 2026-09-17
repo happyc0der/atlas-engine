@@ -271,13 +271,13 @@ reimplements the chunk-major index formula in Python.
 All of these numbers are processor-side. Graphics-processor time is not measurable through
 SDL_GPU and is not reported.
 
-## Hashing, M8's first question: measured, not yet changed
+## Hashing, M8's first change: measured, then made
 
-M7 found that a million-cell tick spends most of itself hashing. This measures what could be
-done about it. Nothing here is adopted: `hash.hpp` says FNV-1a is "not the fastest hash
-available" and that `kHashAlgorithmVersion` exists so a faster one can replace it without
-silently invalidating stored values, and spending that version number is the owner's decision,
-not a performance tweak. `atlas_bench --filter hash` and `--filter simulation`, Release.
+M7 found that a million-cell tick spends most of itself hashing. This is what was measured,
+what it ruled out, and what was adopted. `hash.hpp` said FNV-1a was "not the fastest hash
+available" and that `kHashAlgorithmVersion` existed so a faster one could replace it without
+silently invalidating stored values; that version number has now been spent, on the owner's
+decision, and is 2. `atlas_bench --filter hash` and `--filter simulation`, Release.
 
 **The prediction, written down first.** FNV-1a consumes one byte per multiply and each multiply
 waits for the previous one, so the loop should be bound by that dependency chain rather than by
@@ -370,15 +370,60 @@ first; it may not be what M8 should build at all.
 Run-to-run variance on these figures is about 6% on this machine, which is smaller than every
 difference the conclusions rest on.
 
-### The decision this leaves
+### After
 
-Adopting any of these means `kHashAlgorithmVersion` becomes 2, and every stored hash computed
-under version 1 stops matching: saves, replay checkpoints, artifact cache entries, and the
-golden-scenario constants in both test suites. None of that is silent — the version is written
-alongside the values and checked on read, which is exactly the situation it was put there for —
-but it is a change to a stored format, so it is the owner's to make, along with whether
-`hash_string`, which computes table, system, command and stream identifiers at compile time and
-needs no speed at all, changes with it or stays as it is.
+Adopted: the four-lane hash with the final mix, for `hash_bytes` and `Hasher` only.
+`hash_string` keeps FNV-1a, because its values are compile-time identifiers written into saved
+files and gain nothing from speed. `kHashAlgorithmVersion` is 2 and names the pair.
+
+`tools/bench_baseline.py compare` against the baseline recorded under version 1, same machine:
+
+| Scenario | Before | After | |
+|---|---|---|---|
+| `simulation/hash`, 1M cells | 11.57 ms | 0.37 ms | 31x |
+| `simulation/tick`, 1M cells | 13.05 ms | 2.00 ms | 6.5x |
+| `simulation/tick`, 100k cells | 1.28 ms | 0.23 ms | 5.5x |
+| `simulation/tick`, 10k cells | 0.128 ms | 0.024 ms | 5.3x |
+| `simulation/run`, 100k ticks | 351 ms | 85 ms | 4.1x |
+| `simulation/system/*`, 1M cells | unchanged | unchanged | 0.98-1.00x |
+| `simulation/snapshot`, 1M cells | unchanged | unchanged | 0.99x |
+
+The projection written above before any code was changed was "about 2.0 ms". The measurement is
+2.001 ms. The systems and the snapshot are unchanged to within noise, which is the check that
+nothing else moved.
+
+End to end, `atlas_lab` at a million cells and 60 ticks per second: median frame 33.2 ms to
+**10.7 ms**, and headless throughput 82 to **534 ticks per second**.
+
+Two consequences worth recording. The lab's `--max-ticks-per-frame` default went back from 2 to
+the tick scheduler's own 8: the low limit existed because a tick cost tens of milliseconds, and
+at 2 ms it only prevents catching up after a slow frame — measured at 150 frames, a limit of 2
+drops five ticks with a 32.6 ms p99 where 4 and 8 drop none with a 17 ms p99. And the frame is
+now dominated by drawing, 8.3 ms of 10.6 ms, so instance compaction rather than hashing is the
+next thing worth measuring.
+
+### What it cost
+
+Every stored hash computed under version 1 stopped matching, which the version check makes loud
+rather than silent: saves and replays are refused with a version mismatch, and artifact cache
+keys change because `key_for` hashes `kHashAlgorithmVersion` into the key, so old entries become
+unreachable rather than misread. Both golden-scenario tests were re-recorded, and the question
+the rules require answering — whether the change was meant to alter simulation results — was
+answered by experiment rather than assertion: with the old hash restored and everything else as
+it is now, both scenarios still produced their version 1 constants exactly, so the simulation's
+state is bit-identical and only the function that reduces it to a number changed.
+
+### What was ruled out
+
+Both candidates the roadmap expected to help: hashing only the tables a tick wrote, which saves
+nothing because the tables it writes are the whole cost, and parallel hashing, which would take
+the hash from 374 us to 113 us at the price of a worker pool — 13% of a 2.0 ms tick for a
+parallel correctness argument, when the sequential change was already worth 31 times.
+
+Still true, and still the honest limit of this work: the avalanche test is coarse, one kibibyte
+and one property. A statistical suite would be better evidence than it, and the fact that the
+adopted hash scores 32.0 where the one it replaced scored 30.7 is a reason to think the change
+is safe, not a proof of it.
 
 ## Optimisation candidates
 

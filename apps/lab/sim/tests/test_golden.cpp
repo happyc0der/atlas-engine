@@ -53,9 +53,12 @@ TEST_CASE("the lab's fixed scenario produces its recorded hashes", "[lab][golden
                 static_cast<unsigned long long>(golden.final_state),
                 static_cast<unsigned long long>(golden.all_ticks));
     // Recorded from the first run on macOS arm64, 2026-09-16. The Linux lanes confirm them.
-    CHECK(golden.initial == 0xA073'2541'350B'8590ULL);
-    CHECK(golden.final_state == 0x71D2'3497'5248'06E3ULL);
-    CHECK(golden.all_ticks == 0x9776'5086'AAA0'C2C2ULL);
+    // Re-recorded in M8 for kHashAlgorithmVersion 2. Checked, not assumed: with the old hash
+    // restored this scenario still produced 0xA0732541350B8590, 0x71D23497524806E3 and
+    // 0x97765086AAA0C2C2, so the lab's simulation is unchanged and only the hash moved.
+    CHECK(golden.initial == 0x9CF3'9EF6'6B2C'4845ULL);
+    CHECK(golden.final_state == 0x1514'CC4B'3F41'D18EULL);
+    CHECK(golden.all_ticks == 0xA962'B352'A643'ABC9ULL);
 }
 
 TEST_CASE("the lab's fixed scenario is stable within a run", "[lab][golden]") {

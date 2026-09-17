@@ -64,7 +64,15 @@ sub-hashes so a divergence can be attributed. Hashing rules:
 - Tables are hashed in index order; associative structures are hashed through a sorted
   index array, never by iterating the container.
 - The hash algorithm's identity is versioned in the header, so it can be replaced for
-  throughput without silently invalidating stored hashes.
+  throughput without silently invalidating stored hashes. It was, in M8: version 2 keeps FNV-1a
+  for `hash_string`, which computes table, system, command and stream identifiers at compile
+  time, and uses a four-lane block hash for bulk content, which is thirty times faster and, by
+  avalanche, slightly better at detecting change. Values from version 1 do not match version 2,
+  and are refused by the version check rather than misread.
+- The bulk hash consumes thirty-two bytes at a time and holds partial blocks, so its value
+  depends on the bytes hashed and not on how a caller divided them between calls. It cannot be
+  continued from a previous value the way FNV-1a could, and the seed parameters that implied
+  otherwise were removed rather than left to mean something subtly different.
 
 Per-tick hashes are logged during replay runs. On divergence, the first differing tick and
 the first differing system sub-hash are reported.

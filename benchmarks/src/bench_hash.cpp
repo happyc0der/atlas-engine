@@ -417,9 +417,17 @@ void verify(std::span<const std::byte> bytes) {
         }
     }
 
-    // And the engine's own hash must agree with the copy of it measured here.
-    if (atlas::hash_bytes(bytes) != fnv1a(bytes)) {
-        die("the inlined fnv1a does not match atlas::hash_bytes");
+    // The engine adopted lanes4_mixed in M8, so its hash must still be exactly that. This is
+    // what stops the engine and the measurement drifting apart: change the engine's algorithm
+    // and the benchmark that justified it stops agreeing, loudly.
+    if (atlas::hash_bytes(bytes) != lanes4_mixed(bytes)) {
+        die("atlas::hash_bytes is no longer the candidate this benchmark measured");
+    }
+    // And identifiers must still be FNV-1a, which is the half of the decision that did not
+    // change. "abc" as bytes, hashed by the local copy of the old algorithm.
+    constexpr std::array<std::byte, 3> abc{std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
+    if (atlas::hash_string("abc") != fnv1a(abc)) {
+        die("atlas::hash_string is no longer FNV-1a, which identifiers depend on");
     }
 }
 
@@ -455,6 +463,10 @@ std::vector<Result> run() {
         atlas::bench::measure("hash/lanes4", parameters, 50, 5, [&] { sink = lanes4(bytes); })));
     results.push_back(with_bytes(atlas::bench::measure("hash/lanes4_mixed", parameters, 50, 5,
                                                        [&] { sink = lanes4_mixed(bytes); })));
+    // What the engine actually runs, through its own header, including the partial-block
+    // buffering the one-shot candidate above does not have to do.
+    results.push_back(with_bytes(atlas::bench::measure("hash/atlas_hash_bytes", parameters, 50, 5,
+                                                       [&] { sink = atlas::hash_bytes(bytes); })));
     for (const std::size_t block : {std::size_t{16} * 1024, std::size_t{256} * 1024}) {
         results.push_back(with_bytes(atlas::bench::measure(
             "hash/blocked", std::format("{} block={}KiB", parameters, block / 1024), 50, 5,

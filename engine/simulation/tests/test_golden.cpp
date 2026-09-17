@@ -87,8 +87,13 @@ TEST_CASE("the fixed scenario still produces its recorded hashes", "[sim][golden
                 static_cast<unsigned long long>(golden.final_state),
                 static_cast<unsigned long long>(golden.all_ticks));
 
-    CHECK(golden.final_state == 0xCECE'73AE'EC22'FBCAULL);
-    CHECK(golden.all_ticks == 0xD71C'EC7C'1078'DD46ULL);
+    // Re-recorded in M8 when kHashAlgorithmVersion became 2. The change was meant to alter
+    // hash values and nothing else, and that was checked rather than assumed: with the old
+    // hash restored and everything else as it is now, this scenario still produced
+    // 0xCECE73AEEC22FBCA and 0xD71CEC7C1078DD46, so the simulation's state is bit-identical
+    // and only the function that reduces it to a number changed.
+    CHECK(golden.final_state == 0xAA82'430D'E232'1AFFULL);
+    CHECK(golden.all_ticks == 0x2603'546C'5687'E95EULL);
 }
 
 TEST_CASE("the fixed scenario is stable within a run", "[sim][golden]") {

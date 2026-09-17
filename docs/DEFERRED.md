@@ -117,29 +117,27 @@ integration ran for the first time. What it found is recorded in
   batches: three batches for four systems, observed and asserted in the lab's tests. Column
   sets would let them share one. Recorded from a single observation rather than acted on; M8's
   parallel scheduling is where it earns a decision.
-- **The world hash's cost.** ~~Two ways out, both M8 work: hash only tables a batch wrote, or a
-  faster function behind `kHashAlgorithmVersion`.~~ **Measured, and one of those two is dead.**
-  The hash is 10.8 ms of a 12.4 ms million-cell tick, and all of it is the two tables the lab
-  writes every tick, so hashing only what was written saves nothing here; `adjacency`, the one
-  table where caching pays, already caches its own hash. A word-wise, four-lane replacement is
-  32 times faster and, once finalised, a *better* hash than FNV-1a by avalanche — unfinalised it
-  is half as good, which only measuring quality alongside speed revealed. Threads would take the
-  hash from 374 us to 113 us, which is 13% of the projected 2.0 ms tick in exchange for a worker
-  pool: the sequential change gets 96% of the win, so parallel hashing is not M8's first move.
-  Numbers, the trap, and the streaming constraint are in `docs/PERFORMANCE.md`. What remains is
-  a decision, not a measurement: adopting a candidate spends `kHashAlgorithmVersion` 2 and
-  invalidates every stored hash, which the version check makes loud rather than silent.
-- **A single-threaded tick at a million cells is 33 ms.** So 60 ticks a second is out of
-  reach at that size until M8's parallel simulation. Meanwhile the lab caps catch-up at two
-  ticks per frame (`--max-ticks-per-frame`) and drops and counts the rest, because a frame
-  that ran eight of them would take a quarter of a second and rendering would not be
-  interactive, which is the milestone's requirement; the tick rate is reported, not promised.
+- **The world hash's cost.** ~~Two ways out, both M8 work.~~ **Done in M8, and neither of those
+  two was the answer.** Measurement killed both: hashing only the tables a tick wrote saves
+  nothing, because the tables it writes are the whole cost, and parallel hashing would buy 13%
+  of a tick for a worker pool. What worked was sequential and unglamorous — thirty-two bytes per
+  step across four chains, with a final mix — taking the hash from 11.6 ms to 0.37 ms and a
+  million-cell tick from 13.1 ms to 2.0 ms. `kHashAlgorithmVersion` is 2. The trap, which only
+  measuring quality alongside speed caught, is that the unfinalised version is half as good a
+  hash as the one it replaces; see `docs/PERFORMANCE.md`.
+- **A single-threaded tick at a million cells.** ~~33 ms, so 60 ticks a second is out of reach
+  at that size until M8's parallel simulation.~~ **2.0 ms since the hash change**, and the lab
+  holds 60 ticks a second at a million cells with a 10.7 ms median frame. Parallel simulation is
+  no longer what stands between the lab and its target, which is worth knowing before M8 spends
+  effort on it. The lab's catch-up limit went back to the scheduler's default of 8 for the same
+  reason: the low limit was a symptom of the slow tick and, measured, now costs dropped ticks.
 - **Instance compaction for the cell field.** Each drawn cell is a 48-byte quad instance
   rebuilt from the snapshot every frame: 48 MB a frame at a million visible cells, 61 streamed
   flushes, 8.3 ms. The identifier pass already derives every cell's rectangle in the shader
   from its instance index and a per-chunk uniform, with no vertex buffer at all; the colour
-  pass could do the same with one byte per cell. Deferred because 8.3 ms met the requirement
-  and M8 is where draw submission is measured again.
+  pass could do the same with one byte per cell. **Promoted by the hash change:** drawing is now
+  8.3 ms of a 10.6 ms frame, so this is the largest remaining cost in the frame and the next
+  thing worth measuring, where before it was second to hashing.
 - **Snapshot pooling.** Building the snapshot costs 1.44 ms at a million cells, once per frame
   after the last tick, and allocates a fresh one each time. The counter is in the overlay; the
   pool is built when the counter says the allocation, not the fill, is what costs.

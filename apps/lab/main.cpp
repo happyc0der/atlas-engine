@@ -84,7 +84,7 @@ struct Options {
     std::uint32_t chunk = 32;
     std::uint32_t ticks_per_second = 60;
     std::uint32_t commands_per_tick = 0;
-    std::uint32_t max_ticks_per_frame = 2;
+    std::uint32_t max_ticks_per_frame = 8;
     std::uint64_t seed = 1;
     std::uint64_t max_frames = 0;
     std::uint64_t max_ticks = 0;
@@ -102,9 +102,10 @@ Options:
   --paused               Start paused.
   --commands-per-tick N  Submit N deterministic set_color_index commands each tick.
   --max-ticks-per-frame N
-                         Catch-up limit; ticks beyond it are dropped and counted. Default 2:
-                         at a million cells a tick costs tens of milliseconds, and a frame
-                         that ran eight of them would not be interactive.
+                         Catch-up limit; ticks beyond it are dropped and counted. Default 8,
+                         the tick scheduler's own. It was 2 while a million-cell tick cost
+                         tens of milliseconds; at 2 ms a lower limit only stops the simulation
+                         catching up after a slow frame, which measurably drops more ticks.
   --ticks N              Stop after exactly N ticks.
   --frames N             Stop after N frames.
   --headless             No window, no device, no snapshot. Needs --ticks or --frames.
@@ -213,7 +214,7 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
         return std::unexpected(per_tick.error());
     }
     options.commands_per_tick = static_cast<std::uint32_t>(*per_tick);
-    const auto per_frame = bounded(args, "max-ticks-per-frame", 2, 1, 64);
+    const auto per_frame = bounded(args, "max-ticks-per-frame", 8, 1, 64);
     if (!per_frame) {
         return std::unexpected(per_frame.error());
     }

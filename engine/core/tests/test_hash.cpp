@@ -40,9 +40,38 @@ TEST_CASE("the hash is computable at compile time", "[core][hash]") {
     STATIC_REQUIRE(hash_string("a") != hash_string("b"));
 }
 
-TEST_CASE("hashing text and hashing its bytes agree", "[core][hash]") {
+TEST_CASE("identifiers and content are hashed by different algorithms on purpose", "[core][hash]") {
+    // Since version 2 these are two algorithms, and the split is the whole decision:
+    // hash_string stays FNV-1a because its values are compile-time identifiers written into
+    // saved files and gain nothing from speed, while bulk content moved to a block hash thirty
+    // times faster. They must therefore disagree, and a reader who expects one to stand in for
+    // the other should find out here rather than from a stale cache.
     constexpr std::string_view text = "assets/terrain.png";
-    CHECK(hash_string(text) == hash_bytes(bytes_of(text)));
+    CHECK(hash_string(text) != hash_bytes(bytes_of(text)));
+
+    // What does agree: the hasher's text path is the bulk algorithm, like every other add.
+    Hasher hasher;
+    hasher.add(text);
+    CHECK(hasher.value() == hash_bytes(bytes_of(text)));
+}
+
+TEST_CASE("the bulk hash is computable at compile time", "[core][hash]") {
+    // Not because anything hashes bytes at compile time today, but because losing it would be
+    // an API change made by accident: the block loads are assembled from bytes rather than
+    // copied precisely so that this keeps working.
+    static constexpr std::array<std::byte, 4> bytes{std::byte{1}, std::byte{2}, std::byte{3},
+                                                    std::byte{4}};
+    STATIC_REQUIRE(hash_bytes(bytes) != 0);
+    STATIC_REQUIRE(hash_bytes(bytes) != hash_bytes(std::span{bytes}.subspan(0, 3)));
+}
+
+TEST_CASE("the bulk hash has not changed value", "[core][hash]") {
+    // Not a published vector: this algorithm is the project's own, so this is a regression pin
+    // recorded from the implementation docs/PERFORMANCE.md measured. If it fails, either the
+    // algorithm changed and kHashAlgorithmVersion must change with it, or it changed by
+    // accident. Long enough to cover several whole blocks and a partial one.
+    constexpr std::string_view text = "the quick brown fox jumps over the lazy dog";
+    CHECK(hash_bytes(bytes_of(text)) == 0xE346'1E83'8BC7'C275ULL);
 }
 
 TEST_CASE("different inputs hash differently", "[core][hash]") {
@@ -73,18 +102,48 @@ TEST_CASE("case and separators change the hash", "[core][hash]") {
     CHECK(hash_string("a/b") != hash_string("a\\b"));
 }
 
-TEST_CASE("a streaming hash equals hashing the concatenation", "[core][hash]") {
-    // The property that makes composing a cache key from several pieces meaningful.
-    Hasher hasher;
-    hasher.add(std::string_view{"abc"}).add(std::string_view{"def"});
-    CHECK(hasher.value() == hash_string("abcdef"));
+TEST_CASE("a streaming hash does not depend on where the input was split", "[core][hash]") {
+    // The property that makes composing a cache key from several pieces meaningful, and the
+    // one thing a block hash does not get for free: it holds partial blocks so that this stays
+    // true. The old seed-chaining property, where hashing A and then B from A's result equalled
+    // hashing the concatenation, is gone and cannot be recovered for a block hash.
+    constexpr std::string_view whole = "abcdef";
+    Hasher split;
+    split.add(std::string_view{"abc"}).add(std::string_view{"def"});
+    CHECK(split.value() == hash_bytes(bytes_of(whole)));
 }
 
-TEST_CASE("a hasher seeded from a previous value continues it", "[core][hash]") {
-    const std::uint64_t first = hash_string("abc");
-    Hasher hasher{first};
-    hasher.add(std::string_view{"def"});
-    CHECK(hasher.value() == hash_string("abcdef"));
+TEST_CASE("splitting across a block boundary does not change the hash", "[core][hash]") {
+    // Thirty-two bytes is one block, so these splits land either side of one and inside the
+    // buffering that exists to make them equivalent. A hash that forgot to hold partial blocks
+    // would pass the six-byte case above and fail every one of these.
+    std::string text;
+    for (int i = 0; i < 200; ++i) {
+        text.push_back(static_cast<char>('a' + (i % 26)));
+    }
+    const std::uint64_t whole = hash_bytes(bytes_of(text));
+    for (const std::size_t split : {std::size_t{1}, std::size_t{31}, std::size_t{32},
+                                    std::size_t{33}, std::size_t{64}, std::size_t{199}}) {
+        INFO("split at " << split);
+        Hasher hasher;
+        hasher.add(bytes_of(std::string_view{text}.substr(0, split)));
+        hasher.add(bytes_of(std::string_view{text}.substr(split)));
+        CHECK(hasher.value() == whole);
+    }
+
+    // And one byte at a time, which is the worst case the buffer has to survive.
+    Hasher one_at_a_time;
+    for (const char character : text) {
+        one_at_a_time.add(std::string_view{&character, 1});
+    }
+    CHECK(one_at_a_time.value() == whole);
+}
+
+TEST_CASE("a one-shot hash equals a streamed one", "[core][hash]") {
+    constexpr std::string_view text = "assets/terrain.png";
+    Hasher hasher;
+    hasher.add(bytes_of(text));
+    CHECK(hash_bytes(bytes_of(text)) == hasher.value());
 }
 
 TEST_CASE("integers hash by value, not by their storage", "[core][hash]") {
@@ -175,5 +234,6 @@ TEST_CASE("hex formatting is fixed width and lowercase", "[core][hash]") {
 TEST_CASE("the algorithm version is recorded", "[core][hash]") {
     // Stored alongside a hash, so that changing the algorithm later is detected rather than
     // mistaken for every asset having changed at once.
-    STATIC_REQUIRE(atlas::kHashAlgorithmVersion >= 1);
+    // Version 2: FNV-1a for identifiers, the four-lane block hash for bulk content.
+    STATIC_REQUIRE(atlas::kHashAlgorithmVersion == 2);
 }
