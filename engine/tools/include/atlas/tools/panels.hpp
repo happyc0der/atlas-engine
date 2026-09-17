@@ -16,6 +16,8 @@
 
 #include <atlas/core/log.hpp>
 #include <atlas/math/vector.hpp>
+#include <atlas/platform/gamepad.hpp>
+#include <atlas/platform/key.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
 
 #include <cstddef>
@@ -125,6 +127,55 @@ struct SimulationControlsRequest {
                !save && !load;
     }
 };
+
+/// Something a person can ask a simulation to do, independent of how they asked.
+enum class ControlAction : std::uint8_t {
+    TogglePause,
+    SingleStep,
+    SpeedNormal,
+    SpeedTimes2,
+    SpeedTimes4,
+    SpeedTimes8,
+    SpeedUnbounded,
+    Faster,
+    Slower,
+    NextMode,
+    ResetView,
+    Save,
+    Load,
+    Count,
+};
+
+/// One action, and the two ways of asking for it.
+///
+/// The key and the button live on the same row so they cannot drift apart. Two tables, or a
+/// switch for each, is how a control ends up working on the keyboard and not on the pad.
+/// `GamepadButton::Count` means the action has no button.
+struct ControlBinding {
+    ControlAction action = ControlAction::Count;
+    platform::Key key = platform::Key::Unknown;
+    platform::GamepadButton button = platform::GamepadButton::Count;
+};
+
+/// What a request needs to know about the present in order to be a request rather than a
+/// toggle: pausing depends on whether it is already paused, and cycling modes on which mode
+/// it is on.
+struct ControlsContext {
+    sim::Speed speed;
+    std::size_t mode_index = 0;
+    std::size_t mode_count = 0;
+};
+
+/// Every binding, in action order.
+[[nodiscard]] std::span<const ControlBinding> control_bindings() noexcept;
+
+/// The action a key or a button asks for, if any.
+[[nodiscard]] std::optional<ControlAction> action_for(platform::Key key) noexcept;
+[[nodiscard]] std::optional<ControlAction> action_for(platform::GamepadButton button) noexcept;
+
+/// Turn an action into a request against the present.
+[[nodiscard]] SimulationControlsRequest request_for(ControlAction action,
+                                                    const ControlsContext& context) noexcept;
 
 /// A short name for a speed, for a panel or a status row.
 [[nodiscard]] std::string_view speed_name(sim::Speed speed);

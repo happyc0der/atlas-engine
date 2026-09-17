@@ -270,7 +270,8 @@ SceneDemo::SceneDemo(SceneDemo&& other) noexcept
       m_scene(std::move(other.m_scene)), m_history(std::move(other.m_history)),
       m_animating(other.m_animating), m_save_path(std::move(other.m_save_path)),
       m_saved_bytes(other.m_saved_bytes), m_camera(other.m_camera),
-      m_orbiting(std::move(other.m_orbiting)), m_dragging(other.m_dragging) {}
+      m_orbiting(std::move(other.m_orbiting)), m_camera_controls(other.m_camera_controls),
+      m_camera_controller(other.m_camera_controller) {}
 
 SceneDemo& SceneDemo::operator=(SceneDemo&& other) noexcept {
     if (this != &other) {
@@ -286,7 +287,8 @@ SceneDemo& SceneDemo::operator=(SceneDemo&& other) noexcept {
         m_saved_bytes = other.m_saved_bytes;
         m_camera = other.m_camera;
         m_orbiting = std::move(other.m_orbiting);
-        m_dragging = other.m_dragging;
+        m_camera_controls = other.m_camera_controls;
+        m_camera_controller = other.m_camera_controller;
     }
     return *this;
 }
@@ -372,32 +374,14 @@ renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
 }
 
 void SceneDemo::update(const platform::InputState& input, std::span<const platform::Event> events,
-                       float display_scale) {
+                       float display_scale, float dt_seconds, bool mouse_allowed) {
     ATLAS_ZONE_NAMED("scene demo update");
 
-    if (input.was_pressed(platform::MouseButton::Left)) {
-        m_dragging = true;
-    }
-    if (input.was_released(platform::MouseButton::Left)) {
-        m_dragging = false;
-    }
-
-    if (m_dragging) {
-        const float zoom = m_camera.zoom();
-        m_camera.pan({-input.mouse_delta_x() * display_scale / zoom,
-                      -input.mouse_delta_y() * display_scale / zoom});
-    }
-
-    for (const auto& event : events) {
-        const auto* wheel = std::get_if<platform::MouseWheel>(&event);
-        if (wheel == nullptr || wheel->delta_y == 0.0F) {
-            continue;
-        }
-        const float factor = std::pow(1.15F, wheel->delta_y);
-        const auto pointer = input.mouse_position();
-        m_camera.zoom_about(factor,
-                            math::Vec2{pointer.x * display_scale, pointer.y * display_scale});
-    }
+    // One controller rather than a fourth copy of this: the same twenty lines lived in
+    // three files, and M9 fixed one bug in four places because of it.
+    m_camera_controller.apply(
+        m_camera, app::sample_camera_input(input, events, m_camera_controls, mouse_allowed),
+        display_scale, dt_seconds);
 }
 
 }  // namespace atlas::sandbox

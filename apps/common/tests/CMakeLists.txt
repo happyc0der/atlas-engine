@@ -2,6 +2,7 @@
 atlas_add_test(app_common
     SOURCES
         test_run_bounds.cpp
+        test_camera_controller.cpp
         test_frame_counters.cpp
         test_ppm.cpp
         test_log_options.cpp

@@ -11,8 +11,11 @@ atlas_add_app_library(app_common
         src/frame_counters.cpp
         src/ppm.cpp
         src/run_bounds.cpp
+        src/camera_controller.cpp
     DEPENDS
         atlas::core
+        atlas::math
+        atlas::platform
         atlas::rhi
 )
 

@@ -158,7 +158,8 @@ CellField::CellField(CellField&& other) noexcept
       m_layout(other.m_layout), m_cell_size(other.m_cell_size), m_camera(other.m_camera),
       m_pixel_width(other.m_pixel_width), m_pixel_height(other.m_pixel_height),
       m_colours(std::move(other.m_colours)), m_visible(std::move(other.m_visible)),
-      m_runs(std::move(other.m_runs)), m_dragging(other.m_dragging) {}
+      m_runs(std::move(other.m_runs)), m_camera_controls(other.m_camera_controls),
+      m_camera_controller(other.m_camera_controller) {}
 
 CellField& CellField::operator=(CellField&& other) noexcept {
     if (this != &other) {
@@ -173,7 +174,8 @@ CellField& CellField::operator=(CellField&& other) noexcept {
         m_colours = std::move(other.m_colours);
         m_visible = std::move(other.m_visible);
         m_runs = std::move(other.m_runs);
-        m_dragging = other.m_dragging;
+        m_camera_controls = other.m_camera_controls;
+        m_camera_controller = other.m_camera_controller;
     }
     return *this;
 }
@@ -221,28 +223,12 @@ void CellField::reset_camera() noexcept {
 }
 
 void CellField::update(const platform::InputState& input, std::span<const platform::Event> events,
-                       float display_scale) {
-    if (input.was_pressed(platform::MouseButton::Right)) {
-        m_dragging = true;
-    }
-    if (input.was_released(platform::MouseButton::Right)) {
-        m_dragging = false;
-    }
-    if (m_dragging) {
-        const float zoom = m_camera.zoom();
-        m_camera.pan({-input.mouse_delta_x() * display_scale / zoom,
-                      -input.mouse_delta_y() * display_scale / zoom});
-    }
-    for (const auto& event : events) {
-        const auto* wheel = std::get_if<platform::MouseWheel>(&event);
-        if (wheel == nullptr || wheel->delta_y == 0.0F) {
-            continue;
-        }
-        const float factor = std::pow(1.15F, wheel->delta_y);
-        const auto pointer = input.mouse_position();
-        m_camera.zoom_about(factor,
-                            math::Vec2{pointer.x * display_scale, pointer.y * display_scale});
-    }
+                       float display_scale, float dt_seconds, bool mouse_allowed) {
+    // One controller rather than a fourth copy of this: the same twenty lines lived in
+    // three files, and M9 fixed one bug in four places because of it.
+    m_camera_controller.apply(
+        m_camera, app::sample_camera_input(input, events, m_camera_controls, mouse_allowed),
+        display_scale, dt_seconds);
 }
 
 math::Rect CellField::chunk_bounds(std::uint32_t chunk) const noexcept {

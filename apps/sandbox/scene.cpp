@@ -114,7 +114,7 @@ DemoScene::DemoScene(DemoScene&& other) noexcept
     : m_device(std::exchange(other.m_device, nullptr)), m_textures(std::move(other.m_textures)),
       m_batch(std::move(other.m_batch)), m_texture_id(std::exchange(other.m_texture_id, {})),
       m_camera(other.m_camera), m_quads(std::move(other.m_quads)), m_visible(other.m_visible),
-      m_dragging(other.m_dragging) {}
+      m_camera_controls(other.m_camera_controls), m_camera_controller(other.m_camera_controller) {}
 
 DemoScene& DemoScene::operator=(DemoScene&& other) noexcept {
     if (this != &other) {
@@ -126,7 +126,8 @@ DemoScene& DemoScene::operator=(DemoScene&& other) noexcept {
         m_camera = other.m_camera;
         m_quads = std::move(other.m_quads);
         m_visible = other.m_visible;
-        m_dragging = other.m_dragging;
+        m_camera_controls = other.m_camera_controls;
+        m_camera_controller = other.m_camera_controller;
     }
     return *this;
 }
@@ -144,43 +145,14 @@ void DemoScene::resize(std::uint32_t pixel_width, std::uint32_t pixel_height) {
 }
 
 void DemoScene::update(const platform::InputState& input, std::span<const platform::Event> events,
-                       float display_scale) {
+                       float display_scale, float dt_seconds, bool mouse_allowed) {
     ATLAS_ZONE_NAMED("scene update");
 
-    if (input.was_pressed(platform::MouseButton::Left)) {
-        m_dragging = true;
-    }
-    if (input.was_released(platform::MouseButton::Left)) {
-        m_dragging = false;
-    }
-
-    // Dragging moves the world with the pointer, so the delta is divided by the zoom and
-    // subtracted: the camera goes the other way from the content.
-    if (m_dragging) {
-        const float zoom = m_camera.zoom();
-        m_camera.pan({-input.mouse_delta_x() * display_scale / zoom,
-                      -input.mouse_delta_y() * display_scale / zoom});
-    }
-
-    for (const auto& event : events) {
-        const auto* wheel = std::get_if<platform::MouseWheel>(&event);
-        if (wheel == nullptr || wheel->delta_y == 0.0F) {
-            continue;
-        }
-
-        // Multiplicative, so each notch changes the view by the same proportion however far
-        // in or out it already is.
-        const float factor = std::pow(1.15F, wheel->delta_y);
-
-        // The platform reports a pointer position in its own type, because the platform
-        // module does not depend on math and should not. Converting here is the cost of that
-        // boundary. The scale is part of the conversion: the pointer is logical and the
-        // camera's viewport is in pixels, which are the same number only on an ordinary
-        // display.
-        const auto pointer = input.mouse_position();
-        m_camera.zoom_about(factor,
-                            math::Vec2{pointer.x * display_scale, pointer.y * display_scale});
-    }
+    // One controller rather than a fourth copy of this: the same twenty lines lived in
+    // three files, and M9 fixed one bug in four places because of it.
+    m_camera_controller.apply(
+        m_camera, app::sample_camera_input(input, events, m_camera_controls, mouse_allowed),
+        display_scale, dt_seconds);
 }
 
 renderer::BatchStats DemoScene::draw(rhi::RenderPass& pass) {

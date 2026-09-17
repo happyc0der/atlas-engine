@@ -476,14 +476,18 @@ void step_simulation(atlas::Tick tick) {
             }
         }
 
-        // The scene is not updated while the overlay has the pointer, for the same reason.
-        if (!(overlay.has_value() && overlay->wants_mouse())) {
-            if (scene.has_value()) {
-                scene->update(platform->input(), events, window.display_scale());
-            }
-            if (scene_demo.has_value()) {
-                scene_demo->update(platform->input(), events, window.display_scale());
-            }
+        // The pointer is ignored while the overlay owns it, so a drag on a panel does not
+        // also move the world behind it. A gamepad is not gated that way: it has no pointer
+        // to be over a panel with, so it keeps working while a panel has focus.
+        const bool mouse_allowed = !(overlay.has_value() && overlay->wants_mouse());
+        const float frame_seconds = static_cast<float>(frame_ns) / 1'000'000'000.0F;
+        if (scene.has_value()) {
+            scene->update(platform->input(), events, window.display_scale(), frame_seconds,
+                          mouse_allowed);
+        }
+        if (scene_demo.has_value()) {
+            scene_demo->update(platform->input(), events, window.display_scale(), frame_seconds,
+                               mouse_allowed);
         }
 
         // Bring finished asset work in, then turn anything decoded into graphics resources.

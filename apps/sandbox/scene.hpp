@@ -8,6 +8,7 @@
 /// orthographic camera, a texture, and thousands of rectangles in one draw call. It is not
 /// a map and it is not a game; the quads carry no meaning beyond being many.
 
+#include <atlas/app/camera_controller.hpp>
 #include <atlas/assets/registry.hpp>
 #include <atlas/core/result.hpp>
 #include <atlas/math/camera.hpp>
@@ -53,7 +54,7 @@ class DemoScene {
     /// the camera's viewport is measured in. They differ on a high-density display, where
     /// omitting it pans at half speed and anchors a zoom to the wrong point.
     void update(const platform::InputState& input, std::span<const platform::Event> events,
-                float display_scale);
+                float display_scale, float dt_seconds, bool mouse_allowed);
 
     void resize(std::uint32_t pixel_width, std::uint32_t pixel_height);
 
@@ -87,7 +88,8 @@ class DemoScene {
     math::OrthoCamera m_camera;
     std::vector<renderer::Quad> m_quads;
     std::uint32_t m_visible = 0;
-    bool m_dragging = false;
+    app::CameraControls m_camera_controls{.drag_button = platform::MouseButton::Left};
+    app::CameraController m_camera_controller{m_camera_controls};
 };
 
 }  // namespace atlas::sandbox

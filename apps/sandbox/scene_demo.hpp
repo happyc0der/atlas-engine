@@ -11,6 +11,7 @@
 /// It is a handful of squares around a moving parent. It is not a map and not a game: the
 /// entities carry no meaning beyond being arranged in a tree.
 
+#include <atlas/app/camera_controller.hpp>
 #include <atlas/assets/registry.hpp>
 #include <atlas/core/result.hpp>
 #include <atlas/edit/history.hpp>
@@ -68,7 +69,7 @@ class SceneDemo {
     /// the camera's viewport is measured in. They differ on a high-density display, where
     /// omitting it pans at half speed and anchors a zoom to the wrong point.
     void update(const platform::InputState& input, std::span<const platform::Event> events,
-                float display_scale);
+                float display_scale, float dt_seconds, bool mouse_allowed);
 
     /// Advance the animation by one simulation tick and recompose the world transforms.
     ///
@@ -131,7 +132,8 @@ class SceneDemo {
 
     math::OrthoCamera m_camera;
     std::vector<scene::StableId> m_orbiting;
-    bool m_dragging = false;
+    app::CameraControls m_camera_controls{.drag_button = platform::MouseButton::Left};
+    app::CameraController m_camera_controller{m_camera_controls};
 };
 
 }  // namespace atlas::sandbox

@@ -8,6 +8,7 @@ atlas_add_app_library(lab_view
         src/cell_renderer.cpp
         src/cell_id_pass.cpp
     DEPENDS
+        atlas::app_common
         atlas::lab_sim
         atlas::math
         atlas::platform

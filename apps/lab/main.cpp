@@ -669,6 +669,13 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
     // Keys and buttons both produce a request and both come through here. Two code paths that
     // did the same things separately would drift, and the one that drifted would be the one
     // nobody tested.
+    const auto controls_context = [&] {
+        return atlas::tools::ControlsContext{
+            .speed = accumulator->speed(),
+            .mode_index = static_cast<std::size_t>(mode),
+            .mode_count = static_cast<std::size_t>(atlas::lab::MapMode::Count)};
+    };
+
     const auto apply_controls = [&](const atlas::tools::SimulationControlsRequest& request) {
         if (request.empty()) {
             return;
@@ -762,6 +769,13 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
             if (std::holds_alternative<atlas::platform::QuitRequested>(event) ||
                 std::holds_alternative<atlas::platform::WindowCloseRequested>(event)) {
                 quit = true;
+            } else if (const auto* pad =
+                           std::get_if<atlas::platform::GamepadButtonPressed>(&event)) {
+                // The same table as the keyboard, so a button and a key cannot come to mean
+                // different things.
+                if (const auto action = atlas::tools::action_for(pad->button)) {
+                    apply_controls(atlas::tools::request_for(*action, controls_context()));
+                }
             } else if (const auto* resized = std::get_if<atlas::platform::WindowResized>(&event)) {
                 if (field.has_value()) {
                     field->resize(resized->pixel_size.width, resized->pixel_size.height);
@@ -784,35 +798,21 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                 if (key->repeat || (overlay.has_value() && overlay->wants_keyboard())) {
                     continue;
                 }
-                using atlas::platform::Key;
-                using atlas::sim::Speed;
-                atlas::tools::SimulationControlsRequest from_key;
-                switch (key->key) {
-                case Key::Escape: quit = true; break;
-                case Key::Space:
-                    from_key.speed = accumulator->speed().policy == atlas::sim::SpeedPolicy::Paused
-                                         ? Speed::normal()
-                                         : Speed::paused();
-                    break;
-                case Key::Period: from_key.single_step = true; break;
-                case Key::Num1: from_key.speed = Speed::normal(); break;
-                case Key::Num2: from_key.speed = Speed::times(2); break;
-                case Key::Num3: from_key.speed = Speed::times(4); break;
-                case Key::Num4: from_key.speed = Speed::times(8); break;
-                case Key::U: from_key.speed = Speed::unbounded(); break;
-                case Key::M:
-                    from_key.mode_index = static_cast<std::size_t>(atlas::lab::next(mode));
-                    break;
-                case Key::R: from_key.reset_view = true; break;
-                case Key::F5: from_key.save = true; break;
-                case Key::F9: from_key.load = true; break;
-                default: break;
+                // Quit is not a simulation control, so it stays here rather than joining the
+                // binding table.
+                if (key->key == atlas::platform::Key::Escape) {
+                    quit = true;
+                } else if (const auto action = atlas::tools::action_for(key->key)) {
+                    apply_controls(atlas::tools::request_for(*action, controls_context()));
                 }
-                apply_controls(from_key);
             }
         }
-        if (field.has_value() && !(overlay.has_value() && overlay->wants_mouse())) {
-            field->update(platform->input(), events, window.display_scale());
+        if (field.has_value()) {
+            // The pointer is ignored while the overlay owns it; the gamepad is not, because
+            // it has no pointer to be over a panel with.
+            const bool mouse_allowed = !(overlay.has_value() && overlay->wants_mouse());
+            field->update(platform->input(), events, window.display_scale(),
+                          static_cast<float>(frame_ns) / 1'000'000'000.0F, mouse_allowed);
         }
         if (scripted_pick.has_value() && frame_index == 3 && field.has_value() &&
             !pick.has_value()) {

@@ -17,6 +17,7 @@
 ///
 /// Thread affinity: main thread; it owns device resources.
 
+#include <atlas/app/camera_controller.hpp>
 #include <atlas/core/result.hpp>
 #include <atlas/lab/cell_renderer.hpp>
 #include <atlas/lab/grid_layout.hpp>
@@ -82,7 +83,7 @@ class CellField {
     /// into the pixels the camera's viewport is measured in; on a high-density display the
     /// two differ, and a zoom anchored in the wrong units drifts.
     void update(const platform::InputState& input, std::span<const platform::Event> events,
-                float display_scale);
+                float display_scale, float dt_seconds, bool mouse_allowed);
 
     /// Draw the visible chunks of `snapshot` in `mode`. The snapshot's layout must equal
     /// this field's; a mismatch draws nothing and is reported by the returned zero counts.
@@ -137,7 +138,8 @@ class CellField {
     std::vector<std::uint32_t> m_colours;  ///< Visible cells, packed run by run, four bytes each.
     std::vector<std::uint32_t> m_visible;
     std::vector<ChunkRun> m_runs;
-    bool m_dragging = false;
+    app::CameraControls m_camera_controls{.drag_button = platform::MouseButton::Right};
+    app::CameraController m_camera_controller{m_camera_controls};
 };
 
 }  // namespace atlas::lab

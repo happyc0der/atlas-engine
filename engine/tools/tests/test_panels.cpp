@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <set>
 #include <thread>
 
 using atlas::log::LogBuffer;
@@ -117,4 +118,117 @@ TEST_CASE("every speed has a name", "[tools][panels]") {
     // numerator is one would be a lie on the one row that says how fast time is running.
     const Speed half{.policy = atlas::sim::SpeedPolicy::Realtime, .numerator = 1, .denominator = 2};
     CHECK(speed_name(half) == "custom");
+}
+
+TEST_CASE("every action has a key", "[tools][panels]") {
+    // A control reachable only by gamepad would be invisible to anyone without one, and this
+    // is an engineering tool that is mostly driven from a keyboard.
+    for (std::size_t i = 0; i < static_cast<std::size_t>(atlas::tools::ControlAction::Count); ++i) {
+        const auto action = static_cast<atlas::tools::ControlAction>(i);
+        bool found = false;
+        for (const auto& binding : atlas::tools::control_bindings()) {
+            if (binding.action == action && binding.key != atlas::platform::Key::Unknown) {
+                found = true;
+            }
+        }
+        INFO("action index " << i);
+        CHECK(found);
+    }
+}
+
+TEST_CASE("no key and no button means two things", "[tools][panels]") {
+    // The whole reason the key and the button sit on one row: a duplicate would make one of
+    // them shadow the other, and which one would depend on the order of the table.
+    std::set<atlas::platform::Key> keys;
+    std::set<atlas::platform::GamepadButton> buttons;
+    for (const auto& binding : atlas::tools::control_bindings()) {
+        INFO("action index " << static_cast<int>(binding.action));
+        CHECK(keys.insert(binding.key).second);
+        if (binding.button != atlas::platform::GamepadButton::Count) {
+            CHECK(buttons.insert(binding.button).second);
+        }
+    }
+}
+
+TEST_CASE("a key and its button ask for the same thing", "[tools][panels]") {
+    // The property the table exists to guarantee. If these ever disagree, one of the two input
+    // devices has quietly stopped matching the other.
+    for (const auto& binding : atlas::tools::control_bindings()) {
+        if (binding.button == atlas::platform::GamepadButton::Count) {
+            continue;
+        }
+        const auto from_key = atlas::tools::action_for(binding.key);
+        const auto from_button = atlas::tools::action_for(binding.button);
+        REQUIRE(from_key.has_value());
+        REQUIRE(from_button.has_value());
+        CHECK(*from_key == *from_button);
+    }
+}
+
+TEST_CASE("an unbound key or button asks for nothing", "[tools][panels]") {
+    CHECK_FALSE(atlas::tools::action_for(atlas::platform::Key::Q).has_value());
+    CHECK_FALSE(atlas::tools::action_for(atlas::platform::Key::Unknown).has_value());
+    CHECK_FALSE(atlas::tools::action_for(atlas::platform::GamepadButton::Guide).has_value());
+    // The sentinel is not a button and must not match the rows that have no button.
+    CHECK_FALSE(atlas::tools::action_for(atlas::platform::GamepadButton::Count).has_value());
+}
+
+TEST_CASE("pause toggles against the present rather than setting a state", "[tools][panels]") {
+    using atlas::tools::ControlAction;
+    using atlas::tools::ControlsContext;
+    using atlas::tools::request_for;
+
+    const auto running = request_for(ControlAction::TogglePause,
+                                     ControlsContext{.speed = atlas::sim::Speed::normal()});
+    REQUIRE(running.speed.has_value());
+    CHECK(running.speed->policy == atlas::sim::SpeedPolicy::Paused);
+
+    const auto paused = request_for(ControlAction::TogglePause,
+                                    ControlsContext{.speed = atlas::sim::Speed::paused()});
+    REQUIRE(paused.speed.has_value());
+    CHECK(paused.speed->policy == atlas::sim::SpeedPolicy::Realtime);
+}
+
+TEST_CASE("faster and slower step the ladder and stop at its ends", "[tools][panels]") {
+    using atlas::sim::Speed;
+    using atlas::tools::ControlAction;
+    using atlas::tools::ControlsContext;
+    using atlas::tools::request_for;
+
+    const auto faster =
+        request_for(ControlAction::Faster, ControlsContext{.speed = Speed::normal()});
+    REQUIRE(faster.speed.has_value());
+    CHECK(faster.speed->numerator == 2);
+
+    // Off the top of the ladder is unbounded, and staying there is what a held shoulder does.
+    const auto top =
+        request_for(ControlAction::Faster, ControlsContext{.speed = Speed::unbounded()});
+    REQUIRE(top.speed.has_value());
+    CHECK(top.speed->policy == atlas::sim::SpeedPolicy::Unbounded);
+
+    const auto slower =
+        request_for(ControlAction::Slower, ControlsContext{.speed = Speed::times(4)});
+    REQUIRE(slower.speed.has_value());
+    CHECK(slower.speed->numerator == 2);
+
+    const auto bottom =
+        request_for(ControlAction::Slower, ControlsContext{.speed = Speed::normal()});
+    REQUIRE(bottom.speed.has_value());
+    CHECK(bottom.speed->numerator == 1);
+
+    // From paused, stepping up starts at the bottom rather than jumping to wherever a search
+    // for a paused speed happened to land.
+    const auto from_paused =
+        request_for(ControlAction::Faster, ControlsContext{.speed = Speed::paused()});
+    REQUIRE(from_paused.speed.has_value());
+    CHECK(from_paused.speed->numerator == 2);
+}
+
+TEST_CASE("the next mode wraps", "[tools][panels]") {
+    const auto wrapped = atlas::tools::request_for(
+        atlas::tools::ControlAction::NextMode,
+        atlas::tools::ControlsContext{
+            .speed = atlas::sim::Speed::normal(), .mode_index = 3, .mode_count = 4});
+    REQUIRE(wrapped.mode_index.has_value());
+    CHECK(*wrapped.mode_index == 0);
 }
