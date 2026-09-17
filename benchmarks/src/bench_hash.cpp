@@ -289,7 +289,13 @@ class StreamLanes {
 }
 
 /// The average number of output bits that change when one input bit is flipped, times a
-/// thousand. An ideal 64-bit hash changes thirty-two of them, so the ideal reading is 32000.
+/// thousand.
+///
+/// This exists here to compare *candidates*, including the ones that were rejected for scoring
+/// badly, which is a benchmark's job. The quality of the algorithm the engine actually adopted
+/// is a correctness property and is tested in engine/core/tests/test_hash.cpp, across eleven
+/// input sizes and per output bit, where it runs on every platform on every push. An ideal 64-bit
+/// hash changes thirty-two of them, so the ideal reading is 32000.
 ///
 /// Speed is only half of a decision about a hash that is a compatibility commitment. A faster
 /// hash that detects change less reliably would be a worse state hash however quick it is,
