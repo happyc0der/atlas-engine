@@ -440,6 +440,9 @@ struct Phases {
     std::uint64_t present = 0;
     std::uint64_t snapshot = 0;
     std::uint64_t draw = 0;
+    /// Mixing and pushing. Small by design and reported anyway: ADR-0011 spends a frame's
+    /// worth of headroom on this, and a number nobody can see is a budget nobody can check.
+    std::uint64_t audio = 0;
 };
 
 [[nodiscard]] std::uint64_t micros_since(std::chrono::steady_clock::time_point start) {
@@ -942,9 +945,11 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
         // Mixed and pushed once a frame, on this thread. ADR-0011: no Atlas code runs on the
         // window system's audio thread, and the price is that a frame longer than the queued
         // audio is heard as a gap, which AudioStats::underruns counts.
+        const auto audio_start = std::chrono::steady_clock::now();
         if (audio.has_value()) {
             audio->update();
         }
+        phases.audio = micros_since(audio_start);
 
         // ---- simulation
         const auto tick_start = std::chrono::steady_clock::now();
@@ -1019,14 +1024,14 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                     }
 
                     atlas::tools::DebugUi::PreparedFrame prepared{};
-                    std::array<std::string, 16> values;
+                    std::array<std::string, 17> values;
                     if (overlay.has_value()) {
                         overlay->begin_frame(static_cast<float>(frame_ns) / 1'000'000'000.0F,
                                              frame->swapchain_extent().width,
                                              frame->swapchain_extent().height);
                         const std::uint64_t largest =
                             std::max({phases.events, phases.simulation, phases.snapshot,
-                                      phases.draw, phases.present});
+                                      phases.draw, phases.present, phases.audio});
                         const auto phase = [&](std::uint64_t us) {
                             return std::format("{}{} us", us, us == largest && us > 0 ? " *" : "");
                         };
@@ -1051,7 +1056,16 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                             "{} applied, {} rejected, {} late, {} pending", last_applied,
                             last_rejected, sim.kernel->late_commands(), sim.commands.pending());
                         values[15] = std::format("{}", atlas::kHashAlgorithmVersion);
-                        const std::array<atlas::tools::Stat, 16> stats{{
+                        if (audio.has_value()) {
+                            const auto audio_stats = audio->stats();
+                            values[16] = std::format("{} voices, {} ms queued, {} underruns{}",
+                                                     audio_stats.voices, audio_stats.queued_ms,
+                                                     audio_stats.underruns,
+                                                     audio_stats.null_device ? ", no device" : "");
+                        } else {
+                            values[16] = "off";
+                        }
+                        const std::array<atlas::tools::Stat, 17> stats{{
                             {.label = "frame", .value = values[0]},
                             {.label = "tick", .value = values[1]},
                             {.label = "state hash", .value = values[2]},
@@ -1068,6 +1082,7 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                             {.label = "seed", .value = values[13]},
                             {.label = "commands", .value = values[14]},
                             {.label = "hash version", .value = values[15]},
+                            {.label = "audio", .value = values[16]},
                         }};
                         overlay->stats_panel("Strategy Lab", stats);
 

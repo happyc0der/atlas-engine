@@ -670,7 +670,17 @@ void step_simulation(atlas::Tick tick) {
                             overlay_values[5] = "-";
                         }
 
-                        const std::array<atlas::tools::Stat, 6> stats{{
+                        if (audio.has_value()) {
+                            const auto audio_stats = audio->stats();
+                            overlay_values[6] = std::format(
+                                "{} voices, {} ms queued, {} underruns{}", audio_stats.voices,
+                                audio_stats.queued_ms, audio_stats.underruns,
+                                audio_stats.null_device ? ", no device" : "");
+                        } else {
+                            overlay_values[6] = "off";
+                        }
+
+                        const std::array<atlas::tools::Stat, 7> stats{{
                             {.label = "frame", .value = overlay_values[0]},
                             {.label = "tick", .value = overlay_values[1]},
                             {.label = scene_demo.has_value() ? "sprites drawn" : "quads visible",
@@ -678,6 +688,7 @@ void step_simulation(atlas::Tick tick) {
                             {.label = "draw calls", .value = overlay_values[3]},
                             {.label = "uploaded", .value = overlay_values[4]},
                             {.label = "zoom", .value = overlay_values[5]},
+                            {.label = "audio", .value = overlay_values[6]},
                         }};
                         overlay->stats_panel("Atlas", stats);
 

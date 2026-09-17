@@ -11,6 +11,8 @@
 // frame that does not grow with the scene is survivable. What is not survivable is a count
 // that rises with the number of quads, because then a larger scene costs more per frame for
 // ever.
+#include <atlas/audio/device.hpp>
+#include <atlas/audio/synth.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/renderer/quad_batch.hpp>
 #include <atlas/rhi/device.hpp>
@@ -126,6 +128,69 @@ struct Counted {
         quads.push_back(Quad{.bounds = Rect{.position = {x, y}, .size = {3.0F, 3.0F}}});
     }
     return quads;
+}
+
+/// Does a steady audio frame allocate?
+///
+/// Here rather than in bench_audio.cpp because the global allocation functions are replaced in
+/// this translation unit, and the counter they write to is file-local by design: anything that
+/// could allocate while counting would recurse.
+///
+/// The device's header claims this is allocation-free **once the voice count has peaked**, not
+/// from the first update. That distinction is the whole measurement: the mixing buffer is sized
+/// at creation, but retiring a voice records the freed slot in the pool's free list, and that
+/// list grows until it has held as many entries as there have been simultaneous voices.
+[[nodiscard]] Result audio_allocations_per_update() {
+    auto device = atlas::audio::AudioDevice::null({.max_voices = 32});
+
+    const auto samples = atlas::audio::sine_blip(440.0F, 50);
+    auto clip = device.create_clip({.samples = samples, .debug_name = "bench"});
+    if (!clip) {
+        std::fprintf(stderr, "bench_allocations: %s\n", clip.error().to_string().c_str());
+        std::abort();
+    }
+
+    // Warm up by cycling voices through the pool until the free list has reached its high
+    // water mark. Skipping this measures the growth rather than the steady state, and would
+    // make the header's claim look false when it is merely narrower than it sounds.
+    for (int round = 0; round < 8; ++round) {
+        for (std::uint32_t i = 0; i < 32; ++i) {
+            (void)device.play(*clip, {.loop = true});
+        }
+        device.update();
+        device.stop_all();
+        device.update();
+    }
+
+    for (std::uint32_t i = 0; i < 32; ++i) {
+        (void)device.play(*clip, {.loop = true});
+    }
+
+    constexpr int kUpdates = 200;
+    const auto counted = count_allocations([&device] {
+        for (int i = 0; i < kUpdates; ++i) {
+            device.update();
+        }
+    });
+
+    const std::uint64_t per_update = counted.allocations / kUpdates;
+    std::printf("\naudio: %llu allocation(s) per update with 32 voices sounding\n",
+                static_cast<unsigned long long>(per_update));
+
+    Result result;
+    result.name = "audio/allocations_per_update";
+    result.parameters = "32 voices";
+    result.iterations = kUpdates;
+    result.warmup_iterations = 0;
+    result.median_ns = per_update;
+    result.p90_ns = per_update;
+    result.p99_ns = per_update;
+    result.min_ns = per_update;
+    result.max_ns = per_update;
+    result.units_per_iteration = 0;
+    result.metric = atlas::bench::Metric::Count;
+    result.count_name = "allocs/update";
+    return result;
 }
 
 [[nodiscard]] std::vector<Result> run() {
@@ -268,6 +333,7 @@ struct Counted {
 
     device->destroy_sampler(*sampler);
     device->destroy_texture(*texture);
+    results.push_back(audio_allocations_per_update());
     return results;
 }
 

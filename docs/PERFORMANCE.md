@@ -81,6 +81,7 @@ Provisional and scalable; each is introduced with the subsystem it measures.
 | ID picking readback | Latency and stall behaviour | M7 |
 | Task overhead | Spawn and join cost, parallel-for granularity | M8 |
 | Worker scaling | 1, 2, 4, and hardware concurrency minus one | M8 |
+| Audio mixing | 1, 8, 32 voices over a 1024-frame block; allocations per update | M12 |
 
 ## First results
 
@@ -661,6 +662,66 @@ the same scenarios within 1.02x of the baseline. The threshold did its job — i
 something real, and what was real was the load. A regression that does not reproduce on a quiet
 machine is a measurement, not a change. Re-record the baseline only when the change that moved
 it is understood and intended, which is why recording refuses a dirty tree.
+
+## Audio, M12: what mixing costs and where the threading model breaks
+
+Audio was not an optimisation, so there is nothing here that was made faster. What there is
+instead is a budget that was decided in advance by [ADR-0011](adr/0011-audio.md) and then
+measured against, including the case where the budget is exceeded on purpose.
+
+### The predictions, written before the first run
+
+They are in the benchmark's own header so that they cannot be edited after the fact without
+the edit being visible in the diff.
+
+| Scenario | Predicted | Measured | |
+|---|---|---|---|
+| `audio/mix voices=32` | 10 to 30 µs | **29.2 µs** | inside, at the top of the range |
+| `audio/mix voices=1` | under 1 µs | **1.17 µs** | **over**, by about a sixth |
+| `audio/allocations_per_update` | 0 after warm-up | **0** | as claimed |
+
+The single-voice prediction was wrong, and wrong in the direction that matters least: the fixed
+cost of one voice is a little higher than guessed, and everything above it scales from there.
+Thirty-two voices at 29.2 µs is comfortably inside the 100 µs this has to fit in, and the
+scaling is close to linear — 1.17, 7.46 and 29.2 µs at one, eight and thirty-two voices, which
+is 25× the work for 32× the voices. Sublinear, because the output block stays in cache while
+the voice count grows.
+
+`audio/resample` converts a second of 22.05 kHz mono to the mix rate in **47.3 µs**. That runs
+once, on the main thread, when a clip is finalised. A second of audio costing fifty microseconds
+to convert is not a reason to build anything.
+
+### Why there is no importer cache
+
+A decode is a copy of the samples with one conversion each, and the artifact cache is
+texture-shaped end to end: its entry header is a width, a height and a byte count, its files end
+in `.texture`, and it carries a single importer-version constant. Widening all of that to avoid
+a copy nobody has measured is the mistake M4 already made once with textures and reported
+rather than kept. **The trigger is an audio import measured above 5 ms**, which nothing in the
+repository comes close to.
+
+### The threading model, measured at both ends
+
+ADR-0011 chose main-thread push mixing over a callback on the window system's audio thread, and
+was explicit about the price: a frame longer than the queued audio is heard as a gap. Ten
+seconds of the Strategy Lab at a million cells, with a sound playing, on this machine:
+
+| Configuration | Worst frame | Underruns |
+|---|---|---|
+| 1,048,576 cells, 30 ticks a second | 19.7 ms | **0** |
+| 1,048,576 cells, 60 ticks a second | 70.9 ms | **1** |
+
+**The second row is the point.** Sixty ticks a second at a million cells is already over budget
+by design — it is the configuration M8 recorded as beyond what the tick can sustain — and one
+frame in six hundred reached 70.9 ms, past the 60 ms queue. Exactly one gap was audible, and it
+was counted rather than swallowed.
+
+That is the trade working as described rather than failing. A configuration inside its own
+frame budget never underran; one outside it underran once. The queue target and cap are both
+`AudioConfig` fields, so the response to a complaint is a tuning rather than a rebuild, and the
+recorded trigger for revisiting the decision entirely is a latency complaint above about 80 ms.
+
+Machine: Mac16,7, Apple M4 Pro, 14 hardware threads, AppleClang 21, RelWithDebInfo, idle.
 
 ## Optimisation candidates
 
