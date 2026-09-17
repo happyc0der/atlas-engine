@@ -4,6 +4,7 @@ atlas_add_test(scene
         test_scene.cpp
         test_hierarchy.cpp
         test_serialization.cpp
+        test_animation_pose.cpp
     DEPENDS
         atlas::scene
     LABELS

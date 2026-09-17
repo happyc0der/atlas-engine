@@ -81,6 +81,15 @@ class SceneDemo {
 
     std::size_t finalise_assets(assets::Registry& registry);
 
+    /// Rebuild every world transform from the authored transforms and any poses.
+    ///
+    /// Called once per frame by the application, after the panels have applied this frame's
+    /// edits and before anything reads a composed matrix. Cheap here — the demonstration has
+    /// nine entities — and correct regardless of what else ran, which is the property that
+    /// matters: the edit history does not recompose, and something that recomposes only
+    /// sometimes recomposes wrongly.
+    void recompose();
+
     [[nodiscard]] renderer::BatchStats draw(rhi::RenderPass& pass);
 
     /// The loaded scene, for inspection. Const: the overlay may look, not touch.

@@ -310,6 +310,10 @@ void SceneDemo::tick(std::uint64_t tick_index, std::uint64_t ticks_per_second) {
     // authoring step and has no business on an undo stack. It also means editing a
     // sprite-bearing root while the animation runs is pointless, because the next tick
     // overwrites it. Space pauses it, which is why that key exists.
+    //
+    // M13 replaces all of this with a pose the animator owns, which composes on top of the
+    // authored transform instead of into it. Recomposition has already moved out of here and
+    // into the frame, so pausing no longer freezes the editor along with the animation.
     for (const scene::StableId root : m_scene->roots()) {
         if (m_scene->sprite(root) == nullptr) {
             continue;
@@ -319,7 +323,9 @@ void SceneDemo::tick(std::uint64_t tick_index, std::uint64_t ticks_per_second) {
             root, scene::LocalTransform{.position = {.x = std::cos(angle) * 30.0F,
                                                      .y = std::sin(angle * 1.3F) * 18.0F}});
     }
+}
 
+void SceneDemo::recompose() {
     m_scene->update_transforms();
 }
 
@@ -357,10 +363,17 @@ renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
         const float width = sprite->size.x * scale_x;
         const float height = sprite->size.y * scale_y;
 
+        // A pose's frame rectangle wins over the sprite's own when a clip has set one. That
+        // single line is the whole of frame animation: a sprite already carries a rectangle,
+        // so cycling a sheet costs the renderer nothing at all.
+        const auto* pose = m_scene->animation_pose(id);
+        const math::Rect uv =
+            (pose != nullptr && pose->frame_uv.has_value()) ? *pose->frame_uv : sprite->uv;
+
         m_batch.add(renderer::Quad{
             .bounds = {.position = {m[12] - (width * 0.5F), m[13] - (height * 0.5F)},
                        .size = {width, height}},
-            .uv = sprite->uv,
+            .uv = uv,
             .colour = sprite->tint,
         });
     }

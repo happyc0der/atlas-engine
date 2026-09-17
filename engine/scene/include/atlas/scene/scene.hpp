@@ -92,6 +92,19 @@ class Scene {
     void set_camera(StableId id, const Camera& camera);
     void remove_camera(StableId id);
 
+    /// What playback has added to this entity, or nullptr when nothing is animating it.
+    ///
+    /// Written by an animator and by nothing else. It is not part of the authored scene: it is
+    /// never serialised, it is not captured or restored by an edit command, and
+    /// `update_transforms` composes it on top of the authored transform rather than instead of
+    /// it. That separation is what lets an entity be edited while it is moving.
+    [[nodiscard]] const AnimationPose* animation_pose(StableId id) const;
+    void set_animation_pose(StableId id, const AnimationPose& pose);
+    void clear_animation_pose(StableId id);
+
+    /// Every entity carrying a pose, in stable-identifier order.
+    [[nodiscard]] std::vector<StableId> animated() const;
+
     // --- hierarchy --------------------------------------------------------------------
 
     /// Attach `child` under `parent`, or detach it when `parent` is None.

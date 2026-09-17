@@ -118,19 +118,39 @@ struct Scene::Impl {
 
         math::Mat4 world = parent_matrix;
         if (const auto* local = registry.try_get<LocalTransform>(handle)) {
+            // The authored transform is what a person typed and what the file records. A pose,
+            // when an animator has written one, is added on top of it here rather than into it.
+            // That is the whole of the two-writer arrangement: neither one ever overwrites the
+            // other's field, so an entity can be dragged while it plays and an undo undoes the
+            // drag and not the playback.
+            //
+            // Position adds and rotation adds, because those are offsets from where the author
+            // put it. Scale multiplies, because a scale of one has to mean "unchanged" — an
+            // additive scale would make an untouched pose shrink everything to nothing.
+            math::Vec2 position = local->position;
+            float rotation = local->rotation;
+            math::Vec2 scale = local->scale;
+            if (const auto* pose = registry.try_get<AnimationPose>(handle)) {
+                position.x += pose->position_offset.x;
+                position.y += pose->position_offset.y;
+                rotation += pose->rotation_offset;
+                scale.x *= pose->scale_factor.x;
+                scale.y *= pose->scale_factor.y;
+            }
+
             // Translate, then rotate, then scale, applied to a point in that reverse order:
             // scale about the entity's own origin, rotate about it, then move. Any other
             // order makes a scaled child rotate about the wrong point.
-            const float cosine = std::cos(local->rotation);
-            const float sine = std::sin(local->rotation);
+            const float cosine = std::cos(rotation);
+            const float sine = std::sin(rotation);
 
             math::Mat4 local_matrix;
-            local_matrix.set(0, 0, cosine * local->scale.x);
-            local_matrix.set(0, 1, -sine * local->scale.y);
-            local_matrix.set(1, 0, sine * local->scale.x);
-            local_matrix.set(1, 1, cosine * local->scale.y);
-            local_matrix.set(0, 3, local->position.x);
-            local_matrix.set(1, 3, local->position.y);
+            local_matrix.set(0, 0, cosine * scale.x);
+            local_matrix.set(0, 1, -sine * scale.y);
+            local_matrix.set(1, 0, sine * scale.x);
+            local_matrix.set(1, 1, cosine * scale.y);
+            local_matrix.set(0, 3, position.x);
+            local_matrix.set(1, 3, position.y);
 
             world = parent_matrix * local_matrix;
         }
@@ -267,6 +287,37 @@ void Scene::remove_sprite(StableId id) {
     if (handle != entt::null) {
         m_impl->registry.remove<SpriteRenderData>(handle);
     }
+}
+
+const AnimationPose* Scene::animation_pose(StableId id) const {
+    const entt::entity handle = m_impl->lookup(id);
+    return handle == entt::null ? nullptr : m_impl->registry.try_get<AnimationPose>(handle);
+}
+
+void Scene::set_animation_pose(StableId id, const AnimationPose& pose) {
+    const entt::entity handle = m_impl->lookup(id);
+    if (handle != entt::null) {
+        m_impl->registry.emplace_or_replace<AnimationPose>(handle, pose);
+    }
+}
+
+void Scene::clear_animation_pose(StableId id) {
+    const entt::entity handle = m_impl->lookup(id);
+    if (handle != entt::null) {
+        m_impl->registry.remove<AnimationPose>(handle);
+    }
+}
+
+std::vector<StableId> Scene::animated() const {
+    std::vector<StableId> found;
+    for (const auto& [id, handle] : m_impl->by_id) {
+        if (m_impl->registry.all_of<AnimationPose>(handle)) {
+            found.push_back(id);
+        }
+    }
+    // The map's order is arbitrary; the result is not allowed to be.
+    std::ranges::sort(found);
+    return found;
 }
 
 const Camera* Scene::camera(StableId id) const {

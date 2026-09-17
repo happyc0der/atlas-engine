@@ -19,6 +19,7 @@
 #include <atlas/rhi/types.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -60,6 +61,41 @@ struct LocalTransform {
 /// with itself.
 struct WorldTransform {
     math::Mat4 matrix;
+};
+
+/// What an animator has made of an entity this frame, and how far through a clip it is.
+///
+/// **Derived, never authored, and never written to a file** — the same standing as
+/// `WorldTransform`, and for a sharper reason. The authored `LocalTransform` is what a person
+/// typed, what the edit history owns, and what a save records. This is what playback added on
+/// top of it. Keeping them apart is what lets both exist at once: `update_transforms` composes
+/// the two, so an entity can be dragged **while** it animates, an undo undoes the drag and
+/// never the animation, and the bytes a scene saves are unchanged by having played.
+///
+/// An offset rather than a replacement, deliberately. A replacement would make the inspector's
+/// position field have no visible effect while a clip runs, which is the same confusion as
+/// writing the authored value directly with the undo breakage removed and the confusion kept.
+///
+/// The clock lives here for the same reason the offset does: it is not authored, not saved,
+/// and written only by the animator. One component, so the rule about who may write what names
+/// one thing rather than two.
+struct AnimationPose {
+    /// Added to the authored position.
+    math::Vec2 position_offset;
+    /// Added to the authored rotation, in radians. Unwrapped, so a clip taking a full turn
+    /// reads as one turn rather than folding back to zero.
+    float rotation_offset = 0.0F;
+    /// Multiplied with the authored scale, so an untouched pose is the identity.
+    math::Vec2 scale_factor{.x = 1.0F, .y = 1.0F};
+
+    /// How far into the clip this entity is, in nanoseconds. Integer, so a clip that loops for
+    /// an hour is exact at the end of it rather than a float sum that has drifted.
+    std::uint64_t elapsed_ns = 0;
+
+    /// The region of the texture this frame, when the clip sets one. Preferred over the
+    /// sprite's own when present, which is the whole of frame animation: nothing in the
+    /// renderer changes, because a sprite already carries a rectangle.
+    std::optional<math::Rect> frame_uv;
 };
 
 /// Parentage and sibling order.

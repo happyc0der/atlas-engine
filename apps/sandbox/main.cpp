@@ -854,6 +854,23 @@ void step_simulation(atlas::Tick tick) {
                         prepared_overlay = overlay->end_frame(*frame);
                     }
 
+                    // Recompose here, every frame, whatever else happened.
+                    //
+                    // This is where an edit becomes visible. The history deliberately does not
+                    // recompose — it bumps a revision and leaves that to whoever is watching —
+                    // and until now nobody was: composition happened only at the tail of the
+                    // demo's tick, which returns early while the animation is paused. So while
+                    // paused, dragging an entity changed the authored number, changed what the
+                    // inspector showed, and never moved the picture. The panel even displayed
+                    // the contradiction, showing a local position that had moved beside a
+                    // world translation that had not.
+                    //
+                    // After the overlay, because the panels apply this frame's edits, and
+                    // before the pass, because the draw path reads the composed matrix.
+                    if (scene_demo.has_value()) {
+                        scene_demo->recompose();
+                    }
+
                     auto pass = frame->begin_render_pass({
                         .colour = {.load = atlas::rhi::LoadOp::Clear,
                                    .clear_colour = {.r = 0.06F, .g = 0.07F, .b = 0.10F}},
