@@ -627,6 +627,33 @@ dropped row inside the split changed every run equally and the test passed. It n
 unsplit path as its baseline, and the same mutation fails two of its three cases. The test was
 written, passed, and was believed before the mutation check was run.
 
+## Regression thresholds, M8
+
+`tools/bench_baseline.py compare` fails, with a non-zero exit, when a scenario is more than
+**1.25x** slower than this machine's recorded baseline. That number is now measured rather than
+assumed: four consecutive runs of all thirty-four scenarios spread by **1.03x at the median**
+and never by more than 1.15x once the degenerate cases below are set aside. A quarter is
+therefore comfortably clear of the noise while still catching anything worth looking at.
+
+Two scenarios had spreads of 1.51x and 25.8x, and both measure **under two microseconds** — one
+of them varied twenty-five fold while moving from nothing to nothing. A ratio taken on a handful
+of timer ticks is a ratio of rounding, so anything under ten microseconds on either side is now
+reported as "too small" and cannot fail a comparison. It is still printed, so a scenario that
+grows from nothing into something remains visible.
+
+**Thresholds are not enforced in continuous integration, and that is a decision rather than an
+omission.** The exit criterion asks for thresholds "for CI where stable", and the evidence is
+that nothing there is. The same hash comparison measures 31x on this machine and about 7x on a
+shared Windows runner; the memory-bound scaling plateau lands in a different place on a
+two-core runner than on this one. Gating on numbers that vary with whatever else the host is
+doing would produce failures that say nothing about the change under review, which is how a
+check becomes something people rerun until it passes. What continuous integration does run is
+the hashing group's self-checks, which assert correctness and never timing.
+
+So the workflow is: run `atlas_bench` on this machine, compare against the baseline, and treat a
+regression as a prompt to find out why. Re-record the baseline only when the change that moved
+it is understood and intended, which is why recording refuses a dirty tree.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:

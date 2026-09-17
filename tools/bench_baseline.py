@@ -24,10 +24,21 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_DIR = REPO_ROOT / "benchmarks" / "baselines"
 
-# How much slower than the baseline counts as a regression. Generous, because a development
-# machine has other things running on it and a threshold that cries wolf gets ignored.
+# How much slower than the baseline counts as a regression.
+#
+# Measured rather than guessed: four consecutive runs of every scenario on the development
+# machine spread by 1.03x at the median and never by more than 1.15x, excluding the ones noted
+# below. A threshold of 1.25x therefore sits well clear of this machine's noise while still
+# catching anything that matters, and a threshold that cries wolf is one nobody reads.
 REGRESSION_FACTOR = 1.25
 IMPROVEMENT_FACTOR = 0.80
+
+# Below this, a ratio says nothing. The two scenarios whose run-to-run spread exceeded the
+# threshold above both measure under two microseconds — one of them varied by 25x between runs
+# while moving from nothing to nothing — because a ratio taken on a handful of timer ticks is
+# a ratio of rounding. They are still reported, so a scenario that grows from nothing into
+# something is visible, but they cannot fail a comparison.
+MINIMUM_COMPARABLE_NS = 10_000
 
 
 def machine_id(environment: dict) -> str:
@@ -119,7 +130,9 @@ def compare(results_path: Path) -> int:
 
         ratio = after / before
         label = "same"
-        if ratio >= REGRESSION_FACTOR:
+        if before < MINIMUM_COMPARABLE_NS or after < MINIMUM_COMPARABLE_NS:
+            label = "too small"
+        elif ratio >= REGRESSION_FACTOR:
             label = "SLOWER"
             regressions += 1
         elif ratio <= IMPROVEMENT_FACTOR:
