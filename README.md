@@ -26,10 +26,10 @@ time controls and replay, which exists to test the architecture rather than to b
 
 **What is not done.** The renderer has been verified on one graphics processor and one software
 rasteriser; Direct3D 12 and non-Apple hardware are unverified, and that is the largest untested
-surface in the project. There is no audio, no gamepad input, no networking, and no scripting —
-see [ADR-0009](docs/adr/0009-scripting-decision.md) for why the last of those is a decision
-rather than an omission. Everything consciously not built is listed with its reason in
-[docs/DEFERRED.md](docs/DEFERRED.md).
+surface in the project. There is no audio, gamepad input, networking or scripting yet; each is
+a planned milestone under [ADR-0010](docs/adr/0010-charter-amendment.md), and
+[ADR-0009](docs/adr/0009-scripting-decision.md) records why scripting waited. Everything
+consciously not built is listed with its reason in [docs/DEFERRED.md](docs/DEFERRED.md).
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for what each milestone did and what it cost.
 
@@ -77,9 +77,10 @@ cannot compile `std::expected` against libstdc++. See docs/DEPENDENCIES.md.
 ## Non-goals
 
 Atlas will not contain game rules or content of any kind. It is not a universal engine:
-there is no plan for a physics engine, an animation system, a networking stack, a
-general-purpose plugin ABI, or a custom scripting language. Audio, gamepad input, IME,
-and localisation are out of scope for v0.1.
+there is no plan for a physics engine, a plugin ABI for native code, or a custom scripting
+language. Networking means deterministic lockstep over the command queue; mods are sandboxed
+scripts behind that same boundary; and animation, audio, gamepad input, IME and localisation
+are planned milestones under [ADR-0010](docs/adr/0010-charter-amendment.md).
 
 Sub-systems are added when a real call site needs them, never in anticipation.
 

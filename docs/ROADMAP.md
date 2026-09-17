@@ -18,6 +18,13 @@ Status legend: **done**, *in progress*, planned.
 | M7 | Strategy Lab (engine v0.1) | L | **done** |
 | M8 | Performance hardening and parallel simulation | L | **done** |
 | M9 | Tooling and scripting decision | S–M | **done** |
+| M10 | Charter amendment (ADR-0010) | S | next |
+| M11 | Input: text, IME, gamepad | M | planned |
+| M12 | Audio | M | planned |
+| M13 | Animation | M–L | planned |
+| M14 | Networking: lockstep design and loopback proof | M | planned |
+| M15 | Sandboxed mods | L | planned |
+| M16 | Localisation: string tables, English | S | planned |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -639,11 +646,17 @@ rather than as a gap.
 
 ## After M9
 
-**Every milestone this roadmap planned is done.** M0 through M9, ten of them, each ending green
-on four continuous-integration workflows across macOS arm64, Linux x86_64 and Windows x64.
-Engine v0.1 was declared at M7 against the charter item by item; M8 made the simulation
-parallel and nineteen times faster at a million cells; M9 made the engine editable and decided
-the scripting question.
+**Every milestone the original roadmap planned is done.** M0 through M9, ten of them, each
+ending green on four continuous-integration workflows across macOS arm64, Linux x86_64 and
+Windows x64. Engine v0.1 was declared at M7 against the charter item by item; M8 made the
+simulation parallel and nineteen times faster at a million cells; M9 made the engine editable
+and decided the scripting question.
+
+**A second series, M10 to M16, was added on 2026-09-17 by owner decision**, recorded in
+[ADR-0010](adr/0010-charter-amendment.md). The section below was written when M9 closed and the
+table ended there; it is kept because its reading of where the project stood is what the new
+series was decided against, and because the question it raises has not been answered, only
+postponed.
 
 What that does not mean is that the engine is finished, and this section exists so that nobody
 reads a table of ticks and concludes otherwise.
@@ -658,8 +671,10 @@ questions at all:
   value, spending `kHashAlgorithmVersion` 3 and invalidating every save and replay. That is a
   decision about what breaking a stored format is worth, which belongs to whoever owns the
   project rather than to whoever is optimising it.
-- **Embedded scripting** is decided for now by [ADR-0009](adr/0009-scripting-decision.md), with
-  a recorded trigger. The trigger is deliberately a limitation somebody hits, not a date.
+- **Embedded scripting** was decided for now by [ADR-0009](adr/0009-scripting-decision.md),
+  with a recorded trigger — deliberately a limitation somebody hits, not a date. **That trigger
+  was fired by decision rather than by a limitation on 2026-09-17**; see ADR-0010's honest
+  accounting of which of its three conditions were actually met.
 - **Direct3D 12 and non-Apple graphics hardware.** The renderer has been verified on one
   graphics processor and one software rasteriser. This is the largest untested surface in the
   project and no amount of continuous integration on the current runners changes it.
@@ -671,6 +686,23 @@ answer to that shapes what the engine needs next. A game would immediately exerc
 the Strategy Lab only stands in for — many more tables, systems with genuinely different
 access patterns, a save format that has to migrate — and each of those has a deferral waiting
 for exactly that evidence.
+
+**What was decided instead.** The owner chose to extend the engine first, with seven
+subsystems. The paragraph above is not retracted: it is still the case that a game is the only
+thing that can show whether these abstractions are right, and ADR-0010 records that risk rather
+than arguing it away. Completing M10 to M16 is therefore **not** v1.0; v1.0 is declared when a
+game links the engine and runs without patching it.
+
+## M10 — Charter amendment
+
+Slices: [ADR-0010](adr/0010-charter-amendment.md), and the five documents it changes.
+
+**Exit criteria**
+- The charter, README, DEFERRED, ADR index and this table say the same thing about what the
+  engine plans to be, and each change is one the ADR tabled in advance.
+- ADR-0009 carries a dated forward pointer rather than an edit that hides the change of mind.
+- `tools/precheck.sh` clean. No code changes; no test result changes.
+- Stop and report, so the amended charter is read before a line of feature code exists.
 
 ## First continuous integration
 

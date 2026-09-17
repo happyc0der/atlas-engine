@@ -14,6 +14,12 @@ being given away later by accident.
 
 Not Rejected. Lua is not refused; it is unearned.
 
+**2026-09-17:** the trigger in decision 6 is fired by
+[ADR-0010](0010-charter-amendment.md), which replaces its "recorded limitation" condition with
+an owner decision; decision 6 is superseded by ADR-0015 when M15 lands. **Decisions 1 to 5
+stand**, and decision 2 — the command-queue boundary — is inherited unchanged by every record
+in the M10 to M16 series.
+
 ## Context
 
 The charter and the originating specification both say the same thing in different words.

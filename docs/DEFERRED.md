@@ -263,13 +263,26 @@ integration ran for the first time. What it found is recorded in
   while making the lab's pick agree with its own analytic inverse, which is the kind of thing
   a cross-check exists to find.
 
+## Decided by ADR-0010, planned as milestones
+
+Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.
+Localisation.
+
+These seven left the recorded-limitation regime on 2026-09-17 by owner decision, recorded in
+[ADR-0010](adr/0010-charter-amendment.md). The condition for building each is now that its
+milestone is scheduled and has a consumer to build against; the condition for dropping each is
+that no consumer strong enough exists when its turn comes.
+
 ## Deferred by the charter, until a recorded limitation justifies the work
 
-A
-custom allocator. A custom entity-component system. A work-stealing scheduler. Networking.
-Physics. Animation. A plugin interface. Multi-viewport overlay windows. Filesystem watchers,
-in place of which hot reload polls modification times. Audio, gamepad input, input method
-editors, and localisation.
+A custom allocator. A custom entity-component system. A work-stealing scheduler. Physics.
+Multi-viewport overlay windows. Filesystem watchers, in place of which hot reload polls
+modification times.
+
+Physics has a trigger written down: a consumer that needs bodies interacting through forces
+rather than through commands. A map-based strategy game has none, and what resembles physics in
+one is either picking, which exists, or a presentation tween, which the animation milestone
+provides.
 
 Each of these is a project-sized subsystem. The bar is a measured limitation in the thing
 being built, not an expectation that one will appear.
