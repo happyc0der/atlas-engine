@@ -121,6 +121,7 @@ declaration. Its only permitted consumer is `atlas::rhi`.
 | rhi | GPU device, resources as generation handles, passes, uploads | Exposes SDL types; knows about scenes or maps |
 | renderer | Camera, batching, targets, culling hooks, debug draw | Mutates simulation or scene state |
 | assets | Virtual paths, asset IDs, importers, load states, hot reload | Touches the GPU directly |
+| audio | The output device, the mixer, clips and voices | Reaches simulation or scene state, or produces anything that is hashed |
 | scene | Presentation entities, transforms, hierarchy, serialization | Is the grand-strategy database |
 | simulation | Ticks, commands, system contracts, RNG, hashing, replay, snapshots | Contains game rules |
 | runtime | Composition, main loop, subsystem lifetimes | Depends on tools or editor code |
@@ -253,6 +254,40 @@ on; without a gamepad every application still works, so it is a peripheral a com
 opts into. It initialises as its own subsystem, so a failure is a warning rather than a
 refusal to run.
 
+## Audio
+
+Audio is presentation, and the separation is structural rather than a promise. `simulation`
+depends on `core` and `tasks` only, so an audio include there fails the boundary check, and the
+Strategy Lab's simulation library is fenced at configure time to link nothing but
+`atlas::simulation`. **A sound is triggered where a command is submitted or where a snapshot is
+observed, never inside a system.** Nothing audio produces is hashed, and every golden hash was
+byte-identical across the milestone that added it.
+
+**The mixing runs on the main thread, once a frame.** Once per frame the device measures what
+the window system still holds, mixes enough to reach a 60 ms target, and pushes it. No callback
+is registered, so the window system's audio thread drains the stream itself and never enters
+Atlas code — which is why nothing here needs a rule about what may not allocate or log.
+
+The price is stated rather than hidden: a frame longer than the queued audio is heard as a gap,
+and the statistics count exactly that. A million-cell tick at thirty ticks a second never
+underran; the same at sixty, already beyond what that tick sustains, underran once in six
+hundred frames. Both bounds are configuration, and [ADR-0011](adr/0011-audio.md) records the
+callback mixer as the rollback with its trigger.
+
+**Everything converts to one mix format on the way in**: 48 kHz, stereo, float32. That is what
+lets the mixer be pure functions over buffers with no branch on rate, format or channel count,
+and therefore what lets the arithmetic be tested exactly on a machine with no sound card.
+
+**A missing sound is silence, and deliberately has no fallback.** A missing texture resolves to
+a magenta checkerboard because something must still be drawn; a missing sound has nothing it
+must still do, and inventing a noise would be worse than silence. The registry says whether it
+is missing, failed or still loading, and the asset panel shows which.
+
+**The platform brings the audio subsystem up**, behind a configuration flag, exactly as it does
+for gamepads. The audio module opens a device on it, the way the renderer opens a graphics
+device on a window it did not create. SDL's lifetime stays in one module, whose destructor
+tears every subsystem down at once.
+
 ## Threading model
 
 v0.1 was single-threaded by design, and since M8 the simulation's compute phase runs on
@@ -264,6 +299,7 @@ affinity.
 | Main | M0 | SDL, window, GPU device and all submission, UI, simulation stepping | Block on long I/O inside a frame |
 | Asset I/O workers (2, inside `assets`) | M4 | File reads and decoding into CPU buffers | Touch platform, GPU, scene, simulation, or UI |
 | Simulation workers (`tasks`) | M8 | Per-system private scratch and output buffers | Mutate shared tables, or touch anything outside simulation |
+| Audio device thread (created and owned by the window system) | M12 | Draining the output stream into hardware | Runs no Atlas code at all; registering a callback on it needs a new ADR |
 
 A render thread is not planned for v0.1 and requires trace evidence plus documented
 affinity rules before it could be considered.

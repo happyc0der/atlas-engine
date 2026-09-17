@@ -9,9 +9,9 @@ configure, build, test run, and a runnable demonstration before the next one sta
 
 ## Current status
 
-**Twelve milestones are done, M0 through M11.** Engine v0.1 was declared at M7 against the
-charter item by item. M10 amended the charter to plan seven subsystems it had excluded, and
-M11 built the first of them.
+**Thirteen milestones are done, M0 through M12.** Engine v0.1 was declared at M7 against the
+charter item by item. M10 amended the charter to plan seven subsystems it had excluded; M11 and
+M12 built the first two.
 
 What exists: a windowing and input layer; a renderer over SDL_GPU with offscreen targets,
 integer-identifier picking and non-stalling streaming uploads; an asset pipeline with virtual
@@ -19,8 +19,8 @@ paths, background loading, hot reload and a cooked-artifact cache; a scene layer
 transform hierarchy and versioned serialization; a deterministic simulation kernel with fixed
 integer ticks, commands, seeded random streams, canonical state hashing, replay, and save and
 load; a worker pool the simulation's compute phase runs on; an undoable edit layer; text, input-method
-and gamepad input; and an engineering overlay with scene, log, asset, timing and control panels
-that can be typed into.
+and gamepad input; audio with a mixer, voices and loadable clips; and an engineering overlay
+with scene, log, asset, timing and control panels that can be typed into.
 
 Two applications drive it. `atlas_sandbox` is the lifecycle and scene demonstration.
 `atlas_lab` is the Strategy Laboratory: a synthetic million-cell grid with map modes, picking,
@@ -28,7 +28,7 @@ time controls and replay, which exists to test the architecture rather than to b
 
 **What is not done.** The renderer has been verified on one graphics processor and one software
 rasteriser; Direct3D 12 and non-Apple hardware are unverified, and that is the largest untested
-surface in the project. There is no audio, animation, networking or scripting yet; each is
+surface in the project. There is no animation, networking or scripting yet; each is
 a planned milestone under [ADR-0010](docs/adr/0010-charter-amendment.md), and
 [ADR-0009](docs/adr/0009-scripting-decision.md) records why scripting waited. Everything
 consciously not built is listed with its reason in [docs/DEFERRED.md](docs/DEFERRED.md).
@@ -81,8 +81,8 @@ cannot compile `std::expected` against libstdc++. See docs/DEPENDENCIES.md.
 Atlas will not contain game rules or content of any kind. It is not a universal engine:
 there is no plan for a physics engine, a plugin ABI for native code, or a custom scripting
 language. Networking means deterministic lockstep over the command queue; mods are sandboxed
-scripts behind that same boundary; gamepad input and input methods arrived in M11; and animation, audio
-and localisation are planned milestones under
+scripts behind that same boundary; gamepad input and input methods arrived in M11 and audio in M12;
+and animation and localisation are planned milestones under
 [ADR-0010](docs/adr/0010-charter-amendment.md).
 
 Sub-systems are added when a real call site needs them, never in anticipation.

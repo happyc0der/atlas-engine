@@ -20,8 +20,8 @@ Status legend: **done**, *in progress*, planned.
 | M9 | Tooling and scripting decision | S–M | **done** |
 | M10 | Charter amendment (ADR-0010) | S | **done** |
 | M11 | Input: text, IME, gamepad | M | **done** |
-| M12 | Audio | M | next |
-| M13 | Animation | M–L | planned |
+| M12 | Audio | M | **done** |
+| M13 | Animation | M–L | next |
 | M14 | Networking: lockstep design and loopback proof | M | planned |
 | M15 | Sandboxed mods | L | planned |
 | M16 | Localisation: string tables, English | S | planned |
@@ -825,6 +825,83 @@ from both applications, and this section said it worked. The gap sat between two
 the unit tests each build their own platform, so none could observe what a composition root
 asked for, and the integration checks run whole binaries but had no reason to ask what had been
 initialised. M12 opens by closing it.
+
+## M12 — Audio
+
+Full report: [reports/M12.md](reports/M12.md).
+
+Slices: a correction to M11; the module, the device and the mixer; the clip asset type and the
+WAV reader; measurement; [ADR-0011](adr/0011-audio.md) and the documents.
+
+**Exit criteria**
+- A new module with no new dependency, no window-system type in any public header, and an
+  error domain that reports as audio rather than as something else.
+- A sound generated in code in the lab, and a sound loaded from a file in the sandbox, each at
+  a real call site rather than behind a test flag.
+- A threading decision recorded as an ADR, with its budget measured at both ends.
+- Every golden hash and every headless integration case byte-identical.
+
+### The milestone opened by correcting the last one
+
+M11 reported gamepad support as met, and neither application could use any of it. The subsystem
+is off by default and no composition root ever asked for it, so nothing built in M11 for a
+gamepad ran in either shipped binary.
+
+**The gap was between two kinds of test rather than inside either.** Every gamepad unit test
+builds its own platform and asks for the subsystem itself, which is correct for testing a
+platform and is exactly why none of them could observe a composition root that never asked. The
+integration checks run whole binaries, where it was visible, but they had no reason to ask what
+had been initialised. The platform now logs one line naming every subsystem it brought up, and
+an integration case in each application reads it.
+
+### The one decision that was genuinely open
+
+Everything else about audio was decided by the engine as it already stood. SDL's lifetime
+belongs to one module, because the platform's destructor shuts every subsystem down at once.
+Decoding belongs in `assets`, which links no SDL, so the window system's own loader was
+unreachable from where importing happens. A sound cannot reach simulation state, because the
+lab's simulation library is fenced at configure time to link nothing else.
+
+What was open was **who mixes, and on which thread**. The window system can drain a stream the
+main thread fills, or call into Atlas from a thread it owns. [ADR-0011](adr/0011-audio.md)
+chose the first, and the interesting part is not the choice but that its price was measured
+rather than asserted: a frame longer than the queued audio is heard as a gap. At a million cells
+and thirty ticks a second the worst frame was 19.7 ms and nothing underran. At sixty ticks a
+second — already beyond what that tick sustains, by M8's own measurement — one frame reached
+70.9 ms and produced exactly one gap, counted rather than swallowed.
+
+### Reading a file nobody can be trusted to have written
+
+The WAV reader is about a hundred and fifty lines and every one of them treats its input as
+hostile. The discipline was not invented: the simulation's save reader already has exactly the
+right shape and lives in a module `assets` must not depend on, so it was reproduced following
+the artifact cache, which is the one hardened reader already in the module.
+
+**Format is chosen by the leading bytes and never by the path's extension**, because an
+extension is a claim made by whoever named the file.
+
+Mutation testing found four gaps in the tests written for it, and one of them was a genuine
+memory-safety hole: a data chunk claiming ten thousand bytes in a file holding a hundred read
+past the end of the buffer while every existing test still passed, because the obvious
+four-billion-byte case is caught by a different check.
+
+### Exit criteria, against what was done
+
+| Criterion | Status |
+|---|---|
+| A new module, no new dependency, no leaked types | **Met.** `atlas::audio`, deps `core;assets;platform`, SDL private. Nothing was added to `vcpkg.json`; the Ogg decoder the package already installs is deliberately not compiled. An error code numbered 500 used to report itself as a serialization error, because the domain ladder had no ceiling on its top rung; it has an audio rung now and both sides of every boundary are pinned. |
+| Sounds at real call sites | **Met.** The lab clicks where a person picked a cell, panned by where they clicked, and on a save and a load; its click is generated because the lab has no asset registry and deliberately does not want one. The sandbox plays a loop read from a file and picks up an edit to it while playing, with the clip count proving the displaced clip was released rather than leaked. |
+| A recorded threading decision, measured | **Met.** ADR-0011, accepted, with the callback mixer recorded as its rollback and a latency complaint above about 80 ms as the trigger. Measured at both ends of its own budget, including the configuration where it audibly fails. |
+| Determinism untouched | **Met.** Every golden hash and every headless integration case byte-identical. Structural rather than promised: an audio include in `simulation` fails the boundary check, and the lab's simulation library cannot link the module at all. |
+| Predictions before measurements | **Met, and two of three were wrong.** Thirty-two voices cost 30.7 to 31.4 µs against a predicted 10 to 30, and one voice 1.08 to 1.12 against a predicted "under 1". Recorded as low rather than widened after the fact. No baseline was recorded at all, because the machine was not idle and recording writes the whole file. |
+| Music | **Not built, by owner decision**, with a written trigger. The decoder is installed on every platform at no cost; what M12 declined was the repository's first committed binary test fixture, which an Ogg forces and a WAV does not. |
+
+**Corrections this milestone made to earlier work.** An asset type has been able to decode and
+then wait forever since M4, with nothing logging and nothing failing. The error-domain ladder
+was open-ended at the top. The rule naming where SDL types may live named three places and there
+were four. The module diagram called the handle pool a slot map. And no committed binary asset
+had any recorded provenance, which is now a file that records, among other things, that nobody
+knows where `tile.png` came from.
 
 ## First continuous integration
 

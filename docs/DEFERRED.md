@@ -295,6 +295,47 @@ integration ran for the first time. What it found is recorded in
     of them. None has a consumer, and each would be another thing to keep working across three
     platforms for no user.
 
+### M12 — audio
+
+- **A callback mixer on the window system's audio thread.** [ADR-0011](adr/0011-audio.md)
+  chose main-thread push mixing, and this is its recorded rollback rather than a gap: the mixer
+  is already pure functions over buffers, so what changes is who calls them. It buys immunity
+  to a long frame and latency of roughly 20 ms against the present 70 to 80. It costs a thread
+  on which nothing may allocate, log or assert — a rule that is invisible until violated, and
+  most easily violated by someone adding a log line to diagnose something else. **Picked up on
+  a latency complaint above about 80 ms**, or the first consumer that needs feedback tied
+  tightly to an input, which a strategy game does not have.
+- **Ogg Vorbis, streaming, and a music slot.** The decoder is installed on every platform
+  already, at no cost, and M12 still declined it by owner decision: it forces the repository's
+  first committed binary test fixture, because an Ogg cannot be produced by a checked-in
+  standard-library script the way a WAV can. **Picked up when a track is long enough that 64 MB
+  decoded against 4 MB encoded matters**, which needs a game. Nothing built in M12 is discarded
+  when that happens: a stream is a second asset type beside the clip, not a replacement for it.
+- **A decoded-audio cache.** The artifact cache is texture-shaped end to end: its entry header
+  is a width, a height and a byte count, its files end in `.texture`, and it carries a single
+  importer-version constant. Widening all of that to avoid a copy nobody has measured is the
+  mistake M4 made once with textures and reported rather than kept. **Picked up when an audio
+  import is measured above 5 ms**; the committed loop imports in well under one.
+- **A better resampler.** Linear interpolation, which is exact when the rates match and adds
+  audible artefacts to content with strong high frequencies. Inaudible on clicks and beds at a
+  two-to-one ratio. **Picked up by the first consumer that can hear it**, which means real
+  recorded music rather than generated tones.
+- **Per-voice pitch, spatial audio, and any effect at all.** No consumer. Pitch is the cheapest
+  and would arrive first, as a step through the clip other than one frame at a time.
+- **More than three buses, or a graph instead of scalars.** The two consumers want "quieter
+  overall", "quieter music" and "quieter effects", which is three multiplications. A graph is
+  what a mixer becomes when something needs one.
+- **An audible fallback for a missing sound.** Deliberately not built, and not only unbuilt: a
+  missing texture resolves to a magenta checkerboard because something must still be drawn, and
+  a missing sound has nothing it must still do. Inventing a noise would be worse than silence.
+- **A limiter.** The mix clamps, which distorts rather than ducking when many loud voices
+  coincide. Thirty-two voices would have to be loud at once for it to matter.
+- **Device change events.** Unplugging headphones mid-run is not handled; the window system
+  migrates the default device underneath the stream, which covers the common case and not the
+  case where the device disappears entirely.
+- **MP3, FLAC and Opus.** No consumer, and each is another decoder of untrusted input to
+  harden.
+
 ## Decided by ADR-0010, planned as milestones
 
 Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.

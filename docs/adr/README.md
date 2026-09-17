@@ -21,7 +21,7 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0008](0008-numeric-and-save-policy.md) | Numeric policy and the simulation save format | Accepted |
 | [0009](0009-scripting-decision.md) | Scripting: deferred, with the boundary decided now | Accepted; trigger fired by 0010; decision 6 superseded by 0015 when M15 lands |
 | [0010](0010-charter-amendment.md) | Charter amendment: seven subsystems by owner decision, physics kept out | Accepted |
-| 0011 | Audio: SDL output, main-thread push mixing, decoders in assets | Planned, M12 |
+| [0011](0011-audio.md) | Audio: SDL output, main-thread push mixing, decoders in assets | Accepted |
 | 0012 | Scene format version 2 and the append rule | Planned, M13 |
 | 0013 | Animation clip file format | Planned, M13 |
 | 0014 | Deterministic lockstep over the command queue | Planned, M14 |

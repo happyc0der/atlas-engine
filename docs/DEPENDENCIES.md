@@ -26,7 +26,7 @@ distribution. All current dependencies are permissive and therefore compatible.
 | SDL3 | Window, events, input, GPU | 3.4.12 | zlib | Yes | Private to `platform` and `rhi` | M1 |
 | glslang | Compiles HLSL to SPIR-V | 16.4.0 (vcpkg) / 16.6.0 (Homebrew) | BSD-3-Clause and Apache-2.0 | Yes | Build-time tool only; never linked into engine targets | M2 |
 | SPIRV-Cross | Translates SPIR-V to Metal Shading Language | 1.4.350.1 (vcpkg) / 1.4.357.0 (Homebrew) | Apache-2.0 | Yes | Build-time tool only | M2 |
-| stb | Image decoding (`stb_image`) | 2024-07-29, port-version 1 | MIT / Unlicense | Yes | Private to the assets importer | M4 |
+| stb | Image decoding (`stb_image`). The port also installs `stb_vorbis.c` v1.22 on every triplet; Atlas does not compile it, and M12 deferred Ogg support. | 2024-07-29, port-version 1 | MIT / Unlicense | Yes | Private to the assets importer | M4 |
 | Dear ImGui | Debug overlay | 1.92.8, features `docking-experimental`, `sdl3-binding`, `sdlgpu3-binding` | MIT | Yes | Private to `tools` | M3 |
 | EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004; in practice private to `scene/src` | M5 |
 | nlohmann-json | Reading and writing the scene file | 3.12.0, port-version 2 | MIT | Yes | Private to `scene/src`; no JSON type appears in any Atlas header | M5 |
@@ -121,6 +121,13 @@ glm, fmt, spdlog, and xxhash are all available and are deliberately not used: lo
 formatting are served by `std::format`, hashing by a first-party canonical hash whose
 algorithm identity is versioned, and math by a small first-party header. Each would be
 adopted only with a recorded need.
+
+**miniaudio**, **SDL3_mixer** and **dr_libs**, considered in M12 and not adopted. Each would
+have supplied decoding and mixing together. What Atlas needed was the parts it had to decide for
+itself anyway — the threading model, the error model, the handle model, and where the boundary
+with `assets` falls — and what remained after those decisions was a mixer of about a hundred
+lines of arithmetic. SDL3_mixer would also have meant a second library owning audio device
+lifetime alongside the platform, which [ADR-0011](adr/0011-audio.md) rejected on its own terms.
 
 **lua** and **sol2**, considered in M9 and not adopted
 ([ADR-0009](adr/0009-scripting-decision.md)). Both are GPL-compatible and neither is the
