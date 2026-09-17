@@ -15,3 +15,7 @@ CMakeUserPresets.json
 .idea/
 *.swp
 compile_commands.json
+
+# Python bytecode, produced whenever a tools/ script is imported rather than run.
+__pycache__/
+*.pyc

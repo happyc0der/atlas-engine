@@ -534,6 +534,8 @@ M8" and both went untaken; `docs/DEFERRED.md` records why and what would change 
 
 ## M9 — Tooling and scripting decision
 
+Full report: [reports/M9.md](reports/M9.md).
+
 Slices: command and undo infrastructure with the first mutating editor action; editor
 usability; the scripting ADR.
 

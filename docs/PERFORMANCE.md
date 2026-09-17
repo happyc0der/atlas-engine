@@ -652,8 +652,14 @@ doing would produce failures that say nothing about the change under review, whi
 check becomes something people rerun until it passes. What continuous integration does run is
 the hashing group's self-checks, which assert correctness and never timing.
 
-So the workflow is: run `atlas_bench` on this machine, compare against the baseline, and treat a
-regression as a prompt to find out why. Re-record the baseline only when the change that moved
+So the workflow is: run `atlas_bench` on this machine **once it is idle**, compare against the
+baseline, and treat a regression as a prompt to find out why.
+
+The idleness is not fussiness. In M9 a comparison run immediately after a release build and two
+container runs reported two regressions of 1.29x and 1.80x; three runs on a quiet machine put
+the same scenarios within 1.02x of the baseline. The threshold did its job — it flagged
+something real, and what was real was the load. A regression that does not reproduce on a quiet
+machine is a measurement, not a change. Re-record the baseline only when the change that moved
 it is understood and intended, which is why recording refuses a dirty tree.
 
 ## Optimisation candidates

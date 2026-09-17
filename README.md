@@ -92,6 +92,8 @@ Sub-systems are added when a real call site needs them, never in anticipation.
 - [docs/DETERMINISM.md](docs/DETERMINISM.md) — tick model, hashing, numeric rules, limits
 - [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) — every dependency, pin, and licence
 - [docs/adr/](docs/adr/) — architecture decision records
+- [docs/reports/](docs/reports/) — milestone reports: what changed, what was run, what is still risky
+- [docs/DEFERRED.md](docs/DEFERRED.md) — everything consciously not built, and what would change that
 
 ## Licence
 
