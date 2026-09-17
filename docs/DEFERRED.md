@@ -8,7 +8,7 @@ records, and a reason nobody can find is a reason nobody can challenge.
 A deferral is not a to-do. Each entry says what would have to become true for the work to be
 worth doing; several will never become true, and that is a fine outcome.
 
-Last reviewed 2026-09-17, after M8.
+Last reviewed 2026-09-17, after M9.
 
 ## Open gaps in the infrastructure
 

@@ -17,7 +17,7 @@ Status legend: **done**, *in progress*, planned.
 | M6 | Simulation kernel | L | **done** |
 | M7 | Strategy Lab (engine v0.1) | L | **done** |
 | M8 | Performance hardening and parallel simulation | L | **done** |
-| M9 | Tooling and scripting decision | S–M | next |
+| M9 | Tooling and scripting decision | S–M | **done** |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -541,6 +541,133 @@ usability; the scripting ADR.
 - The editor workflow is usable for test scenes and synthetic datasets.
 - An ADR decides whether Lua is justified, identifies its API boundary and security model,
   and either implements a tiny end-to-end script or explicitly defers it.
+
+### A re-examination first
+
+M9 opened the way M7 did, with a sweep for promises whose milestone had passed. It found
+twenty-two things, six of which changed behaviour, and they were fixed before any editor code
+was written on top of them.
+
+- **The sandbox panned and zoomed at half speed on a high-density display**, dividing a logical
+  pointer delta by zoom against a viewport measured in pixels. The recorded deferral covered
+  only the zoom anchor and said "the lab converts; the sandbox should too" — it understated the
+  scope. Both of the sandbox's scene classes had it, pan and zoom each, so it was four sites.
+- **Seven entry points called into the platform or the graphics device with no main-thread
+  assertion**, while their immediate neighbours had one. Two documents claimed "every entry
+  point asserts main-thread affinity". That sentence is now true without qualification.
+- **The device-loss API had no caller anywhere.** `is_lost()` and `loss_reason()` were
+  referenced only by their own definitions while `ARCHITECTURE.md` presented "Atlas detects it
+  and stops" as a live mechanism. Both applications now ask, on the failed frame where loss
+  surfaces, and exit with their own code.
+- **Worker-count invariance skipped "hardware concurrency minus one"** on any machine with four
+  or fewer cores — exactly the continuous-integration runners.
+- The sandbox never called `wait_idle` at shutdown though the lab does and the architecture
+  flowchart says to; and the headless pacing block had been copied into both applications with
+  the bound drifted to 5 ms in one and 4 ms in the other.
+
+The worst of the rest was not a defect but a claim: **`docs/DETERMINISM.md` published the
+version 1 state hashes under the project's cross-architecture agreement claim**, while the
+golden test had asserted different values since M8 replaced the algorithm. Probably still true,
+with stale evidence, which is the most misleading combination available.
+
+The module diagram had drifted five ways against the table it claimed to depict. It is now
+regenerated from `cmake/ModuleGraph.cmake`, and `tools/check_module_deps.py` compares them, so
+it cannot drift again without `precheck` failing. Its first catch was `atlas::edit`, added
+later in this same milestone and missing from the diagram.
+
+### What was built
+
+**`atlas::edit`**, a new module between `scene` and `tools`. Not inside `scene`, which is the
+data model and should not know it is being edited; not inside `tools`, which links Dear ImGui
+and the graphics headers and therefore had no tests at all. A command captures what it needs to
+reverse itself the first time it is applied and then owns both directions — not whole-scene
+snapshots, which would copy every entity to destroy one leaf, and not separate inverse objects,
+since the inverse of a destroy needs data only the pre-destroy scene has.
+
+Three things the scene's own API dictated. Most `Scene` setters return `void` and silently do
+nothing for an entity that is not there, so every command checks existence itself; without that,
+an edit built from a selection the user had already deleted would report success and enter the
+history with nothing to undo. `destroy` cascades, so its undo restores a subtree with the
+original identifiers, which is safe because identifiers are never reused and `set_parent` sorts
+siblings by identifier. `set_parent` refuses a cycle before detaching anything, so a refused
+reparent never reaches the history.
+
+**Scene editing from the overlay.** The panel's signature went from `const scene::Scene&` to
+`edit::History&`, and the guarantee the const reference existed for is kept rather than waived:
+the history exposes its scene as const and has no method yielding a mutable one, so a widget
+still cannot reach past validation and the compiler still enforces it. The first widget is the
+local position, with undo and redo buttons — the first interactive controls the overlay has
+ever had beyond a tree node. Coalescing was built in from the start, because the first widget
+is a drag and without it the first thing a user learns about undo is that one drag takes forty
+presses.
+
+**Three panels.** A log console, which needed no new plumbing: `core` has had a bounded,
+thread-safe `LogBuffer` and a weak-referencing sink since M0, with a comment naming the console
+that would one day read it. An asset status panel, which the registry was built for. And
+simulation controls for the lab, which was keyboard-only. The controls panel returns a request
+and changes nothing itself — `tools` cannot depend on an application, so it could not call the
+lab's functions if it wanted to — and the lab's key handling now builds the same request type,
+with one function applying both, so a button and a key cannot come to mean different things.
+
+**[ADR-0009](adr/0009-scripting-decision.md)** defers embedded scripting and fixes the boundary
+now: nothing outside the tick reaches simulation state except through a command, and nothing
+runs during a tick.
+
+### Exit criteria, against what was done
+
+| Criterion | Status |
+|---|---|
+| The editor workflow is usable for test scenes and synthetic datasets | **Met.** The sandbox's scene is editable through an undoable history, and the lab's time controls, display modes, save and load are buttons rather than undocumented keys. A log console and an asset browser exist in both. What "usable" does not yet include is renaming, which needs a platform text-input event that does not exist; that is recorded rather than glossed. |
+| An ADR decides whether Lua is justified, identifies its API boundary and security model, and either implements a tiny script or explicitly defers it | **Met**, by the explicit-deferral branch the criterion allows. The boundary and the security model are both recorded in full, so the decision can be evaluated later against something concrete rather than re-argued. |
+
+**Not claimed.** The drag widget itself was verified by hand and by captured frames, not by an
+automated test: driving a Dear ImGui control programmatically needs precise synthetic pointer
+input and would test the mock more than the panel. What *is* tested automatically is everything
+either side of it — the commands and the history headlessly, the filter logic headlessly, and
+the panel's render path under the `gpu` label on two backends.
+
+### What this milestone deliberately did not build
+
+Rename, rotation, scale, sprite and camera widgets, reparent by drag, multi-selection, a
+clipboard, memory counters, record and play as buttons, a reset button, and dock persistence.
+Each has its reason in [DEFERRED.md](DEFERRED.md). The commands behind several of them exist
+and are tested, which is recorded there so that "a command with no widget" reads as intended
+rather than as a gap.
+
+## After M9
+
+**Every milestone this roadmap planned is done.** M0 through M9, ten of them, each ending green
+on four continuous-integration workflows across macOS arm64, Linux x86_64 and Windows x64.
+Engine v0.1 was declared at M7 against the charter item by item; M8 made the simulation
+parallel and nineteen times faster at a million cells; M9 made the engine editable and decided
+the scripting question.
+
+What that does not mean is that the engine is finished, and this section exists so that nobody
+reads a table of ticks and concludes otherwise.
+
+**What is genuinely open, and why it stays open.** Everything consciously not built is in
+[DEFERRED.md](DEFERRED.md) with the condition that would change the decision. Three items are
+worth naming here because they are the largest, and because two of them are not engineering
+questions at all:
+
+- **Hashing in parallel** is the biggest measured performance win left, at roughly 40% of a
+  694-microsecond tick. It is not taken because every scheme that splits the hash changes its
+  value, spending `kHashAlgorithmVersion` 3 and invalidating every save and replay. That is a
+  decision about what breaking a stored format is worth, which belongs to whoever owns the
+  project rather than to whoever is optimising it.
+- **Embedded scripting** is decided for now by [ADR-0009](adr/0009-scripting-decision.md), with
+  a recorded trigger. The trigger is deliberately a limitation somebody hits, not a date.
+- **Direct3D 12 and non-Apple graphics hardware.** The renderer has been verified on one
+  graphics processor and one software rasteriser. This is the largest untested surface in the
+  project and no amount of continuous integration on the current runners changes it.
+
+**What the next milestone would be, if there is one.** The charter's purpose is an engine for a
+map-based grand-strategy game, and the engine now has every capability that charter names. The
+next real question is not a milestone in this list: it is whether to start the game, and the
+answer to that shapes what the engine needs next. A game would immediately exercise the things
+the Strategy Lab only stands in for — many more tables, systems with genuinely different
+access patterns, a save format that has to migrate — and each of those has a deferral waiting
+for exactly that evidence.
 
 ## First continuous integration
 
