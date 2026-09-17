@@ -569,6 +569,55 @@ could already have returned and destroyed the job on its stack. The fix is to wa
 to be *out* of the job rather than for the work to be *done*, and it costs the second row of the
 dispatch table above.
 
+## Parallel compute, M8: 2.07x, and what now stands in the way
+
+The kernel takes an optional worker pool. A batch's systems run together, and a system may split
+its own rows further through `ComputeContext::pool` — offered rather than applied, because a
+system that draws from a random stream in sequence must not use it: the draw order is part of
+the answer. The lab's two heavy systems split; its two random ones do not.
+
+**The prediction, from the pool's own benchmark:** two to four times, not the eight that
+compute-bound work reaches, because the lab's systems walk cell columns and an adjacency
+structure and are therefore memory-bound.
+
+| Workers | Tick at 1M cells | Speedup |
+|---|---|---|
+| none | 1.960 ms | 1.00x |
+| 1 | 1.383 ms | 1.42x |
+| 2 | 1.139 ms | 1.72x |
+| 4 | 962 us | 2.04x |
+| 13 | 946 us | **2.07x** |
+
+The bottom of the predicted range, and the reason is Amdahl's law rather than the pool: about
+0.7 ms of the 1.96 ms tick was never parallel. The hash is 0.38 ms of it and the commit phase
+copies each system's scratch back into its table — several megabytes, one system at a time, by
+contract, because commit order is what makes two systems writing the same table deterministic.
+A 36% serial fraction caps the speedup near 2.8x whatever the workers do, and 2.07x is what is
+left after dispatch.
+
+End to end, `atlas_lab --headless --grid 1024`: **507 to 1074 ticks a second**, with a
+byte-identical state hash at both settings.
+
+### A conclusion this reverses
+
+Earlier in M8, parallel hashing was measured and rejected: it would have taken the hash from
+374 us to 113 us, 13% of a then 2.0 ms tick, in exchange for a worker pool that did not exist.
+That was right at the time and is wrong now. The pool exists, and the tick it would be 13% of is
+now 946 us, of which the hash is 40%. The ranking changed because the thing above it moved.
+
+That is worth stating plainly because it is the ordinary condition of optimisation work, not a
+mistake: a candidate's value depends on what else has been done, so a rejection is dated
+evidence rather than a permanent answer. The two candidates now ahead of everything else are
+hashing in parallel and not copying scratch during commit.
+
+### On the test that nearly proved nothing
+
+The worker-count invariance test first compared a pool of zero workers against pools of one, two
+and four. All of them call `parallel_for`; only the absence of a pool skips it. So a deliberately
+dropped row inside the split changed every run equally and the test passed. It now uses the
+unsplit path as its baseline, and the same mutation fails two of its three cases. The test was
+written, passed, and was believed before the mutation check was run.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:

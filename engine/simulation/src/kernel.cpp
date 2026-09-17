@@ -71,17 +71,37 @@ Result<TickReport> Kernel::step() {
             .world = *m_world,
             .tick = m_tick,
             .rng = RngStreams{m_config.seed, m_tick},
+            .pool = m_config.pool,
         };
 
         // Walked batch by batch even though every system runs sequentially. The batches are
         // the unit M8 will hand to workers, and walking them now means that change is a
         // scheduling one rather than a rewrite.
+        // A batch is a set of systems that write nothing in common, which is what makes running
+        // them together safe. Each still writes only its own scratch and the world is const
+        // here, so the answer does not depend on the order they finish in.
+        //
+        // A batch of one runs directly rather than through the pool: waking a thread costs more
+        // than most systems do, and the schedule produces batches of one more often than not.
+        const auto run_one = [this, &context](std::size_t index) {
+            const System& system = m_schedule->systems()[index];
+            if (system.compute != nullptr) {
+                ATLAS_ZONE_NAMED("system compute");
+                system.compute(context);
+            }
+        };
+
         for (const Batch& batch : m_schedule->batches()) {
-            for (const std::size_t index : batch.systems) {
-                const System& system = m_schedule->systems()[index];
-                if (system.compute != nullptr) {
-                    ATLAS_ZONE_NAMED("system compute");
-                    system.compute(context);
+            if (m_config.pool != nullptr && batch.systems.size() > 1) {
+                m_config.pool->parallel_for(batch.systems.size(), 1,
+                                            [&batch, &run_one](std::size_t begin, std::size_t end) {
+                                                for (std::size_t i = begin; i < end; ++i) {
+                                                    run_one(batch.systems[i]);
+                                                }
+                                            });
+            } else {
+                for (const std::size_t index : batch.systems) {
+                    run_one(index);
                 }
             }
         }

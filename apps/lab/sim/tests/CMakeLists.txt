@@ -9,8 +9,9 @@ atlas_add_test(lab_sim
         test_snapshot.cpp
         test_save_load.cpp
         test_golden.cpp
+        test_parallel.cpp
     DEPENDS
         atlas::lab_sim
     LABELS
-        unit
+        "unit;determinism"
 )

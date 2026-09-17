@@ -31,6 +31,7 @@
 #include <atlas/simulation/save.hpp>
 #include <atlas/simulation/snapshot.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
+#include <atlas/tasks/worker_pool.hpp>
 #include <atlas/tools/debug_ui.hpp>
 
 #include "file_bytes.hpp"
@@ -85,6 +86,8 @@ struct Options {
     std::uint32_t ticks_per_second = 60;
     std::uint32_t commands_per_tick = 0;
     std::uint32_t max_ticks_per_frame = 8;
+    std::size_t workers = 0;
+    bool workers_set = false;
     std::uint64_t seed = 1;
     std::uint64_t max_frames = 0;
     std::uint64_t max_ticks = 0;
@@ -101,6 +104,10 @@ Options:
   --unbounded            Run ticks as fast as possible.
   --paused               Start paused.
   --commands-per-tick N  Submit N deterministic set_color_index commands each tick.
+  --workers N            Worker threads beside this one for the simulation's compute phase.
+                         Default: one per hardware thread beyond this one. Zero runs everything
+                         on the calling thread. The state hash is the same at every setting,
+                         which apps/lab/sim/tests/test_parallel.cpp checks.
   --max-ticks-per-frame N
                          Catch-up limit; ticks beyond it are dropped and counted. Default 8,
                          the tick scheduler's own. It was 2 while a million-cell tick cost
@@ -214,6 +221,14 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
         return std::unexpected(per_tick.error());
     }
     options.commands_per_tick = static_cast<std::uint32_t>(*per_tick);
+    if (args.has("workers")) {
+        const auto workers = bounded(args, "workers", 0, 0, atlas::tasks::WorkerPool::kMaxWorkers);
+        if (!workers) {
+            return std::unexpected(workers.error());
+        }
+        options.workers = static_cast<std::size_t>(*workers);
+        options.workers_set = true;
+    }
     const auto per_frame = bounded(args, "max-ticks-per-frame", 8, 1, 64);
     if (!per_frame) {
         return std::unexpected(per_frame.error());
@@ -255,7 +270,8 @@ struct Simulation {
     std::unique_ptr<atlas::sim::Kernel> kernel;  ///< Always set once make_simulation returns.
 };
 
-[[nodiscard]] atlas::Result<std::unique_ptr<Simulation>> make_simulation(const Options& options) {
+[[nodiscard]] atlas::Result<std::unique_ptr<Simulation>>
+make_simulation(const Options& options, atlas::tasks::WorkerPool* pool) {
     auto simulation = std::make_unique<Simulation>();
     auto generated = atlas::lab::generate({.width = options.grid,
                                            .height = options.grid,
@@ -289,6 +305,7 @@ struct Simulation {
             // much again. See docs/PERFORMANCE.md.
             .record_system_hashes = !options.record_path.empty(),
             .record_applied_commands = !options.record_path.empty(),
+            .pool = pool,
         });
     return simulation;
 }
@@ -358,7 +375,7 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
     if (!replay) {
         return std::unexpected(std::move(replay).error().context("decoding the replay"));
     }
-    auto simulation = make_simulation(options);
+    auto simulation = make_simulation(options, nullptr);
     if (!simulation) {
         return std::unexpected(simulation.error());
     }
@@ -471,7 +488,15 @@ struct Phases {
         return play_replay(*options);
     }
 
-    auto simulation = make_simulation(*options);
+    // Declared before the simulation so it outlives the kernel that borrows it.
+    const std::size_t worker_count =
+        options->workers_set ? options->workers : atlas::tasks::WorkerPool::default_worker_count();
+    auto pool = atlas::tasks::WorkerPool::create(worker_count);
+    if (!pool) {
+        return std::unexpected(std::move(pool).error().context("starting the worker pool"));
+    }
+
+    auto simulation = make_simulation(*options, &*pool);
     if (!simulation) {
         return std::unexpected(simulation.error());
     }

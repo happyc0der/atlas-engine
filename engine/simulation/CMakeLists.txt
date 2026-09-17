@@ -28,6 +28,7 @@ atlas_add_module(simulation
         include/atlas/simulation/world.hpp
     DEPENDS
         core
+        tasks
 )
 
 if(ATLAS_BUILD_TESTS)

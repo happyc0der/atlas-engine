@@ -31,6 +31,7 @@
 #include <atlas/core/result.hpp>
 #include <atlas/simulation/rng.hpp>
 #include <atlas/simulation/world.hpp>
+#include <atlas/tasks/worker_pool.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -65,6 +66,15 @@ struct ComputeContext {
     const World& world;
     Tick tick = 0;
     RngStreams rng;
+
+    /// The worker pool, or null when the kernel was given none.
+    ///
+    /// A system may use it to split its own rows, and must then write only the indices its
+    /// chunk covers: that is what keeps the result identical at every worker count, which is
+    /// M8's exit criterion. A system that draws from a random stream in sequence must not use
+    /// it at all — the draw order is part of the answer — which is why this is offered rather
+    /// than applied on the system's behalf.
+    tasks::WorkerPool* pool = nullptr;
 };
 
 /// What the commit phase may see.

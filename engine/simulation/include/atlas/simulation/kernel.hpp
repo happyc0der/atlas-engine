@@ -80,6 +80,13 @@ struct KernelConfig {
     /// Off by default. A run that is not being recorded should not pay to copy payloads it
     /// will never look at.
     bool record_applied_commands = false;
+
+    /// Optional, and borrowed: the kernel does not own it and it must outlive the kernel.
+    ///
+    /// With a pool, the systems of one batch run concurrently and each system may split its own
+    /// work further. Without one, everything runs on the calling thread. The results are the
+    /// same either way, which the determinism tests check rather than assume.
+    tasks::WorkerPool* pool = nullptr;
 };
 
 /// Advances a world through ticks.

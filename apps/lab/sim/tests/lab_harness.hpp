@@ -9,6 +9,7 @@
 #include <atlas/lab/generate.hpp>
 #include <atlas/lab/systems.hpp>
 #include <atlas/simulation/kernel.hpp>
+#include <atlas/tasks/worker_pool.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -39,8 +40,9 @@ struct LabHarness {
         REQUIRE(register_lab_commands(commands, lab.ids, bound).has_value());
     }
 
-    [[nodiscard]] sim::Kernel kernel(std::uint64_t seed) {
-        return sim::Kernel(lab.world, schedule, commands, sim::KernelConfig{.seed = seed});
+    [[nodiscard]] sim::Kernel kernel(std::uint64_t seed, tasks::WorkerPool* pool = nullptr) {
+        return sim::Kernel(lab.world, schedule, commands,
+                           sim::KernelConfig{.seed = seed, .pool = pool});
     }
 };
 

@@ -6,6 +6,27 @@
 #include <vector>
 
 namespace atlas::lab {
+namespace {
+
+/// Rows per chunk when a system splits itself across workers.
+///
+/// Large enough that dispatch disappears into the work: the pool costs about 140 nanoseconds a
+/// chunk, so a million rows in chunks of this size spend under ten microseconds getting there.
+/// Fixed rather than derived from the worker count, because the partitioning is what makes the
+/// answer independent of how many workers ran it.
+constexpr std::size_t kParallelGrain = 16'384;
+
+/// Run `body(begin, end)` over `count` rows, on the pool when there is one.
+template <typename Body>
+void over_rows(const sim::ComputeContext& context, std::size_t count, const Body& body) {
+    if (context.pool != nullptr && count > kParallelGrain) {
+        context.pool->parallel_for(count, kParallelGrain, body);
+        return;
+    }
+    body(0, count);
+}
+
+}  // namespace
 
 sim::SystemDesc step_region_value(const TableIds& ids) {
     const auto scratch = std::make_shared<std::vector<std::uint32_t>>();
@@ -14,12 +35,16 @@ sim::SystemDesc step_region_value(const TableIds& ids) {
     desc.writes = {ids.cells};
     desc.compute = [scratch, ids](const sim::ComputeContext& context) {
         const auto& cells = cell_table(context.world, ids);
-        scratch->assign(cells.region_value.begin(), cells.region_value.end());
-        for (std::uint32_t& value : *scratch) {
-            // Wrapping unsigned arithmetic: defined, and the high bits feed back so the
-            // sequence does not settle into a short cycle.
-            value += 1U + (value >> 27U);
-        }
+        const std::size_t count = cells.region_value.size();
+        scratch->resize(count);
+        over_rows(context, count, [&cells, scratch](std::size_t begin, std::size_t end) {
+            for (std::size_t i = begin; i < end; ++i) {
+                // Wrapping unsigned arithmetic: defined, and the high bits feed back so the
+                // sequence does not settle into a short cycle.
+                const std::uint32_t value = cells.region_value[i];
+                (*scratch)[i] = value + 1U + (value >> 27U);
+            }
+        });
     };
     desc.commit = [scratch, ids](const sim::CommitContext& context) {
         cell_table(context.world, ids).region_value = *scratch;
@@ -81,15 +106,20 @@ sim::SystemDesc accumulate_population(const TableIds& ids) {
         const auto& population = population_table(context.world, ids);
         const auto count = static_cast<std::uint32_t>(population.row_count());
         scratch->resize(count);
-        for (std::uint32_t i = 0; i < count; ++i) {
-            std::uint32_t gain = 0;
-            for (const std::uint32_t n : adjacency.neighbours_of(i)) {
-                gain += cells.color_index[n];
-            }
-            // Saturating at a documented cap, so the column has a bounded range the snapshot
-            // can scale into a byte without knowing the tick count.
-            (*scratch)[i] = std::min(kPopulationCap, population.population_value[i] + gain);
-        }
+        over_rows(context, count,
+                  [&cells, &adjacency, &population, scratch](std::size_t begin, std::size_t end) {
+                      for (std::size_t i = begin; i < end; ++i) {
+                          std::uint32_t gain = 0;
+                          for (const std::uint32_t n :
+                               adjacency.neighbours_of(static_cast<std::uint32_t>(i))) {
+                              gain += cells.color_index[n];
+                          }
+                          // Saturating at a documented cap, so the column has a bounded range
+                          // the snapshot can scale into a byte without knowing the tick count.
+                          (*scratch)[i] =
+                              std::min(kPopulationCap, population.population_value[i] + gain);
+                      }
+                  });
     };
     desc.commit = [scratch, ids](const sim::CommitContext& context) {
         population_table(context.world, ids).population_value = *scratch;

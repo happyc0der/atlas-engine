@@ -131,6 +131,13 @@ integration ran for the first time. What it found is recorded in
   million-cell tick from 13.1 ms to 2.0 ms. `kHashAlgorithmVersion` is 2. The trap, which only
   measuring quality alongside speed caught, is that the unfinalised version is half as good a
   hash as the one it replaces; see `docs/PERFORMANCE.md`.
+
+  **Parallel hashing, revisited later in M8: it is now the first candidate rather than a
+  rejected one.** That rejection weighed 261 microseconds against a 2.0 millisecond tick. Since
+  the compute phase became parallel the tick is 946 microseconds and the hash is 40% of it. The
+  measurement was right about a tick that no longer exists, which is the ordinary condition of
+  optimisation work rather than a mistake: what a candidate is worth depends on what else has
+  been done.
 - **A single-threaded tick at a million cells.** ~~33 ms, so 60 ticks a second is out of reach
   at that size until M8's parallel simulation.~~ **2.0 ms since the hash change**, and the lab
   holds 60 ticks a second at a million cells with a 10.7 ms median frame. Parallel simulation is

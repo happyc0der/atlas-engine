@@ -18,6 +18,7 @@
 #include <atlas/lab/snapshot.hpp>
 #include <atlas/lab/systems.hpp>
 #include <atlas/simulation/kernel.hpp>
+#include <atlas/tasks/worker_pool.hpp>
 
 #include "harness.hpp"
 
@@ -96,6 +97,33 @@ std::vector<Result> run() {
             with_units(atlas::bench::measure("simulation/tick", std::format("cells={}", cells),
                                              iterations, 2, [&] { step_or_die(kernel); }),
                        cells, "cells"));
+    }
+
+    // The tick again at a million cells, spread across workers. The pool's own benchmark says
+    // to expect between two and four times for memory-bound work rather than the eight that
+    // compute-bound work reaches, and the lab's systems walk cell columns and an adjacency
+    // structure. This is where that prediction is checked.
+    {
+        auto lab = make_lab(1024, 32);
+        const std::uint64_t cells = lab->world.layout.cell_count();
+        std::vector<std::size_t> counts{1, 2, 4};
+        const std::size_t machine = atlas::tasks::WorkerPool::default_worker_count();
+        if (machine > 4) {
+            counts.push_back(machine);
+        }
+        for (const std::size_t workers : counts) {
+            auto pool = atlas::tasks::WorkerPool::create(workers);
+            if (!pool) {
+                require(std::unexpected(pool.error()), "creating a worker pool");
+            }
+            atlas::sim::Kernel kernel(lab->world.world, lab->schedule, lab->commands,
+                                      {.seed = 11, .record_system_hashes = false, .pool = &*pool});
+            results.push_back(
+                with_units(atlas::bench::measure("simulation/tick_parallel",
+                                                 std::format("workers={} cells={}", workers, cells),
+                                                 12, 2, [&] { step_or_die(kernel); }),
+                           cells, "cells"));
+        }
     }
 
     // Attribution at a million cells: each system alone, and the hash alone.
