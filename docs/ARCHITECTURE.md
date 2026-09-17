@@ -325,10 +325,12 @@ it.
 Serialization is canonical, versioned, and treats its input as hostile; the format and the
 reasoning behind it are in [ADR-0007](adr/0007-scene-file-format.md).
 
-The scene is inspected, not edited. The overlay's panel takes it by const reference, so the
-compiler enforces that rather than discipline. Editing arrives with the command and undo
-infrastructure in M9, so that every change goes through one validated path instead of each
-widget becoming a second way in.
+The scene is edited only through `edit::History`. The overlay's panel takes the history, which
+exposes its scene as const and changes it only through commands it can undo, so the compiler
+still enforces that no widget becomes a second way in — the same guarantee the const reference
+gave from M5, now with editing behind it rather than instead of it. M9's first widget is the
+local position; the other commands exist and are tested, and their widgets follow one at a
+time.
 
 ## Simulation contract
 

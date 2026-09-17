@@ -30,7 +30,7 @@ constexpr std::size_t kChildCount = 6;
 ///
 /// Built once, in code, and then never drawn from: the copy that is drawn comes back from the
 /// file. That is what makes the demonstration worth anything.
-[[nodiscard]] Result<scene::Scene> build(assets::AssetId texture) {
+[[nodiscard]] Result<scene::Scene> build_scene(assets::AssetId texture) {
     scene::Scene built;
 
     const scene::StableId camera = built.create("camera");
@@ -138,6 +138,10 @@ constexpr std::size_t kChildCount = 6;
 
 }  // namespace
 
+Result<scene::Scene> SceneDemo::build_demo_scene(assets::AssetId texture) {
+    return build_scene(texture);
+}
+
 Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& registry,
                                     const Config& config) {
     SceneDemo demo;
@@ -168,7 +172,8 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
     }
     demo.m_batch = std::move(*batch);
 
-    auto built = build(demo.m_texture_id);
+    demo.m_scene = std::make_unique<scene::Scene>();
+    auto built = build_scene(demo.m_texture_id);
     if (!built) {
         return std::unexpected(std::move(built).error());
     }
@@ -190,11 +195,16 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
         return std::unexpected(std::move(from_disk).error());
     }
 
-    if (auto status = scene::from_text(demo.m_scene, *from_disk); !status) {
+    if (auto status = scene::from_text((*demo.m_scene), *from_disk); !status) {
         return std::unexpected(std::move(status).error().context("loading the scene back"));
     }
 
-    auto resaved = scene::to_text(demo.m_scene);
+    // The history takes the scene by reference and is the only thing permitted to write to
+    // it from here on, the demonstration animation aside. Constructed after the load, so an
+    // undo can never reach behind the state the application started from.
+    demo.m_history.emplace(*demo.m_scene);
+
+    auto resaved = scene::to_text((*demo.m_scene));
     if (!resaved) {
         return std::unexpected(std::move(resaved).error().context("re-saving the loaded scene"));
     }
@@ -208,8 +218,8 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
     }
     demo.m_saved_bytes = saved->size();
 
-    for (const auto& view : demo.m_scene.entities()) {
-        if (view.parent != scene::StableId::None && demo.m_scene.sprite(view.id) != nullptr) {
+    for (const auto& view : (*demo.m_scene).entities()) {
+        if (view.parent != scene::StableId::None && (*demo.m_scene).sprite(view.id) != nullptr) {
             demo.m_orbiting.push_back(view.id);
         }
     }
@@ -218,9 +228,9 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
     // Otherwise the Camera component would be written to the file, read back, and then
     // ignored, which is a component that looks supported and is not. After this the view is
     // the user's: panning and zooming are not written back to the scene.
-    if (const auto active = demo.m_scene.active_camera()) {
-        const auto* component = demo.m_scene.camera(*active);
-        const auto* placement = demo.m_scene.world_transform(*active);
+    if (const auto active = (*demo.m_scene).active_camera()) {
+        const auto* component = (*demo.m_scene).camera(*active);
+        const auto* placement = (*demo.m_scene).world_transform(*active);
         if (component != nullptr) {
             demo.m_camera.set_zoom(component->zoom);
         }
@@ -237,7 +247,7 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
     ATLAS_LOG_INFO(kApp,
                    "scene demo ready: {} entities, saved to '{}' ({} bytes), reloaded and "
                    "re-saved identically",
-                   demo.m_scene.size(), demo.m_save_path.string(), demo.m_saved_bytes);
+                   (*demo.m_scene).size(), demo.m_save_path.string(), demo.m_saved_bytes);
     return demo;
 }
 
@@ -257,7 +267,8 @@ SceneDemo::~SceneDemo() {
 SceneDemo::SceneDemo(SceneDemo&& other) noexcept
     : m_device(std::exchange(other.m_device, nullptr)), m_textures(std::move(other.m_textures)),
       m_batch(std::move(other.m_batch)), m_texture_id(std::exchange(other.m_texture_id, {})),
-      m_scene(std::move(other.m_scene)), m_save_path(std::move(other.m_save_path)),
+      m_scene(std::move(other.m_scene)), m_history(std::move(other.m_history)),
+      m_animating(other.m_animating), m_save_path(std::move(other.m_save_path)),
       m_saved_bytes(other.m_saved_bytes), m_camera(other.m_camera),
       m_orbiting(std::move(other.m_orbiting)), m_dragging(other.m_dragging) {}
 
@@ -269,6 +280,8 @@ SceneDemo& SceneDemo::operator=(SceneDemo&& other) noexcept {
         m_batch = std::move(other.m_batch);
         m_texture_id = std::exchange(other.m_texture_id, {});
         m_scene = std::move(other.m_scene);
+        m_history = std::move(other.m_history);
+        m_animating = other.m_animating;
         m_save_path = std::move(other.m_save_path);
         m_saved_bytes = other.m_saved_bytes;
         m_camera = other.m_camera;
@@ -289,7 +302,7 @@ void SceneDemo::resize(std::uint32_t pixel_width, std::uint32_t pixel_height) {
 void SceneDemo::tick(std::uint64_t tick_index, std::uint64_t ticks_per_second) {
     ATLAS_ZONE_NAMED("scene demo tick");
 
-    if (ticks_per_second == 0) {
+    if (ticks_per_second == 0 || !m_animating) {
         return;
     }
 
@@ -297,17 +310,23 @@ void SceneDemo::tick(std::uint64_t tick_index, std::uint64_t ticks_per_second) {
 
     // Only the roots move. Everything below them follows because their transforms are
     // relative, which is the property being demonstrated; nothing here touches a child.
-    for (const scene::StableId root : m_scene.roots()) {
-        if (m_scene.sprite(root) == nullptr) {
+    //
+    // This is the one writer to the scene that is not the edit history, and it writes straight
+    // through the pointer rather than through a command: an animation frame is not an
+    // authoring step and has no business on an undo stack. It also means editing a
+    // sprite-bearing root while the animation runs is pointless, because the next tick
+    // overwrites it. Space pauses it, which is why that key exists.
+    for (const scene::StableId root : m_scene->roots()) {
+        if (m_scene->sprite(root) == nullptr) {
             continue;
         }
         const float angle = seconds * 0.6F;
-        m_scene.set_local_transform(
+        m_scene->set_local_transform(
             root, scene::LocalTransform{.position = {.x = std::cos(angle) * 30.0F,
                                                      .y = std::sin(angle * 1.3F) * 18.0F}});
     }
 
-    m_scene.update_transforms();
+    m_scene->update_transforms();
 }
 
 renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
@@ -318,9 +337,9 @@ renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
 
     // drawable() is already in draw order: by layer, then by identifier. Sorting here as well
     // would be a second ordering rule that could drift from the first.
-    for (const scene::StableId id : m_scene.drawable()) {
-        const auto* sprite = m_scene.sprite(id);
-        const auto* world = m_scene.world_transform(id);
+    for (const scene::StableId id : m_scene->drawable()) {
+        const auto* sprite = m_scene->sprite(id);
+        const auto* world = m_scene->world_transform(id);
         if (sprite == nullptr || world == nullptr || !sprite->visible) {
             continue;
         }

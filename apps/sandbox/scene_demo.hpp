@@ -13,6 +13,7 @@
 
 #include <atlas/assets/registry.hpp>
 #include <atlas/core/result.hpp>
+#include <atlas/edit/history.hpp>
 #include <atlas/math/camera.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/renderer/quad_batch.hpp>
@@ -22,6 +23,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -44,6 +47,13 @@ class SceneDemo {
     /// it had.
     [[nodiscard]] static Result<SceneDemo> create(rhi::Device& device, assets::Registry& registry,
                                                   const Config& config);
+
+    /// Build the demonstration scene on its own, with no device and no assets loaded.
+    ///
+    /// Exposed so a headless check can exercise the edit path against the same scene the
+    /// application shows, rather than against one invented for the test. The texture
+    /// identifier is only recorded on the sprites; nothing here loads it.
+    [[nodiscard]] static Result<scene::Scene> build_demo_scene(assets::AssetId texture);
 
     ~SceneDemo();
 
@@ -73,7 +83,24 @@ class SceneDemo {
     [[nodiscard]] renderer::BatchStats draw(rhi::RenderPass& pass);
 
     /// The loaded scene, for inspection. Const: the overlay may look, not touch.
-    [[nodiscard]] const scene::Scene& scene() const noexcept { return m_scene; }
+    /// The scene, for looking at.
+    ///
+    /// Const, and it stays const: every change goes through `history()`. Reaching the scene
+    /// through the history is what stops a panel from having a second way in.
+    [[nodiscard]] const scene::Scene& scene() const noexcept { return m_history->scene(); }
+
+    /// The edit history, which is the only thing that may change the scene.
+    [[nodiscard]] edit::History& history() noexcept { return *m_history; }
+
+    /// Whether the demonstration animation is running.
+    ///
+    /// The animation is the one writer besides the history: `tick` moves the sprite-bearing
+    /// roots every tick, so an edit to one of those would be overwritten within a frame. It is
+    /// paused rather than removed because what it demonstrates — a child following its parent
+    /// through a relative transform — is the point of this scene.
+    [[nodiscard]] bool animating() const noexcept { return m_animating; }
+
+    void set_animating(bool animating) noexcept { m_animating = animating; }
 
     [[nodiscard]] math::OrthoCamera& camera() noexcept { return m_camera; }
 
@@ -93,7 +120,12 @@ class SceneDemo {
     /// Rotation is reported the first time it is dropped, not every frame.
     bool m_warned_rotation = false;
 
-    scene::Scene m_scene;
+    // Heap-allocated so the scene keeps its address when a SceneDemo is moved, which it is:
+    // create returns one through Result into an optional. The history holds a reference to it.
+    // Declared before the history so it outlives it.
+    std::unique_ptr<scene::Scene> m_scene;
+    std::optional<edit::History> m_history;
+    bool m_animating = true;
     std::filesystem::path m_save_path;
     std::size_t m_saved_bytes = 0;
 

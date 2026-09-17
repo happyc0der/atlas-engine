@@ -2,14 +2,17 @@
 #include <atlas/core/assert.hpp>
 #include <atlas/core/log.hpp>
 #include <atlas/core/profile.hpp>
+#include <atlas/edit/command.hpp>
 #include <atlas/rhi/internal/sdl_gpu_access.hpp>
 #include <atlas/tools/debug_ui.hpp>
 
 #include <SDL3/SDL_gpu.h>
 
+#include <array>
 #include <format>
 #include <imgui.h>
 #include <imgui_impl_sdlgpu3.h>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -321,7 +324,52 @@ void row(std::string_view label, const std::string& value) {
     ImGui::TextUnformatted(value.c_str());
 }
 
-void draw_inspector(const scene::Scene& scene, scene::StableId id) {
+/// The local-position row, as two drag fields that emit an edit command.
+///
+/// Emits through the history, which is the only writer. Three things here are not obvious:
+///
+/// An unchanged value emits nothing. Dear ImGui reports a drag field as edited on any frame
+/// the pointer is held over it, so without this a user resting the mouse on the field would
+/// fill the history with commands that change nothing.
+///
+/// The command coalesces while the field is active, so a drag is one undo step rather than one
+/// per frame, and the group is closed when the interaction ends rather than on a timer.
+///
+/// A refused edit is logged and dropped. It cannot normally happen — the entity was just
+/// checked to exist — but the return value says it can, and silently discarding an error
+/// because it looks impossible is how it stops looking impossible later.
+void draw_position_editor(edit::History& history, scene::StableId id,
+                          const scene::LocalTransform& local) {
+    std::array<float, 2> position{local.position.x, local.position.y};
+    if (ImGui::DragFloat2("local position", position.data(), 0.25F)) {
+        const math::Vec2 edited{.x = position[0], .y = position[1]};
+        if (edited != local.position) {
+            scene::LocalTransform after = local;
+            after.position = edited;
+            if (auto status = history.apply(std::make_unique<edit::SetLocalTransform>(id, after),
+                                            edit::Coalesce::WithPrevious);
+                !status) {
+                ATLAS_LOG_WARN(kTools, "edit refused: {}", status.error());
+            }
+        }
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        history.break_coalescing();
+    }
+}
+
+void draw_inspector(edit::History& history, scene::StableId id) {
+    const scene::Scene& scene = history.scene();
+
+    // First, because it is the only thing here that can be changed. Everything below is a
+    // read-only row, and burying the one widget under thirteen of them means scrolling to
+    // find the feature this panel exists for.
+    const auto* local = scene.local_transform(id);
+    if (local != nullptr) {
+        draw_position_editor(history, id, *local);
+        ImGui::Separator();
+    }
+
     if (!ImGui::BeginTable("components", 2, ImGuiTableFlags_SizingFixedFit)) {
         return;
     }
@@ -335,8 +383,7 @@ void draw_inspector(const scene::Scene& scene, scene::StableId id) {
                       : std::format("{}", static_cast<std::uint64_t>(parent)));
     row("children", std::format("{}", scene.children(id).size()));
 
-    if (const auto* local = scene.local_transform(id)) {
-        row("local position", std::format("{:.3f}, {:.3f}", local->position.x, local->position.y));
+    if (local != nullptr) {
         row("local rotation", std::format("{:.3f} rad", local->rotation));
         row("local scale", std::format("{:.3f}, {:.3f}", local->scale.x, local->scale.y));
     }
@@ -367,13 +414,43 @@ void draw_inspector(const scene::Scene& scene, scene::StableId id) {
     ImGui::EndTable();
 }
 
+/// Undo and redo, with what they would do written on them.
+void draw_history_controls(edit::History& history) {
+    ImGui::BeginDisabled(!history.can_undo());
+    const std::string undo =
+        history.can_undo() ? std::format("Undo {}", history.undo_label()) : std::string{"Undo"};
+    if (ImGui::Button(undo.c_str())) {
+        // The return value says whether anything happened. Nothing to do when it did not: the
+        // button is disabled in that case, and a failed undo has already logged and cleared
+        // the history.
+        (void)history.undo();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+
+    ImGui::BeginDisabled(!history.can_redo());
+    const std::string redo =
+        history.can_redo() ? std::format("Redo {}", history.redo_label()) : std::string{"Redo"};
+    if (ImGui::Button(redo.c_str())) {
+        (void)history.redo();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::TextUnformatted(
+        std::format("{} undo, {} redo", history.undo_depth(), history.redo_depth()).c_str());
+}
+
 }  // namespace
 
-void DebugUi::scene_panel(std::string_view title, const scene::Scene& scene) {
+void DebugUi::scene_panel(std::string_view title, edit::History& history) {
     if (m_impl == nullptr || !m_impl->frame_open) {
         return;
     }
     ImGui::SetCurrentContext(m_impl->context);
+
+    const scene::Scene& scene = history.scene();
 
     // Taken as a local copy, worked on, and written back once at the end. Reaching through
     // the implementation pointer on every access means nothing can prove the value has not
@@ -389,7 +466,7 @@ void DebugUi::scene_panel(std::string_view title, const scene::Scene& scene) {
     // Placed once, then left to the user. Without this the panel opens exactly where the
     // statistics panel does and hides it, which makes the overlay look broken.
     ImGui::SetNextWindowPos(ImVec2(20.0F, 320.0F), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(320.0F, 420.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360.0F, 520.0F), ImGuiCond_FirstUseEver);
 
     const std::string window_title{title};
     if (ImGui::Begin(window_title.c_str())) {
@@ -405,11 +482,20 @@ void DebugUi::scene_panel(std::string_view title, const scene::Scene& scene) {
 
         ImGui::Separator();
 
-        if (selected.has_value()) {
-            draw_inspector(scene, *selected);
-        } else {
-            ImGui::TextUnformatted("No entity selected.");
+        // The controls sit below a scrolling region rather than inside it, so undo is always
+        // reachable however long the component list is.
+        const float controls_height = ImGui::GetFrameHeightWithSpacing() + 8.0F;
+        if (ImGui::BeginChild("inspector", ImVec2(0.0F, -controls_height))) {
+            if (selected.has_value()) {
+                draw_inspector(history, *selected);
+            } else {
+                ImGui::TextUnformatted("No entity selected.");
+            }
         }
+        ImGui::EndChild();
+
+        ImGui::Separator();
+        draw_history_controls(history);
     }
     ImGui::End();
 

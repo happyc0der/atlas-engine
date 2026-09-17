@@ -28,6 +28,7 @@ set(_atlas_headless_cases
     headless_lifecycle
     headless_reaches_exact_tick
     unbounded_throughput
+    edit_round_trip
     headless_needs_a_bound
     rejects_unknown_option
     rejects_bad_values

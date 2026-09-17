@@ -15,16 +15,20 @@
 #include <atlas/app/run_bounds.hpp>
 #include <atlas/assets/registry.hpp>
 #include <atlas/core/args.hpp>
+#include <atlas/core/assert.hpp>
 #include <atlas/core/build_info.hpp>
 #include <atlas/core/log.hpp>
 #include <atlas/core/profile.hpp>
 #include <atlas/core/result.hpp>
 #include <atlas/core/time.hpp>
+#include <atlas/edit/command.hpp>
+#include <atlas/edit/history.hpp>
 #include <atlas/math/camera.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/renderer/quad_batch.hpp>
 #include <atlas/rhi/device.hpp>
 #include <atlas/scene/scene.hpp>
+#include <atlas/scene/serialization.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
 #include <atlas/tools/debug_ui.hpp>
 
@@ -38,6 +42,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <format>
+#include <memory>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -107,6 +112,7 @@ Options:
                          Default: build/sandbox-scene.json.
   --inspect ID           Start with the given entity selected in the scene panel.
   --no-overlay           Do not create the debug overlay.
+  --edit-check           Apply and undo edits to the demo scene headlessly, then exit.
   --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
   --hot-reload           Re-read assets whose files change while running.
   --cache-dir PATH       Keep decoded assets here between runs, so a repeated import is a
@@ -194,6 +200,88 @@ void step_simulation(atlas::Tick tick) {
     (void)tick;
 }
 
+/// Apply three edits to the demonstration scene, undo them, and require the bytes to match.
+///
+/// Runs with no device, no window and no assets, so it exercises the edit path in continuous
+/// integration on every platform rather than only where a graphics device exists. What it adds
+/// over the unit tests is the scene the application actually ships, the flag, and the exit
+/// code: a composition root that wired the history to the wrong scene would pass every unit
+/// test and fail here.
+[[nodiscard]] atlas::Status run_edit_check() {
+    // Normally Platform::create does this, and this check never creates a platform. The scene
+    // asserts main-thread affinity on every mutation, so without it the first create aborts.
+    atlas::mark_main_thread();
+
+    auto built = atlas::sandbox::SceneDemo::build_demo_scene(atlas::assets::AssetId{});
+    if (!built) {
+        return std::unexpected(built.error());
+    }
+    atlas::scene::Scene scene = std::move(*built);
+
+    auto before = atlas::scene::to_text(scene);
+    if (!before) {
+        return std::unexpected(before.error());
+    }
+
+    // A leaf with a sprite, so the destroy has components to restore and the reparent has
+    // somewhere to go. Chosen from the scene rather than assumed, so this keeps working if the
+    // demonstration scene changes shape.
+    atlas::scene::StableId target = atlas::scene::StableId::None;
+    atlas::scene::StableId other_root = atlas::scene::StableId::None;
+    for (const auto& view : scene.entities()) {
+        if (scene.sprite(view.id) != nullptr && view.parent != atlas::scene::StableId::None &&
+            !atlas::scene::valid(target)) {
+            target = view.id;
+        }
+    }
+    for (const atlas::scene::StableId root : scene.roots()) {
+        if (root != scene.parent(target)) {
+            other_root = root;
+        }
+    }
+    if (!atlas::scene::valid(target) || !atlas::scene::valid(other_root)) {
+        return atlas::fail(atlas::ErrorCode::NotFound,
+                           "the demonstration scene no longer has a parented sprite and a "
+                           "second root, which this check needs");
+    }
+
+    atlas::edit::History history{scene};
+    if (auto status = history.apply(std::make_unique<atlas::edit::SetLocalTransform>(
+            target, atlas::scene::LocalTransform{.position = {.x = 41.0F, .y = -7.0F}}));
+        !status) {
+        return status;
+    }
+    if (auto status = history.apply(std::make_unique<atlas::edit::Reparent>(target, other_root));
+        !status) {
+        return status;
+    }
+    if (auto status = history.apply(std::make_unique<atlas::edit::Destroy>(target)); !status) {
+        return status;
+    }
+
+    const std::size_t applied = history.undo_depth();
+    while (history.can_undo()) {
+        if (!history.undo()) {
+            return atlas::fail(atlas::ErrorCode::Internal,
+                               history.last_error().has_value()
+                                   ? history.last_error()->message()
+                                   : std::string{"undo failed without an error"});
+        }
+    }
+
+    auto after = atlas::scene::to_text(scene);
+    if (!after) {
+        return std::unexpected(after.error());
+    }
+    if (*after != *before) {
+        return atlas::fail(atlas::ErrorCode::Internal,
+                           "the scene differs after undoing every edit");
+    }
+
+    std::printf("edit check: %zu commands applied and undone, scene identical\n", applied);
+    return atlas::ok();
+}
+
 [[nodiscard]] atlas::Status run(int argc, const char* const* argv) {
     auto args = atlas::Args::parse(argc, argv);
     if (!args) {
@@ -207,6 +295,10 @@ void step_simulation(atlas::Tick tick) {
     if (args->has("version")) {
         std::printf("%s\n", std::string{atlas::build_info::summary()}.c_str());
         return atlas::ok();
+    }
+
+    if (args->has("edit-check")) {
+        return run_edit_check();
     }
 
     const auto options = read_options(*args);
@@ -349,6 +441,23 @@ void step_simulation(atlas::Tick tick) {
             } else if (const auto* key = std::get_if<atlas::platform::KeyPressed>(&event)) {
                 if (key->key == atlas::platform::Key::Escape) {
                     quit = true;
+                } else if (key->key == atlas::platform::Key::Space && scene_demo.has_value()) {
+                    // The animation writes the sprite-bearing roots every tick, so an edit to
+                    // one is overwritten within a frame. Pausing is what makes the editor
+                    // usable on this scene at all.
+                    scene_demo->set_animating(!scene_demo->animating());
+                    ATLAS_LOG_INFO(kApp, "demo animation {}",
+                                   scene_demo->animating() ? "running" : "paused");
+                } else if (key->key == atlas::platform::Key::Z && scene_demo.has_value() &&
+                           (key->modifiers.control || key->modifiers.super)) {
+                    // Already gated: the overlay saw this event first and, for a key, returns
+                    // whether it wants the keyboard, so an event consumed by a future text
+                    // field never reaches here and the shortcut cannot fight it.
+                    auto& history = scene_demo->history();
+                    const bool moved = key->modifiers.shift ? history.redo() : history.undo();
+                    if (!moved && history.last_error().has_value()) {
+                        ATLAS_LOG_WARN(kApp, "edit history discarded: {}", *history.last_error());
+                    }
                 }
             } else if (const auto* resized = std::get_if<atlas::platform::WindowResized>(&event)) {
                 ATLAS_LOG_INFO(kApp, "window resized: logical={}x{} pixels={}x{}",
@@ -496,7 +605,7 @@ void step_simulation(atlas::Tick tick) {
                         // Read-only: the panel takes the scene by const reference, so no
                         // widget can reach past the validation Scene performs.
                         if (scene_demo.has_value()) {
-                            overlay->scene_panel("Scene", scene_demo->scene());
+                            overlay->scene_panel("Scene", scene_demo->history());
                         }
 
                         prepared_overlay = overlay->end_frame(*frame);

@@ -10,6 +10,7 @@ atlas_add_app(sandbox
     DEPENDS
         atlas::app_common
         atlas::assets
+        atlas::edit
         atlas::platform
         atlas::renderer
         atlas::scene

@@ -16,6 +16,7 @@ atlas_add_module(tools
         include/atlas/tools/debug_ui.hpp
     DEPENDS
         core
+        edit
         platform
         rhi
         rhi_internal
@@ -25,3 +26,5 @@ atlas_add_module(tools
         imgui::imgui
         atlas::sdl3
 )
+
+add_subdirectory(tests)

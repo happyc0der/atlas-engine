@@ -124,6 +124,19 @@ def case_headless_reaches_exact_tick(binary: str) -> None:
     expect_contains(output_of(result), "loop finished at tick 37", "a 37-tick run")
 
 
+def case_edit_round_trip(binary: str) -> None:
+    # The edit path against the scene the application actually ships, with no device and no
+    # window, so this runs on every platform in continuous integration. The unit tests cover
+    # the commands; what this adds is the composition root — a history wired to the wrong
+    # scene, or a demo scene that stopped having the shape the editor expects, passes every
+    # unit test and fails here.
+    result = run(binary, ["--edit-check"])
+    expect_exit(result, 0, "--edit-check")
+    expect_contains(
+        output_of(result), "3 commands applied and undone, scene identical", "--edit-check"
+    )
+
+
 def case_unbounded_throughput(binary: str) -> None:
     # Unbounded ignores wall time, so this also proves the run is not silently waiting on a
     # clock it no longer has.
@@ -199,6 +212,7 @@ CASES = {
     "help": case_help,
     "headless_lifecycle": case_headless_lifecycle,
     "headless_reaches_exact_tick": case_headless_reaches_exact_tick,
+    "edit_round_trip": case_edit_round_trip,
     "unbounded_throughput": case_unbounded_throughput,
     "headless_needs_a_bound": case_headless_needs_a_bound,
     "rejects_unknown_option": case_rejects_unknown_option,

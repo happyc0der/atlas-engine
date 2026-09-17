@@ -102,9 +102,10 @@ integration ran for the first time. What it found is recorded in
   for the loop would have been a second `main` depending on every other module, and would have
   made the dependency table less informative than it is. Re-deferred with a sharper condition:
   a third application, or the two loops converging in shape rather than merely in ingredients.
-- **Command and undo infrastructure, and therefore scene editing.** The scene panel takes the
-  scene by const reference, so the compiler enforces read-only rather than discipline. Mutation
-  arrives in M9 with the infrastructure that routes every change through one validated path.
+- ~~**Command and undo infrastructure, and therefore scene editing.**~~ **Built in M9** as
+  `atlas::edit`. The panel now takes an `edit::History` rather than a `const Scene&`, which
+  keeps the compiler-enforced guarantee and adds editing behind it: the history exposes its
+  scene as const and has no method yielding a mutable one.
 
 ### M6 — simulation kernel
 
@@ -197,10 +198,24 @@ integration ran for the first time. What it found is recorded in
   cut it roughly fourfold, at the price of a refill when the mode changes — about 0.34 ms once,
   against 1 ms every frame. That trades away "a mode switch rebuilds nothing", which was a
   deliberate M7 property, so it is a decision rather than an optimisation and is not taken here.
-- **Widgets in the overlay.** The lab's controls are keyboard only. That satisfies M7 and adds
-  no engine surface for one caller; widgets arrive with M9's command and undo work, so that no
-  widget becomes a second unvalidated path into state, the same reasoning that kept M5's scene
-  panel read-only.
+- ~~**Widgets in the overlay.**~~ **Started in M9.** The sandbox's scene panel has the first
+  two interactive widgets the overlay has ever had: a drag field for an entity's local
+  position, and undo and redo buttons. Both go through `edit::History`, so the reasoning that
+  deferred them is satisfied rather than waived. Still deferred, each for its own reason:
+
+  - **A rename widget**, blocked on the platform. `platform::Event` has no text-input event,
+    `platform.cpp` does not handle `SDL_EVENT_TEXT_INPUT`, and the overlay's key table covers
+    only navigation keys, so a text field cannot receive a single character today. The
+    `Rename` command exists and is tested; it is the widget that is missing. The next platform
+    slice is a `TextInput` event plus character forwarding in `DebugUi`.
+  - **Rotation, scale, sprite and camera widgets.** Their commands exist and are tested from
+    the first slice. Recorded here so that "a command with no widget" reads as intended rather
+    than as a gap.
+  - **Reparent by drag.** The command exists; the gesture needs drag-and-drop targets on every
+    tree node and visible feedback when a cycle is refused. A parent field in the inspector is
+    the same command with a fraction of the surface, and comes first.
+  - **Widgets for the lab's simulation controls**, which are still keyboard only. That is
+    M9's editor-usability slice rather than this one.
 - **The sandbox's zoom anchor on a high-density display.** `DemoScene` hands the pointer's
   logical coordinates to a camera whose viewport is in pixels, so a wheel zoom anchors at half
   the intended point on a two-times display. The lab converts; the sandbox should too. Found

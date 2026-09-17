@@ -60,8 +60,10 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   library's storage order: iteration, draw order, sibling lists, and the saved file.
 - Saved files name and version themselves, refuse a version they do not know, and are
   treated as hostile input. A failed load changes nothing.
-- The scene is inspected, not edited, until the command and undo infrastructure exists
-  (M9). Panels take it by const reference so the compiler enforces that.
+- The scene is edited only through `edit::History`, which applies undoable commands and
+  exposes its scene as const. Panels take the history, never a mutable `Scene&`, so the
+  compiler still enforces that no widget bypasses validation. An application that animates
+  the scene directly must say so and must not animate what the user can edit.
 - `simulation` contains tick scheduling, commands, hashing, and system contracts.
   It contains no game rules.
 - A tick is always: drain and apply commands, compute, commit, hash. Nothing reaches

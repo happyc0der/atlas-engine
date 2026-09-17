@@ -11,6 +11,7 @@
 /// Thread affinity: main thread only.
 
 #include <atlas/core/result.hpp>
+#include <atlas/edit/history.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/rhi/device.hpp>
 #include <atlas/scene/scene.hpp>
@@ -63,19 +64,24 @@ class DebugUi {
     /// A panel of label and value rows.
     void stats_panel(std::string_view title, std::span<const Stat> stats);
 
-    /// A read-only view of a scene: its tree on the left, the selected entity's components
-    /// on the right.
+    /// A scene: its tree on the left, the selected entity's components on the right, with
+    /// the ones this panel can edit as widgets.
     ///
-    /// Read-only on purpose, and not as a temporary limitation. An editing panel needs the
-    /// command and undo infrastructure behind it, or every widget becomes a second path
-    /// into the scene that bypasses the validation `Scene` performs. Inspection is useful
-    /// now and costs nothing to make correct, so it arrives first; mutation arrives with
-    /// the infrastructure that makes it safe. The scene is taken by const reference so this
-    /// is enforced by the compiler rather than by intent.
+    /// **Takes the history, not the scene.** From M5 until M9 this took a `const Scene&`, so
+    /// that no widget could become a second path into the scene bypassing the validation
+    /// `Scene` performs. That reason has not gone away; it has been satisfied. `edit::History`
+    /// exposes its scene only as `const` and changes it only through commands it can undo, and
+    /// there is no method on it that yields a mutable `Scene`. So a widget here still cannot
+    /// reach the scene any other way, and the compiler still enforces that rather than intent.
+    ///
+    /// Editing is deliberately narrow: the local position, because it is the one property
+    /// worth dragging and it proves the whole path. The other commands exist and are tested;
+    /// their widgets arrive one at a time. A rename widget needs text input the platform does
+    /// not deliver yet, which `docs/DEFERRED.md` records.
     ///
     /// Selection is the panel's own state, not the scene's, and is remembered across frames.
     /// A selected entity that has since been destroyed is dropped silently.
-    void scene_panel(std::string_view title, const scene::Scene& scene);
+    void scene_panel(std::string_view title, edit::History& history);
 
     /// The entity currently selected in the scene panel, if any.
     [[nodiscard]] std::optional<scene::StableId> selected_entity() const noexcept;
