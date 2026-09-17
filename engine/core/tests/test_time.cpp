@@ -21,7 +21,7 @@ TEST_CASE("a negative duration clamps to zero", "[core][time]") {
 }
 
 TEST_CASE("a clock moves forward", "[core][time]") {
-    SteadyClock clock;
+    const SteadyClock clock;
     const auto first = clock.elapsed();
     std::this_thread::sleep_for(std::chrono::milliseconds{2});
     const auto second = clock.elapsed();

@@ -213,7 +213,7 @@ TEST_CASE("a scene can be moved", "[scene]") {
     Scene scene;
     const StableId id = scene.create("carried");
 
-    Scene moved = std::move(scene);
+    const Scene moved = std::move(scene);
     CHECK(moved.contains(id));
     CHECK(moved.name(id) == "carried");
 }

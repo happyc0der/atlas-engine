@@ -86,8 +86,23 @@ jobs:
       - name: Install toolchain
         run: bash tools/ci/linux_deps.sh
 
-      - name: Install clang-tidy
-        run: sudo apt-get install -y --no-install-recommends clang-tidy-19
+      # Version 23, from the same source as clang-format above and matching the development
+      # machine's. Ubuntu's clang-tidy-19 disagreed with it often enough to be its own category
+      # of failure: three lint breaks in one milestone, every one of them a check that one
+      # version reports and the other does not, on code both versions compile. A linter that
+      # says something different from the one the author ran is a linter nobody can keep green.
+      - name: Install clang-tidy 23
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] \
+            http://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm23.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-tidy-23
+          clang-tidy-23 --version
 
       - name: Cache vcpkg binaries
         uses: actions/cache@v4
@@ -107,5 +122,5 @@ jobs:
 
       - name: Run clang-tidy
         env:
-          ATLAS_CLANG_TIDY: /usr/bin/clang-tidy-19
+          ATLAS_CLANG_TIDY: /usr/bin/clang-tidy-23
         run: ./tools/tidy.sh linux-clang-debug

@@ -123,7 +123,7 @@ TEST_CASE("a window can be moved without leaking or double-destroying",
     REQUIRE(created.has_value());
     const auto id = created->id();
 
-    Window moved = std::move(*created);
+    const Window moved = std::move(*created);
 
     CHECK(moved.valid());
     CHECK(moved.id() == id);

@@ -33,7 +33,14 @@ SOURCE_SUFFIXES = {".cpp", ".hpp", ".h", ".cc", ".cxx", ".inl"}
 
 # Files permitted to contain `throw` or `catch`, with the reason. ADR-0005 requires that
 # every such site be a deliberate third-party or standard-library boundary.
-EXCEPTION_ALLOWLIST: dict[str, str] = {}
+EXCEPTION_ALLOWLIST: dict[str, str] = {
+    "engine/tasks/src/worker_pool.cpp": (
+        "A thread boundary. An exception escaping a parallel_for body has nowhere to go: the "
+        "caller is blocked in another frame, and letting it unwind out of a worker would call "
+        "std::terminate with no diagnostic. The wrapper reports what was thrown and ends the "
+        "process, which is the treatment ADR-0005 gives allocation failure."
+    ),
+}
 
 # Third-party include prefixes that indicate a dependency leaking into a public header.
 THIRD_PARTY_PREFIXES = (

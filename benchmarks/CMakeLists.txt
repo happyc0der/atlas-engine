@@ -14,9 +14,10 @@ add_executable(atlas_bench
     src/bench_allocations.cpp
     src/bench_assets.cpp
     src/bench_hash.cpp
+    src/bench_tasks.cpp
 )
 
-target_link_libraries(atlas_bench PRIVATE atlas::renderer atlas::platform atlas::simulation atlas::assets)
+target_link_libraries(atlas_bench PRIVATE atlas::renderer atlas::platform atlas::simulation atlas::assets atlas::tasks)
 
 # The simulation benchmark drives the lab's world. Applications and benchmarks are gated
 # separately, so it is only built when the lab's simulation library exists.

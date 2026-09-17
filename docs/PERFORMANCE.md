@@ -519,6 +519,56 @@ expensive because they are conspicuous — an allocation, a copy, a lock — wer
 things that turned out to matter were a per-byte multiply chain and a per-element capacity
 check. Both were found by measuring rather than by reading the code and forming an opinion.
 
+## The worker pool, M8: what parallelism costs and what it buys
+
+`atlas::tasks` was created with this benchmark, which is the condition `docs/DEFERRED.md` set
+for creating it at all. `atlas_bench --filter tasks`, Release.
+
+**What a parallel loop costs before it does anything.** An empty `parallel_for`, so this is the
+floor under every use of the pool:
+
+| Chunks | Median |
+|---|---|
+| 1 | 0 ns — one chunk runs on the calling thread and never wakes anybody |
+| 8 | 3.8 us |
+| 64 | 13.8 us |
+| 1024 | 146 us |
+
+About 140 nanoseconds a chunk once threads are involved, plus a few microseconds to wake them.
+A loop with less than roughly ten microseconds of work in it should not be parallel at all, and
+the single-chunk case is free because it is not.
+
+**What it buys**, over a million items, at two work densities. The first attempt measured only
+the lighter one and would have reported the pool's ceiling as four workers; it is the machine's
+memory bandwidth that stops there, not the pool.
+
+| Workers | Memory-bound | | Compute-bound | |
+|---|---|---|---|---|
+| 0 (caller only) | 400 us | 1.0x | 6.61 ms | 1.0x |
+| 1 | 200 us | 2.0x | 3.36 ms | 2.0x |
+| 2 | 140 us | 2.9x | 2.30 ms | 2.9x |
+| 4 | 98 us | 4.1x | 1.41 ms | 4.7x |
+| 13 | 116 us | **3.4x** | 750 us | **8.8x** |
+
+The compute-bound column is close to linear while the threads are performance cores — 4.7x from
+five threads — and then falls off: 8.8x from fourteen, not 14x, because this machine's remaining
+cores are slower ones and the chunks are equal. The memory-bound column stops improving at four
+workers and gets worse at thirteen, because sixteen megabytes a call at 98 microseconds is
+already about 160 GB/s and adding threads only adds contention.
+
+**Which column the simulation sits in is the useful question, and it is the memory-bound one.**
+The lab's systems walk cell columns and an adjacency structure: `accumulate_population` alone
+reads sixteen megabytes of neighbour indices per tick. So M8 should expect something between two
+and four times from parallelising the compute phase, not eight, and should measure rather than
+assume — which is what this benchmark exists for.
+
+**The thread sanitizer earned its keep here.** The first version of the pool passed all eight of
+its functional tests and had a use-after-free: a worker leaves its claim loop by reading the
+job's chunk count, and that read happens after the last chunk is counted, so the calling thread
+could already have returned and destroyed the job on its stack. The fix is to wait for workers
+to be *out* of the job rather than for the work to be *done*, and it costs the second row of the
+dispatch table above.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:

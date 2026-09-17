@@ -174,7 +174,7 @@ integration ran for the first time. What it found is recorded in
 
 ## Deferred by the charter, until a recorded limitation justifies the work
 
-The `tasks` module and its worker pool, created with the first parallel benchmark in M8. A
+A
 custom allocator. A custom entity-component system. A work-stealing scheduler. Networking.
 Physics. Animation. A plugin interface. Multi-viewport overlay windows. Filesystem watchers,
 in place of which hot reload polls modification times. Audio, gamepad input, input method

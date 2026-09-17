@@ -69,6 +69,11 @@ sub-hashes so a divergence can be attributed. Hashing rules:
   time, and uses a four-lane block hash for bulk content, which is thirty times faster and, by
   avalanche, slightly better at detecting change. Values from version 1 do not match version 2,
   and are refused by the version check rather than misread.
+- A parallel loop divides its range into chunks that depend only on the count and the grain,
+  never on how many workers there are. Which worker runs which chunk varies; what each chunk
+  computes does not, so a body that writes only its own indices produces the same bytes at any
+  worker count. That is how M8's worker-count invariance is obtained: by making the work
+  identical rather than by making the schedule reproducible.
 - The bulk hash consumes thirty-two bytes at a time and holds partial blocks, so its value
   depends on the bytes hashed and not on how a caller divided them between calls. It cannot be
   continued from a previous value the way FNV-1a could, and the seed parameters that implied
