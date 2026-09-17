@@ -674,22 +674,34 @@ measured against, including the case where the budget is exceeded on purpose.
 They are in the benchmark's own header so that they cannot be edited after the fact without
 the edit being visible in the diff.
 
-| Scenario | Predicted | Measured | |
+| Scenario | Predicted | Measured, four runs | |
 |---|---|---|---|
-| `audio/mix voices=32` | 10 to 30 µs | **29.2 µs** | inside, at the top of the range |
-| `audio/mix voices=1` | under 1 µs | **1.17 µs** | **over**, by about a sixth |
+| `audio/mix voices=32` | 10 to 30 µs | **30.7 to 31.4 µs** | **just over** |
+| `audio/mix voices=8` | — | 7.21 to 7.25 µs | |
+| `audio/mix voices=1` | under 1 µs | **1.08 to 1.12 µs** | **over**, by about a tenth |
 | `audio/allocations_per_update` | 0 after warm-up | **0** | as claimed |
 
-The single-voice prediction was wrong, and wrong in the direction that matters least: the fixed
-cost of one voice is a little higher than guessed, and everything above it scales from there.
-Thirty-two voices at 29.2 µs is comfortably inside the 100 µs this has to fit in, and the
-scaling is close to linear — 1.17, 7.46 and 29.2 µs at one, eight and thirty-two voices, which
-is 25× the work for 32× the voices. Sublinear, because the output block stays in cache while
-the voice count grows.
+**Two of the three timing predictions were low, and both are recorded as low rather than
+quietly widened.** The per-sample cost guessed at was about ten per cent optimistic, and since
+the scaling is linear that error appears at both ends. The conclusion is unchanged: 31 µs is
+comfortably inside the 100 µs this has to fit in, and it would be inside it at twice the cost.
 
-`audio/resample` converts a second of 22.05 kHz mono to the mix rate in **47.3 µs**. That runs
-once, on the main thread, when a clip is finalised. A second of audio costing fifty microseconds
-to convert is not a reason to build anything.
+Scaling is 1.12, 7.25 and 31.4 µs at one, eight and thirty-two voices: 28× the cost for 32× the
+voices. Sublinear, because the output block stays in cache while the voice count grows.
+
+`audio/resample` converts a second of 22.05 kHz mono to the mix rate in **51.6 to 53.8 µs**.
+That runs once, on the main thread, when a clip is finalised. A second of audio costing fifty
+microseconds to convert is not a reason to build anything.
+
+**These were measured on a machine that was not idle** — load average around four, with a
+browser and a chat client both holding the graphics device. The mixing scenarios are pure
+arithmetic over a small working set and vary by about two per cent across four runs regardless,
+which is why they are reported at all. **No baseline was recorded**, because recording writes
+the whole file and the graphics scenarios in the same run were inflated by up to 2.7× and
+varied by 4× between runs of the same binary. One of those runs came back *faster* than the
+stored baseline, which is what says the variation is the machine rather than a change: nothing
+in M12 touches the renderer, and the audio module has no edge to it. Recording an audio
+baseline is left until the machine is quiet.
 
 ### Why there is no importer cache
 
@@ -721,7 +733,9 @@ frame budget never underran; one outside it underran once. The queue target and 
 `AudioConfig` fields, so the response to a complaint is a tuning rather than a rebuild, and the
 recorded trigger for revisiting the decision entirely is a latency complaint above about 80 ms.
 
-Machine: Mac16,7, Apple M4 Pro, 14 hardware threads, AppleClang 21, RelWithDebInfo, idle.
+Machine: Mac16,7, Apple M4 Pro, 14 hardware threads, AppleClang 21, RelWithDebInfo. The
+whole-application runs above were taken under the same load as the benchmarks; they are far
+less sensitive to it, because what they report is a count of gaps rather than a duration.
 
 ## Optimisation candidates
 
