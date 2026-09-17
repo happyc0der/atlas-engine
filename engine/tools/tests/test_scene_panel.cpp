@@ -336,3 +336,73 @@ TEST_CASE("typing into the log filter changes what the console shows", "[tools][
 
     REQUIRE(harness->device.wait_idle().has_value());
 }
+
+TEST_CASE("the overlay reports where an input method should put its candidate list",
+          "[tools][gpu]") {
+    // What can be checked without an input method: that focusing a field makes the overlay
+    // ask for the candidate list, near the field, and that losing focus withdraws the ask.
+    // Whether the operating system then puts the list there is a manual check, recorded in
+    // the milestone report, because no runner has an input method installed.
+    auto harness = make_harness();
+    if (!harness) {
+        SKIP("no graphics device available");
+    }
+    auto overlay = DebugUi::create(harness->device, harness->window);
+    if (!overlay) {
+        SKIP("the overlay could not be created on this device");
+    }
+
+    Fixture fixture = make_scene();
+    History history{fixture.scene};
+    overlay->select_entity(fixture.child);
+
+    const auto draw_once = [&] {
+        overlay->begin_frame(1.0F / 60.0F, 1280, 900);
+        auto report = overlay->scene_panel("Scene", history);
+        auto gpu_frame = harness->device.begin_frame();
+        REQUIRE(gpu_frame.has_value());
+        (void)overlay->end_frame(*gpu_frame);
+        REQUIRE(harness->device.end_frame(std::move(*gpu_frame)).has_value());
+        return report;
+    };
+
+    const auto first = draw_once();
+    REQUIRE(first.name_field.has_value());
+    // Nothing focused, so nothing is asked for.
+    CHECK_FALSE(overlay->ime_request().visible);
+
+    const auto centre = first.name_field->centre();
+    (void)overlay->handle_event(atlas::platform::MouseMoved{
+        .position = {.x = centre.x, .y = centre.y}, .delta_x = 0.0F, .delta_y = 0.0F});
+    (void)overlay->handle_event(
+        atlas::platform::MouseButtonPressed{.button = atlas::platform::MouseButton::Left});
+    draw_once();
+    (void)overlay->handle_event(
+        atlas::platform::MouseButtonReleased{.button = atlas::platform::MouseButton::Left});
+    draw_once();
+
+    const auto request = overlay->ime_request();
+    CHECK(request.visible);
+    CHECK(request.line_height > 0.0F);
+    // Near the field it belongs to. Loose bounds on purpose: the exact caret offset is the
+    // library's business and would make this a test of its text layout.
+    CHECK(request.y >= first.name_field->y - 4.0F);
+    CHECK(request.y <= first.name_field->y + first.name_field->height + 4.0F);
+    CHECK(request.x >= first.name_field->x - 4.0F);
+
+    // Clicking away withdraws the request, which is what stops a candidate list lingering
+    // over a panel nobody is typing into.
+    (void)overlay->handle_event(atlas::platform::MouseMoved{
+        .position = {.x = 5.0F, .y = 5.0F}, .delta_x = 0.0F, .delta_y = 0.0F});
+    (void)overlay->handle_event(
+        atlas::platform::MouseButtonPressed{.button = atlas::platform::MouseButton::Left});
+    draw_once();
+    (void)overlay->handle_event(
+        atlas::platform::MouseButtonReleased{.button = atlas::platform::MouseButton::Left});
+    draw_once();
+    draw_once();
+
+    CHECK_FALSE(overlay->ime_request().visible);
+
+    REQUIRE(harness->device.wait_idle().has_value());
+}

@@ -625,10 +625,28 @@ void step_simulation(atlas::Tick tick) {
                         // when it loses focus. Leaving it on changes how the platform treats
                         // ordinary keys: with an input method engaged a shortcut key becomes a
                         // composition keystroke.
-                        if (const bool want_text = overlay->wants_text_input();
-                            want_text != window.text_input_active()) {
+                        const bool want_text = overlay->wants_text_input();
+                        if (want_text != window.text_input_active()) {
                             if (auto status = window.set_text_input_active(want_text); !status) {
                                 ATLAS_LOG_WARN(kApp, "text input: {}", status.error());
+                            }
+                        }
+
+                        // Where the input method should put its candidate list. The overlay
+                        // reports in its own pixels; the window wants logical units, so the
+                        // display scale converts. Without this the candidate list sits
+                        // wherever it last was, usually over the text being typed.
+                        if (want_text) {
+                            const auto ime = overlay->ime_request();
+                            const float scale = window.display_scale();
+                            if (auto status = window.set_text_input_area(
+                                    atlas::platform::Rect2D{.x = ime.x / scale,
+                                                            .y = ime.y / scale,
+                                                            .width = 1.0F,
+                                                            .height = ime.line_height / scale},
+                                    0.0F);
+                                !status) {
+                                ATLAS_LOG_WARN(kApp, "text input area: {}", status.error());
                             }
                         }
 

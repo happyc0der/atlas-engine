@@ -36,6 +36,14 @@ constexpr std::size_t kNameBufferSize = 128;
 /// against its own idea of the modifier state: without this it never sees Ctrl held, and every
 /// shortcut is dead however complete the key table is. The physical modifiers are submitted;
 /// the library does the Cmd-for-Ctrl substitution on Apple systems itself.
+/// Record where the library wants an input method's candidate list.
+///
+/// Static, and reached through the user-data pointer, because the library's hook is a plain
+/// function pointer. The implementation lives behind a stable address for the overlay's
+/// lifetime, so storing it is safe.
+void record_ime_request(ImGuiContext* /*context*/, ImGuiViewport* /*viewport*/,
+                        ImGuiPlatformImeData* data);
+
 void submit_modifiers(ImGuiIO& io, const platform::KeyModifiers& modifiers) {
     io.AddKeyEvent(ImGuiMod_Ctrl, modifiers.control);
     io.AddKeyEvent(ImGuiMod_Shift, modifiers.shift);
@@ -53,6 +61,10 @@ struct DebugUi::Impl {
     /// Selection belongs to the panel, not to the scene. Putting it in the scene would make
     /// a save file depend on what an engineer happened to have clicked.
     std::optional<scene::StableId> selected;
+
+    /// Where an input method should put its candidate list, as the library last reported it.
+    /// Sticky: the library calls only when it changes, so this holds the current desire.
+    ImeRequest ime;
 
     /// The name field's buffer and whether it is being edited, so a reseed does not fight a
     /// half-typed name. Panel state, like selection.
@@ -120,6 +132,15 @@ Result<DebugUi> DebugUi::create(rhi::Device& device, const platform::Window& win
     io.DisplaySize = ImVec2{static_cast<float>(pixels.width), static_cast<float>(pixels.height)};
 
     ImGui::StyleColorsDark();
+
+    // Where an input method should put its candidate list. The library calls this only when
+    // the answer changes, so what it stores is the current desire rather than a per-frame
+    // event. The application reads it after end_frame and tells the window.
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    platform_io.Platform_SetImeDataFn = record_ime_request;
+    // The request field, not the whole implementation: the hook needs nothing else, and a
+    // public type keeps it a free function rather than a friend.
+    platform_io.Platform_ImeUserData = &impl->ime;
 
     ImGui_ImplSDLGPU3_InitInfo init{};
     init.Device = native_device;
@@ -508,6 +529,34 @@ void draw_history_controls(edit::History& history) {
 }
 
 }  // namespace
+
+namespace {
+
+// The signature is the library's function-pointer type, which takes a mutable pointer. A const
+// parameter would read better and would not match, so the hook would never install.
+// NOLINTBEGIN(misc-const-correctness)
+void record_ime_request(ImGuiContext* /*context*/, ImGuiViewport* /*viewport*/,
+                        ImGuiPlatformImeData* data) {
+    auto* request = static_cast<ImeRequest*>(ImGui::GetPlatformIO().Platform_ImeUserData);
+    if (request == nullptr || data == nullptr) {
+        return;
+    }
+    *request = ImeRequest{.visible = data->WantVisible,
+                          .x = data->InputPos.x,
+                          .y = data->InputPos.y,
+                          .line_height = data->InputLineHeight};
+}
+
+// NOLINTEND(misc-const-correctness)
+
+}  // namespace
+
+ImeRequest DebugUi::ime_request() const noexcept {
+    if (m_impl == nullptr) {
+        return ImeRequest{};
+    }
+    return m_impl->ime;
+}
 
 ScenePanelReport DebugUi::scene_panel(std::string_view title, edit::History& history) {
     ScenePanelReport report;

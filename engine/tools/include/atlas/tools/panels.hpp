@@ -57,6 +57,21 @@ struct PixelRect {
     }
 };
 
+/// Where a text field wants an input method's candidate list, in overlay pixels.
+///
+/// Reported rather than acted on, because positioning it means calling the window system and
+/// this module may not: the application converts these pixels to the window's logical units
+/// and passes them on. An input method that does not follow the caret covers the text the
+/// person is typing, which is the whole reason this is plumbed at all.
+struct ImeRequest {
+    bool visible = false;
+    float x = 0.0F;
+    float y = 0.0F;
+    float line_height = 0.0F;
+
+    [[nodiscard]] friend bool operator==(const ImeRequest&, const ImeRequest&) = default;
+};
+
 /// What a scene panel drew this frame.
 struct ScenePanelReport {
     /// Where the name field is, when an entity is selected and its name is short enough to

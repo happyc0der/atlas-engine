@@ -62,6 +62,12 @@ class DebugUi {
     /// input method is engaged only while something is there to type into.
     [[nodiscard]] bool wants_text_input() const noexcept;
 
+    /// Where a focused text field wants an input method's candidate list.
+    ///
+    /// Valid after `end_frame`. The application relays it to the window, converting from the
+    /// overlay's pixels to the window's logical units. Invisible when nothing is focused.
+    [[nodiscard]] ImeRequest ime_request() const noexcept;
+
     /// Start a frame of interface building.
     ///
     /// The elapsed time drives the library's own animations, and the pixel size keeps the
