@@ -68,6 +68,16 @@ set_tests_properties("sandbox_gamepad_follows_the_window" PROPERTIES
     LABELS "display;integration"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
+# The whole asset path for a sound: requested, decoded on a worker, finalised into a clip,
+# resampled, played, and replaced when the file changes on disk.
+add_test(NAME "sandbox_audio_clip_loads_and_reloads"
+         COMMAND "${Python3_EXECUTABLE}" "${_atlas_sandbox_checks}"
+                 --binary "$<TARGET_FILE:atlas_sandbox>"
+                 --case audio_clip_loads_and_reloads)
+set_tests_properties("sandbox_audio_clip_loads_and_reloads" PROPERTIES
+    LABELS "display;integration"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
 # ----------------------------------------------------------------------------- the lab
 # The Strategy Lab is a second composition root and carries the milestone's determinism
 # claims, which only whole-program runs can test: a second run, a save, a replay.

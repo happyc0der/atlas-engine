@@ -24,10 +24,16 @@ namespace atlas::assets {
 ///
 /// Part of the identifier, so that a texture and a shader at the same path are different
 /// assets rather than one asset that two importers disagree about.
+/// **Values are appended, never inserted or renumbered.** The number is folded into every
+/// identifier's hash and those identifiers are written into saved scene files, so moving one
+/// silently invalidates every persisted reference to every asset after it.
 enum class AssetType : std::uint8_t {
     Unknown = 0,
     Texture = 1,
     Shader = 2,
+    /// Audio decoded in full and held in memory: a click, a short loop, anything played often
+    /// enough that decoding it twice would be the wasteful part.
+    AudioClip = 3,
 };
 
 [[nodiscard]] std::string_view to_string(AssetType type) noexcept;

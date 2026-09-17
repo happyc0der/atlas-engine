@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 # Long enough that a slow machine under a sanitizer is not mistaken for a hang, short enough
 # that a real hang is reported rather than waited on.
@@ -229,6 +232,50 @@ def case_gamepad_follows_the_window(binary: str) -> None:
     expect_contains(output_of(opted_out), "gamepad off", "--no-gamepad turns it off")
 
 
+
+def case_audio_clip_loads_and_reloads(binary: str) -> None:
+    # The whole asset path for a sound, end to end and through the real one: requested by
+    # virtual path, read and decoded on a worker, finalised into a clip on the main thread,
+    # resampled from the file's 22.05 kHz to the engine's 48 kHz, and played looping.
+    #
+    # Paced by --ticks rather than --frames. With the dummy driver and nothing to draw, three
+    # hundred frames take under a millisecond, which is less time than a worker needs to read
+    # a hundred and seventy kilobytes: the run would finish before the asset did, and the
+    # check would be measuring the loop's speed rather than the pipeline.
+    with tempfile.TemporaryDirectory() as directory:
+        assets = pathlib.Path(directory) / "assets"
+        shutil.copytree("assets/source", assets)
+        loop = assets / "audio" / "ambient_loop.wav"
+        if not loop.exists():
+            raise CheckFailed("the generated ambient loop is missing; "
+                              "run tools/gen_audio_assets.py")
+
+        # Touched from a thread partway through, because hot reload polls once a second and
+        # a file that changes before the run starts is just a file.
+        def touch_later() -> None:
+            time.sleep(2.0)
+            loop.touch()
+
+        toucher = threading.Thread(target=touch_later, daemon=True)
+        toucher.start()
+        result = run(binary, ["--video-driver", "dummy", "--no-render",
+                              "--audio-driver", "dummy", "--assets-dir", str(assets),
+                              "--hot-reload", "--ticks", "300"])
+        toucher.join(timeout=5)
+
+    expect_exit(result, 0, "a run with an audio asset")
+    text = output_of(result)
+    expect_ordered(text, ["audio ready:", "ambient loop playing", "asset(s) changed on disk",
+                          "ambient loop playing"],
+                   "the clip loads, plays, is reloaded, and plays again")
+    expect_contains(text, "1 total, 1 ready, 0 failed", "the clip reached ready")
+
+    # One clip after a reload, not two. A reload creates a new clip and must release the one
+    # it displaced; without that the pool grows by one every time a file is touched, which is
+    # a leak that nothing else here would notice.
+    expect_contains(text, "1 voices peak, 0 underruns, 1 clips", "the displaced clip was released")
+
+
 CASES = {
     "version": case_version,
     "help": case_help,
@@ -243,6 +290,7 @@ CASES = {
     "log_level_filters": case_log_level_filters,
     "window_under_dummy_driver": case_window_under_dummy_driver,
     "gamepad_follows_the_window": case_gamepad_follows_the_window,
+    "audio_clip_loads_and_reloads": case_audio_clip_loads_and_reloads,
 }
 
 

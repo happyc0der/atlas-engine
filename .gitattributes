@@ -9,3 +9,6 @@
 *.spv  binary
 *.dxil binary
 *.metallib binary
+*.wav binary
+*.ogg binary
+*.flac binary

@@ -44,6 +44,7 @@ graph TD
   renderer --> rhi
   assets --> core
   assets --> platform
+  audio --> assets
   audio --> core
   audio --> platform
   scene --> assets

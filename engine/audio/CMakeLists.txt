@@ -24,6 +24,7 @@ atlas_add_module(audio
         include/atlas/audio/synth.hpp
     DEPENDS
         core
+        assets
         platform
     PRIVATE_DEPS
         atlas::sdl3

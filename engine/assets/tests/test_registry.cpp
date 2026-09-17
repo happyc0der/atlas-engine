@@ -127,6 +127,71 @@ class TempTree {
 
 }  // namespace
 
+TEST_CASE("an asset nothing finalises is reported rather than waiting forever",
+          "[assets][registry]") {
+    // `AssetType::Shader` is the type that has no finaliser: nothing in the tree calls
+    // take_shader, because shaders come from the generated manifest instead. So an asset
+    // requested as one decodes, reaches Decoded, and stays there. Before this check existed
+    // it did so in silence, with awaiting_finalisation climbing and nothing failing.
+    //
+    // This test uses that type deliberately. When something does finalise shaders one day,
+    // this case should be pointed at whichever type is then unclaimed, or deleted along with
+    // the stall counter if every type has one — and it will fail loudly rather than quietly
+    // passing, which is the point.
+    const TempTree tree;
+    tree.write("shaders/pass.spv", "not really a shader, but the shader arm reads bytes");
+    auto filesystem = FileSystem{};
+    REQUIRE(filesystem.mount("assets", tree.root()));
+
+    auto registry = Registry::create(filesystem, {});
+    REQUIRE(registry.has_value());
+
+    const auto id = registry->request(path_of("shaders/pass.spv"), AssetType::Shader);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until_settled(*registry, *id));
+    REQUIRE(registry->state(*id) == AssetState::Decoded);
+
+    // Nothing has claimed it and nothing ever will. Below the threshold the registry says
+    // nothing, because a few frames of waiting is the ordinary case for every asset.
+    for (int i = 0; i < 100; ++i) {
+        registry->pump();
+    }
+    CHECK(registry->stats().stalled == 0);
+    CHECK(registry->stats().awaiting_finalisation == 1);
+
+    // Past it, exactly once, however long the wait goes on.
+    for (int i = 0; i < 1000; ++i) {
+        registry->pump();
+    }
+    CHECK(registry->stats().stalled == 1);
+    CHECK(registry->state(*id) == AssetState::Decoded);
+}
+
+TEST_CASE("a finalised asset never counts as stalled", "[assets][registry]") {
+    // The other half, and the one that would catch a threshold accidentally set to zero: an
+    // asset that is claimed in the ordinary way must never be reported, no matter how many
+    // pumps happen afterwards.
+    const TempTree tree;
+    tree.write_png("textures/tile.png");
+    auto filesystem = FileSystem{};
+    REQUIRE(filesystem.mount("assets", tree.root()));
+
+    auto registry = Registry::create(filesystem, {});
+    REQUIRE(registry.has_value());
+
+    const auto id = registry->request(path_of("textures/tile.png"), AssetType::Texture);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until_settled(*registry, *id));
+    REQUIRE(registry->take_texture(*id).has_value());
+    registry->mark_ready(*id);
+
+    for (int i = 0; i < 1000; ++i) {
+        registry->pump();
+    }
+    CHECK(registry->stats().stalled == 0);
+    CHECK(registry->stats().ready == 1);
+}
+
 TEST_CASE("a registry needs at least one worker", "[assets][registry]") {
     const TempTree tree;
     FileSystem filesystem;

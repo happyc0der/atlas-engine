@@ -23,6 +23,8 @@
 ///
 /// No window-system type appears anywhere in this header.
 
+#include <atlas/assets/asset_id.hpp>
+#include <atlas/assets/registry.hpp>
 #include <atlas/audio/mix.hpp>
 #include <atlas/core/handle.hpp>
 #include <atlas/core/result.hpp>
@@ -126,6 +128,29 @@ class AudioDevice {
 
     /// Release a clip. Voices already sounding on it finish on the buffer they started with.
     bool destroy_clip(ClipHandle clip);
+
+    /// Turn every decoded audio asset into a clip. Once per frame, on the main thread.
+    ///
+    /// The same shape as the texture cache's own finaliser and for the same reason: workers
+    /// produce samples and stop there, and the main-thread work — resampling to the mix rate
+    /// and inserting into the pool — belongs to whoever owns the pool. Assets of other types
+    /// are skipped, so several finalisers share one registry without stepping on each other.
+    ///
+    /// Returns how many clips were created, which for a steady frame is zero. A clip that
+    /// cannot be created is marked failed in the registry with the reason, never retried in a
+    /// loop, and never allowed to stop the frame.
+    ///
+    /// The null device finalises too. A run with no sound still settles the asset state
+    /// machine, so "there was no audio device" never becomes "assets are stuck".
+    std::size_t finalise_pending(assets::Registry& registry);
+
+    /// The clip for an asset, or a null handle if it is missing, failed, or not yet ready.
+    ///
+    /// Deliberately no fallback sound. A texture resolves to a magenta checkerboard because a
+    /// missing texture must still draw something; a missing sound has nothing it must still
+    /// do, and inventing a noise would be worse than silence. The registry says which of the
+    /// three it is, and the asset panel shows it.
+    [[nodiscard]] ClipHandle clip_for(assets::AssetId id) const;
 
     /// Start a voice.
     ///

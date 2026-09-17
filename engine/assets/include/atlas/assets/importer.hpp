@@ -44,11 +44,35 @@ struct ImportedShader {
     std::uint32_t uniform_buffers = 0;
 };
 
+/// Decoded audio, ready to become a clip.
+///
+/// Float samples in the file's own rate and channel count, interleaved. Converting to the
+/// engine's mix rate needs a clip pool and belongs to whoever owns one; an importer runs on a
+/// worker and produces bytes, nothing more.
+struct ImportedAudio {
+    std::vector<float> samples;
+    std::uint32_t channels = 1;
+    std::uint32_t sample_rate = 0;
+};
+
 /// Decode an image.
 ///
 /// Thread-safe and free of engine state, so it can run on a worker.
 [[nodiscard]] Result<ImportedTexture> import_texture(std::span<const std::byte> bytes,
                                                      std::string_view debug_name);
+
+/// Decode audio.
+///
+/// **The format is decided by the leading bytes, never by the path's extension.** An extension
+/// is a claim made by whoever named the file, and this function's input is untrusted; the
+/// magic bytes are the only part of that claim the file has to honour to be decodable at all.
+///
+/// Today that means RIFF/WAVE and nothing else. Anything unrecognised is
+/// `AssetImportFailed` naming what was found, rather than a guess.
+///
+/// Thread-safe and free of engine state, so it can run on a worker.
+[[nodiscard]] Result<ImportedAudio> import_audio(std::span<const std::byte> bytes,
+                                                 std::string_view debug_name);
 
 /// Limits on what will be decoded.
 ///
@@ -60,6 +84,17 @@ struct ImportLimits {
     /// Largest decoded image, in bytes. Sixteen thousand squared at four bytes a pixel is
     /// about a gigabyte, so this is the binding limit in practice.
     std::uint64_t max_texture_bytes = 256ULL * 1024 * 1024;
+
+    /// Largest decoded clip, in bytes of float samples. Sixty-four megabytes is about six
+    /// minutes of stereo at the mix rate: generous for anything held in memory in full, and
+    /// fatal to a header claiming four billion frames.
+    std::uint64_t max_audio_bytes = 64ULL * 1024 * 1024;
+    /// Rates outside this are not a format this engine has not heard of; they are a file
+    /// lying about itself.
+    std::uint32_t min_audio_sample_rate = 8'000;
+    std::uint32_t max_audio_sample_rate = 192'000;
+    /// Mono and stereo. More would mean deciding how to fold them down, and nothing asks.
+    std::uint32_t max_audio_channels = 2;
 };
 
 [[nodiscard]] const ImportLimits& import_limits() noexcept;

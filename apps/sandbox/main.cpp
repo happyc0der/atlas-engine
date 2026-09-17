@@ -14,6 +14,7 @@
 #include <atlas/app/ppm.hpp>
 #include <atlas/app/run_bounds.hpp>
 #include <atlas/assets/registry.hpp>
+#include <atlas/audio/device.hpp>
 #include <atlas/core/args.hpp>
 #include <atlas/core/assert.hpp>
 #include <atlas/core/build_info.hpp>
@@ -76,9 +77,11 @@ struct Options {
     std::string_view log_file;
     std::string_view shader_dir = "assets/cooked/shaders";
     std::string_view screenshot;
+    std::string_view audio_driver;
     bool no_render = false;
     bool no_overlay = false;
     bool no_gamepad = false;
+    bool no_audio = false;
     bool hot_reload = false;
     std::string_view cache_dir;
     std::uint32_t grid = 100;
@@ -114,6 +117,8 @@ Options:
   --inspect ID           Start with the given entity selected in the scene panel.
   --no-overlay           Do not create the debug overlay.
   --no-gamepad           Do not enumerate gamepads. On by default when there is a window.
+  --no-audio             Open no audio device. On by default when there is a window.
+  --audio-driver NAME    SDL audio driver, e.g. dummy.
   --edit-check           Apply and undo edits to the demo scene headlessly, then exit.
   --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
   --hot-reload           Re-read assets whose files change while running.
@@ -137,6 +142,8 @@ In a window, Escape or the close button quits.)");
     options.no_render = args.has("no-render");
     options.no_overlay = args.has("no-overlay");
     options.no_gamepad = args.has("no-gamepad");
+    options.no_audio = args.has("no-audio");
+    options.audio_driver = args.value_or("audio-driver", std::string_view{});
     options.hot_reload = args.has("hot-reload");
     options.cache_dir = args.value_or("cache-dir", std::string_view{});
     options.scene_graph = args.has("scene");
@@ -345,9 +352,40 @@ void step_simulation(atlas::Tick tick) {
         .video_driver = options->video_driver,
         .app_name = "Atlas sandbox",
         .gamepad = !options->headless && !options->no_gamepad,
+        .audio = !options->headless && !options->no_audio,
+        .audio_driver = options->audio_driver,
     });
     if (!platform) {
         return std::unexpected(std::move(platform).error().context("starting the platform"));
+    }
+
+    // Declared after the platform so it is destroyed before it: the platform's destructor
+    // shuts down every window-system subsystem at once, including the one this device's stream
+    // lives on. Note that the asset registry above is declared *earlier* and so outlives the
+    // platform, which is fine for it and would not be for this.
+    std::optional<atlas::audio::AudioDevice> audio;
+    atlas::assets::AssetId ambient_id;
+    atlas::audio::VoiceHandle ambient_voice;
+    if (platform->has_audio_support()) {
+        auto opened = atlas::audio::AudioDevice::create();
+        if (!opened) {
+            ATLAS_LOG_WARN(kApp, "no audio device ({}); continuing without sound", opened.error());
+            audio = atlas::audio::AudioDevice::null();
+        } else {
+            audio = std::move(*opened);
+        }
+
+        // Requested, not awaited, exactly as the texture is. The identifier comes back now and
+        // the samples arrive later; until they do there is silence, which is the right
+        // behaviour for a sound and is why audio has no equivalent of the magenta fallback.
+        if (auto path = atlas::assets::VirtualPath::parse("audio/ambient_loop.wav"); !path) {
+            ATLAS_LOG_WARN(kApp, "the ambient loop's path is invalid: {}", path.error());
+        } else if (auto requested = registry->request(*path, atlas::assets::AssetType::AudioClip);
+                   !requested) {
+            ATLAS_LOG_WARN(kApp, "the ambient loop could not be requested: {}", requested.error());
+        } else {
+            ambient_id = *requested;
+        }
     }
 
     atlas::platform::Window window;
@@ -506,8 +544,32 @@ void step_simulation(atlas::Tick tick) {
         } else if (scene_demo.has_value()) {
             finalised = scene_demo->finalise_assets(*registry);
         }
+        if (audio.has_value()) {
+            // A second finaliser over the same registry, filtering by type. Both walk the same
+            // sorted list and each skips what the other owns, which is the arrangement that
+            // lets a new asset type arrive without the registry learning about devices.
+            const std::size_t clips = audio->finalise_pending(*registry);
+            finalised += clips;
+            if (clips > 0 && ambient_id.valid()) {
+                // Restart on the new samples. A looping voice started on the old clip would
+                // play the old bytes forever, so a hot reload would appear to do nothing —
+                // which is the exact failure a reload demonstration must not have.
+                if (ambient_voice.valid()) {
+                    (void)audio->stop(ambient_voice);
+                }
+                if (const auto clip = audio->clip_for(ambient_id); clip.valid()) {
+                    ambient_voice = audio->play(
+                        clip, {.volume = 0.6F, .loop = true, .bus = atlas::audio::Bus::Music});
+                    ATLAS_LOG_INFO(kApp, "ambient loop playing");
+                }
+            }
+        }
         if (finalised > 0) {
             ATLAS_LOG_INFO(kApp, "finalised {} asset(s)", finalised);
+        }
+
+        if (audio.has_value()) {
+            audio->update();
         }
 
         // Polling rather than watching the filesystem: three platforms have three different
@@ -762,6 +824,11 @@ void step_simulation(atlas::Tick tick) {
     device.reset();
 
     ATLAS_LOG_INFO(kApp, "loop finished at tick {}", accumulator->current_tick());
+    if (audio.has_value()) {
+        const auto stats = audio->stats();
+        ATLAS_LOG_INFO(kApp, "audio: {} voices peak, {} underruns, {} clips{}", stats.voices_peak,
+                       stats.underruns, stats.clips, stats.null_device ? ", no device" : "");
+    }
     counters.report();
     ATLAS_LOG_INFO(kApp, "shutdown");
     return atlas::ok();

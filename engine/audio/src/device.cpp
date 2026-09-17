@@ -18,6 +18,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -88,6 +89,11 @@ struct AudioDevice::Impl {
     /// lifetime the same length with and without a device.
     SteadyClock clock;
     bool advanced_once = false;
+
+    /// Which clip an asset resolved to. Reloading an asset replaces the entry and releases
+    /// the clip it displaced; voices already sounding keep their own reference to the old
+    /// samples, so a reload never pulls a buffer out from under something audible.
+    std::unordered_map<assets::AssetId, ClipHandle> asset_clips;
 
     std::uint32_t voices_peak = 0;
     std::uint64_t underruns = 0;
@@ -404,6 +410,70 @@ void AudioDevice::update() {
         }
         queued_frames += frames;
     }
+}
+
+std::size_t AudioDevice::finalise_pending(assets::Registry& registry) {
+    ATLAS_ASSERT_MAIN_THREAD();
+    if (!m_impl) {
+        return 0;
+    }
+    ATLAS_ZONE_NAMED("AudioDevice::finalise_pending");
+
+    std::size_t created = 0;
+    for (const auto id : registry.pending_finalisation()) {
+        // The list holds every decoded asset, whatever its type, because the registry knows
+        // nothing about which subsystem owns what. This skip is what keeps the cost
+        // proportional to this type's assets rather than to all of them.
+        //
+        // It is not what makes it correct: `take_audio` returns nothing for an asset with no
+        // audio payload, so removing this line changes the work done and not the result. A
+        // mutation that deletes it survives every test here, and that is the honest outcome
+        // rather than a gap — the same arrangement the texture cache has used since M4.
+        if (id.type() != assets::AssetType::AudioClip) {
+            continue;
+        }
+
+        auto decoded = registry.take_audio(id);
+        if (!decoded) {
+            // Another finaliser took it, or it was taken already. Not an error: the payload
+            // is moved out precisely so that this is the safe outcome rather than a race.
+            continue;
+        }
+
+        auto clip = create_clip({
+            .samples = decoded->samples,
+            .channels = decoded->channels,
+            .sample_rate = decoded->sample_rate,
+            .debug_name = "audio asset",
+        });
+        if (!clip) {
+            registry.mark_failed(id, clip.error().to_string());
+            continue;
+        }
+
+        // A reload replaces the clip this asset resolved to, and the one it displaced has to
+        // go or it stays in the pool for the life of the process. Voices holding the old
+        // samples are unaffected: they own a reference, not an index.
+        if (const auto existing = m_impl->asset_clips.find(id);
+            existing != m_impl->asset_clips.end()) {
+            destroy_clip(existing->second);
+            existing->second = *clip;
+        } else {
+            m_impl->asset_clips.emplace(id, *clip);
+        }
+
+        registry.mark_ready(id);
+        ++created;
+    }
+    return created;
+}
+
+ClipHandle AudioDevice::clip_for(assets::AssetId id) const {
+    if (!m_impl) {
+        return {};
+    }
+    const auto it = m_impl->asset_clips.find(id);
+    return it == m_impl->asset_clips.end() ? ClipHandle{} : it->second;
 }
 
 AudioStats AudioDevice::stats() const noexcept {

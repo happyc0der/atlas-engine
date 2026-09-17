@@ -19,6 +19,23 @@ namespace {
 
 constexpr log::Category kAssets{"assets"};
 
+/// Pumps an asset may sit decoded before the registry says something about it.
+///
+/// Reaching `Ready` needs a finaliser — whoever owns the resource the bytes become — and the
+/// registry cannot know whether one exists for a given type, because it deliberately knows
+/// nothing about devices. So an asset type added without a finaliser decodes, arrives at
+/// `Decoded`, and stays there forever with nothing logging and nothing failing.
+///
+/// That is not hypothetical. `AssetType::Shader` has been in this enumeration since M4 and
+/// nothing in the tree has ever called `take_shader`: shaders come from the generated manifest
+/// instead, which is a deliberate deferral recorded in the renderer. Anything requested as a
+/// shader would climb `awaiting_finalisation` without bound and in silence.
+///
+/// Six hundred pumps is about ten seconds at sixty frames a second — long enough that a slow
+/// finaliser, a paused debugger or a frame spike cannot trip it, short enough that a person
+/// running an application sees the line before they stop looking.
+constexpr std::uint32_t kStalledPumps = 600;
+
 }  // namespace
 
 namespace {
@@ -31,8 +48,13 @@ struct Entry {
     AssetInfo info;
     std::optional<ImportedTexture> texture;
     std::optional<ImportedShader> shader;
+    std::optional<ImportedAudio> audio;
     /// When the file was last read, for detecting a change on disk.
     std::optional<std::filesystem::file_time_type> loaded_at;
+    /// Pumps this entry has spent decoded and unclaimed. See `kStalledPumps`.
+    std::uint32_t decoded_pumps = 0;
+    /// Whether the stall has already been reported, so it is said once and not every frame.
+    bool stall_reported = false;
 };
 
 /// Work handed to a worker.
@@ -47,6 +69,7 @@ struct Completion {
     AssetId id;
     std::optional<ImportedTexture> texture;
     std::optional<ImportedShader> shader;
+    std::optional<ImportedAudio> audio;
     std::optional<std::filesystem::file_time_type> modified_at;
     std::string error;
     std::uint64_t bytes = 0;
@@ -63,6 +86,8 @@ struct Registry::Impl {
     std::optional<ArtifactCache> cache;
     std::size_t cache_hits = 0;
     std::size_t cache_misses = 0;
+    /// Assets that have been decoded and unclaimed long enough to be reported. Never decreases.
+    std::size_t stalled = 0;
 
     /// Guards the entry table. Held briefly: never across a file read or a decode.
     mutable std::mutex entries_mutex;
@@ -160,6 +185,21 @@ struct Registry::Impl {
             ImportedShader shader;
             shader.code = std::move(*bytes);
             completion.shader = std::move(shader);
+            break;
+        }
+        case AssetType::AudioClip: {
+            // Not cached. A decode is a copy of the samples with a conversion per sample, and
+            // the artifact cache is texture-shaped end to end: its entry header is a width, a
+            // height and a byte count, its filenames end in ".texture", and it carries one
+            // importer-version constant. Widening all of that to save a copy nobody has
+            // measured is the mistake M4 already made once with textures. Recorded in
+            // docs/DEFERRED.md with the measurement that would change it.
+            auto imported = import_audio(*bytes, job.path.text());
+            if (!imported) {
+                completion.error = imported.error().to_string();
+                break;
+            }
+            completion.audio = std::move(*imported);
             break;
         }
         case AssetType::Unknown:
@@ -324,6 +364,19 @@ std::optional<ImportedShader> Registry::take_shader(AssetId id) {
     return std::nullopt;
 }
 
+std::optional<ImportedAudio> Registry::take_audio(AssetId id) {
+    if (m_impl == nullptr) {
+        return std::nullopt;
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    const std::scoped_lock lock{m_impl->entries_mutex};
+    if (const auto it = m_impl->entries.find(id); it != m_impl->entries.end()) {
+        return std::exchange(it->second.audio, std::nullopt);
+    }
+    return std::nullopt;
+}
+
 std::size_t Registry::pump() {
     if (m_impl == nullptr) {
         return 0;
@@ -337,10 +390,8 @@ std::size_t Registry::pump() {
         finished.swap(m_impl->completions);
     }
 
-    if (finished.empty()) {
-        return 0;
-    }
-
+    // No early return on an empty list. A stall is exactly the case where nothing finished,
+    // so returning here is how the first version of this check managed to never fire.
     const std::scoped_lock lock{m_impl->entries_mutex};
     for (auto& completion : finished) {
         const auto it = m_impl->entries.find(completion.id);
@@ -371,10 +422,34 @@ std::size_t Registry::pump() {
         }
         entry.texture = std::move(completion.texture);
         entry.shader = std::move(completion.shader);
+        entry.audio = std::move(completion.audio);
 
         // Decoded, not ready: a texture's pixels exist but its graphics resource does not,
         // and only the main thread may create one.
         entry.info.state = AssetState::Decoded;
+        entry.decoded_pumps = 0;
+        entry.stall_reported = false;
+    }
+
+    // Count how long anything has been waiting, and say so once when the wait stops being
+    // plausible. Walked every pump rather than only when something changed state, because a
+    // stall is precisely the case where nothing changes state.
+    for (auto& [id, entry] : m_impl->entries) {
+        if (entry.info.state != AssetState::Decoded) {
+            continue;
+        }
+        if (entry.decoded_pumps < kStalledPumps) {
+            ++entry.decoded_pumps;
+            continue;
+        }
+        if (!entry.stall_reported) {
+            entry.stall_reported = true;
+            ++m_impl->stalled;
+            ATLAS_LOG_WARN(kAssets,
+                           "{} '{}' has been decoded and unclaimed for {} pumps; nothing "
+                           "finalises this asset type, so it will never become ready",
+                           to_string(entry.info.type), entry.info.path.text(), kStalledPumps);
+        }
     }
 
     return finished.size();
@@ -506,6 +581,7 @@ RegistryStats Registry::stats() const {
     }
     stats.cache_hits = m_impl->cache_hits;
     stats.cache_misses = m_impl->cache_misses;
+    stats.stalled = m_impl->stalled;
 
     const std::scoped_lock lock{m_impl->entries_mutex};
     stats.total = m_impl->entries.size();

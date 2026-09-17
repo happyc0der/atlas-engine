@@ -11,6 +11,7 @@ atlas_add_app(sandbox
         atlas::app_common
         atlas::assets
         atlas::edit
+        atlas::audio
         atlas::platform
         atlas::renderer
         atlas::scene

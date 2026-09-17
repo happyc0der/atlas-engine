@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Generate the committed audio assets, or check that the committed ones are current.
+
+Why generated rather than committed as opaque binaries: a sound file of unknown provenance is
+a file nobody can regenerate, relicense, or explain. Everything here comes from integer
+arithmetic in the standard library, so the script is the provenance and `--check` proves the
+committed bytes still match it. The same arrangement `cook_shaders.py` uses for shaders.
+
+Deliberately not `wave` from the standard library. That module writes a minimal file with no
+metadata chunk, and one of the two assets exists specifically to exercise chunk skipping in
+the engine's reader. Writing the bytes by hand is about forty lines and is what lets a test
+input be adversarial on purpose.
+
+    tools/gen_audio_assets.py            write the assets
+    tools/gen_audio_assets.py --check    regenerate into a scratch tree and byte-compare
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import pathlib
+import shutil
+import struct
+import sys
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+AUDIO_DIR = REPO_ROOT / "assets" / "source" / "audio"
+
+# Bumped by hand when the generated content changes in a way that invalidates what is
+# committed. Nothing reads it at runtime; it exists so that a deliberate change to a waveform
+# and an accidental one look different in a diff.
+GENERATOR_VERSION = 1
+
+
+def wav_bytes(samples: list[int], sample_rate: int, channels: int, info: str) -> bytes:
+    """A 16-bit PCM RIFF/WAVE file, with a LIST/INFO chunk before the data.
+
+    The INFO chunk is not decoration. A reader that does not skip unknown chunks correctly
+    will either refuse this file or decode the metadata as audio, and both are loud failures
+    rather than subtle ones. It also carries the provenance into the file itself, so a copy
+    that escapes the repository still says where it came from.
+    """
+    block_align = channels * 2
+    data = b"".join(struct.pack("<h", value) for value in samples)
+
+    fmt = struct.pack(
+        "<HHIIHH",
+        1,  # PCM
+        channels,
+        sample_rate,
+        sample_rate * block_align,  # bytes per second
+        block_align,
+        16,  # bits per sample
+    )
+
+    text = info.encode("ascii") + b"\0"
+    if len(text) % 2:  # chunks are padded to an even length
+        text += b"\0"
+    list_body = b"INFO" + b"ICMT" + struct.pack("<I", len(text)) + text
+
+    chunks = (
+        b"fmt " + struct.pack("<I", len(fmt)) + fmt
+        + b"LIST" + struct.pack("<I", len(list_body)) + list_body
+        + b"data" + struct.pack("<I", len(data)) + data
+    )
+    return b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WAVE" + chunks
+
+
+def quantise(value: float) -> int:
+    """A float in [-1, 1] as a 16-bit sample, clamped and rounded the same way every time."""
+    scaled = int(round(max(-1.0, min(1.0, value)) * 32767.0))
+    return max(-32768, min(32767, scaled))
+
+
+def blip(sample_rate: int, duration_ms: int, frequency: float, amplitude: float) -> list[int]:
+    """A short sine with a linear fade at each end.
+
+    The fades matter for the same reason they do in the engine's own generator: a sine cut off
+    mid-cycle has a step at each end, and that step is heard as a click on top of the tone.
+    """
+    frames = sample_rate * duration_ms // 1000
+    fade = min(frames // 2, sample_rate // 200)  # 5 ms, or half the sound if it is shorter
+    out = []
+    for frame in range(frames):
+        envelope = 1.0
+        if fade:
+            if frame < fade:
+                envelope = frame / fade
+            elif frame >= frames - fade:
+                envelope = (frames - 1 - frame) / fade
+        out.append(quantise(math.sin(2 * math.pi * frequency * frame / sample_rate)
+                            * amplitude * envelope))
+    return out
+
+
+def ambient_loop(sample_rate: int, duration_ms: int) -> list[int]:
+    """A quiet bed that joins to itself seamlessly.
+
+    Every partial completes a whole number of cycles over the loop, so the last frame runs
+    into the first with no discontinuity. A loop that does not have this property ticks once
+    per repeat, which is the defect this file exists to not have.
+    """
+    frames = sample_rate * duration_ms // 1000
+    # Cycles per loop, not hertz. Integers here are the whole point.
+    partials = [(2, 0.30), (3, 0.18), (5, 0.10), (8, 0.05)]
+    out = []
+    for frame in range(frames):
+        phase = frame / frames
+        value = sum(amp * math.sin(2 * math.pi * cycles * phase) for cycles, amp in partials)
+        out.append(quantise(value * 0.5))
+    return out
+
+
+def generate(into: pathlib.Path) -> list[pathlib.Path]:
+    into.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    # At the engine's own mix rate, so the common path converts nothing.
+    click = into / "click.wav"
+    click.write_bytes(wav_bytes(
+        blip(48_000, 40, 880.0, 0.35), 48_000, 1,
+        f"Generated by tools/gen_audio_assets.py v{GENERATOR_VERSION}. Public domain.",
+    ))
+    written.append(click)
+
+    # Deliberately not the mix rate. The engine resamples this one every time it is loaded,
+    # so the real applications exercise that path rather than only the tests.
+    loop = into / "ambient_loop.wav"
+    loop.write_bytes(wav_bytes(
+        ambient_loop(22_050, 4_000), 22_050, 1,
+        f"Generated by tools/gen_audio_assets.py v{GENERATOR_VERSION}. Public domain.",
+    ))
+    written.append(loop)
+
+    return written
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--check", action="store_true",
+                       help="regenerate into a scratch tree and compare, changing nothing")
+    args = parser.parse_args()
+
+    if not args.check:
+        written = generate(AUDIO_DIR)
+        for path in written:
+            print(f"wrote {path.relative_to(REPO_ROOT)} ({path.stat().st_size} bytes)")
+        return 0
+
+    scratch = REPO_ROOT / "build" / "audio-check"
+    if scratch.exists():
+        shutil.rmtree(scratch)
+    fresh = generate(scratch)
+
+    stale = []
+    for path in fresh:
+        committed = AUDIO_DIR / path.name
+        if not committed.exists():
+            stale.append(f"{path.name} has never been generated")
+        elif committed.read_bytes() != path.read_bytes():
+            stale.append(f"{path.name} differs from what the generator produces")
+
+    if stale:
+        for line in stale:
+            print(f"audio assets are stale: {line}", file=sys.stderr)
+        print("run tools/gen_audio_assets.py", file=sys.stderr)
+        return 1
+
+    print(f"audio assets are current: {len(fresh)} file(s) match the generator")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

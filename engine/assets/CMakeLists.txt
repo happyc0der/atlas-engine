@@ -13,6 +13,8 @@ atlas_add_module(assets
         src/virtual_path.cpp
         src/asset_id.cpp
         src/importer.cpp
+        src/wav.cpp
+        src/audio_import.cpp
         src/registry.cpp
         src/artifact_cache.cpp
         src/filesystem.cpp

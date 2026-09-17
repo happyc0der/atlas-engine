@@ -44,7 +44,10 @@ set(ATLAS_MODULE_DEPS_assets            "core;platform" CACHE INTERNAL "")
 # way rhi opens a graphics device on a window it did not create. It does not depend on renderer,
 # scene or simulation, and must not: a sound is triggered by whoever observes state, never by
 # state itself, and that separation is what keeps audio out of every hash.
-set(ATLAS_MODULE_DEPS_audio             "core;platform" CACHE INTERNAL "")
+# The assets edge arrived with the clip asset type: the device is the finaliser for decoded
+# audio, exactly as the texture cache is for decoded pixels, and a finaliser has to be able to
+# name the registry it takes from.
+set(ATLAS_MODULE_DEPS_audio             "core;assets;platform" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_scene             "core;math;assets;rhi" CACHE INTERNAL "")
 # edit: undoable commands over the scene and the history that applies them. Between scene and
 # tools so the command layer is testable without a UI library, and so a panel can be handed a

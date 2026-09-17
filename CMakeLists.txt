@@ -94,6 +94,14 @@ if(ATLAS_BUILD_TESTS)
                  COMMAND "${Python3_EXECUTABLE}"
                          "${PROJECT_SOURCE_DIR}/tools/cook_shaders.py" --check)
         set_tests_properties(shaders_current PROPERTIES LABELS "lint")
+
+        # The audio assets are generated the same way and for the same reason: a sound file of
+        # unknown provenance is one nobody can regenerate, relicense or explain. Unlike the
+        # shaders this needs no toolchain, so it never skips.
+        add_test(NAME audio_assets_current
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/tools/gen_audio_assets.py" --check)
+        set_tests_properties(audio_assets_current PROPERTIES LABELS "lint")
     else()
         message(STATUS "Atlas: Python not found; the boundary and licence checks will not "
                        "run as tests (CI runs them separately)")

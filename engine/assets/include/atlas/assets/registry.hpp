@@ -59,6 +59,13 @@ struct RegistryStats {
     std::size_t in_progress = 0;
     /// Assets waiting for the main thread to finish them.
     std::size_t awaiting_finalisation = 0;
+    /// Assets that waited so long to be finalised that the registry said something about it.
+    ///
+    /// The registry cannot know which types have a finaliser, because it deliberately knows
+    /// nothing about devices. So this is how a type added without one becomes visible instead
+    /// of climbing `awaiting_finalisation` in silence forever. Any value above zero is a
+    /// defect somewhere, not a slow machine.
+    std::size_t stalled = 0;
 };
 
 class Registry {
@@ -101,6 +108,12 @@ class Registry {
 
     /// Compiled code for a shader that has finished loading.
     [[nodiscard]] std::optional<ImportedShader> take_shader(AssetId id);
+
+    /// Take the decoded audio, if this asset has any waiting.
+    ///
+    /// Main thread only, and only from a finaliser: the samples are moved out, so a second
+    /// caller gets nothing. That is what stops two finalisers claiming the same asset.
+    [[nodiscard]] std::optional<ImportedAudio> take_audio(AssetId id);
 
     /// Bring finished work into the registry.
     ///

@@ -4,6 +4,7 @@ atlas_add_test(assets
         test_virtual_path.cpp
         test_filesystem.cpp
         test_registry.cpp
+        test_wav.cpp
     DEPENDS
         atlas::assets
     LABELS
