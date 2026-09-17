@@ -20,6 +20,7 @@
 
 #include <atlas/animation/clip.hpp>
 #include <atlas/assets/asset_id.hpp>
+#include <atlas/assets/registry.hpp>
 #include <atlas/core/result.hpp>
 #include <atlas/scene/scene.hpp>
 
@@ -31,17 +32,41 @@ namespace atlas::animation {
 
 /// The clips available to play, by the asset they came from.
 ///
-/// Insert-only on purpose. A clip that is replaced while an entity is playing it would change
-/// the meaning of that entity's clock mid-stride; a reload therefore replaces the whole entry
-/// and the next `advance` picks it up from wherever the clock had reached, which is the same
-/// answer a person would expect from editing a file while watching it.
+/// Inserting under an identifier that already has a clip **replaces** it. That is what a hot
+/// reload does, and the entity's clock is deliberately left alone, so the next `advance` picks
+/// the new clip up from wherever playback had reached — which is the answer a person expects
+/// from editing a file while watching it, rather than a restart.
 class ClipCache {
   public:
     /// Store a clip under an asset identifier, replacing any clip already there.
     void insert(assets::AssetId id, Clip clip);
 
     /// The clip for an asset, or nullptr when there is none.
+    ///
+    /// **A borrowed view, valid until the cache is next modified.** The cache owns the clip
+    /// through a shared pointer, so inserting over this identifier would free what this points
+    /// at. Nothing does that today — `advance` looks a clip up and finishes with it inside one
+    /// call, and finalisation happens between frames rather than during one — but that is a
+    /// property of the callers, not of this class, and a caller that holds the pointer across
+    /// an insert is the one that breaks it.
     [[nodiscard]] const Clip* find(assets::AssetId id) const noexcept;
+
+    /// Turn every decoded clip asset into one this cache can sample. Once per frame, on the
+    /// main thread.
+    ///
+    /// The same shape as the texture cache's and the audio device's own finalisers, and for
+    /// the same reason: a worker produces keys and stops there, and converting them belongs to
+    /// whoever owns the thing they become. Assets of other types are skipped, so several
+    /// finalisers share one registry without stepping on each other.
+    ///
+    /// Returns how many clips were created, which for a steady frame is zero. A reload replaces
+    /// the entry and leaves every playing entity's clock alone, so playback continues from
+    /// where it had reached rather than restarting.
+    ///
+    /// **This has to exist for the type to be usable at all.** Since M12 the registry reports
+    /// an asset that decodes and is never claimed; a clip with no finaliser would sit in that
+    /// state and be reported ten seconds later.
+    std::size_t finalise_pending(assets::Registry& registry);
 
     [[nodiscard]] std::size_t size() const noexcept { return m_clips.size(); }
 

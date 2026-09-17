@@ -23,6 +23,6 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0010](0010-charter-amendment.md) | Charter amendment: seven subsystems by owner decision, physics kept out | Accepted |
 | [0011](0011-audio.md) | Audio: SDL output, main-thread push mixing, decoders in assets | Accepted |
 | [0012](0012-scene-format-v2.md) | Scene format version 2, the append rule, and two writers on one entity | Accepted |
-| 0013 | Animation clip file format | Planned, M13 |
+| [0013](0013-animation-clip-format.md) | Animation clip file format | Accepted |
 | 0014 | Deterministic lockstep over the command queue | Planned, M14 |
 | 0015 | Sandboxed mods | Planned, M15 |

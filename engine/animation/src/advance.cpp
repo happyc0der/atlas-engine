@@ -26,6 +26,62 @@ void ClipCache::insert(assets::AssetId id, Clip clip) {
     m_clips[id] = std::make_shared<const Clip>(std::move(clip));
 }
 
+std::size_t ClipCache::finalise_pending(assets::Registry& registry) {
+    ATLAS_ASSERT_MAIN_THREAD();
+    ATLAS_ZONE_NAMED("ClipCache::finalise_pending");
+
+    std::size_t created = 0;
+    for (const auto id : registry.pending_finalisation()) {
+        // Skipped rather than relied on: `take_animation_clip` returns nothing for an asset
+        // with no clip payload, so removing this line changes the work done and not the result.
+        // The same arrangement the texture cache has had since M4, and the same honest caveat
+        // the audio device's finaliser records.
+        if (id.type() != assets::AssetType::AnimationClip) {
+            continue;
+        }
+
+        auto decoded = registry.take_animation_clip(id);
+        if (!decoded) {
+            // Another finaliser took it, or it was taken already. Not an error: the payload is
+            // moved out precisely so this is the safe outcome rather than a race.
+            continue;
+        }
+
+        Clip clip;
+        clip.name = std::move(decoded->name);
+        clip.duration_ns = decoded->duration_ns;
+        clip.grid = FrameGrid{.columns = decoded->columns, .rows = decoded->rows};
+
+        clip.transform_keys.reserve(decoded->transform_keys.size());
+        for (const auto& key : decoded->transform_keys) {
+            clip.transform_keys.push_back(TransformKey{
+                .time_ns = key.time_ns,
+                .position_offset = {.x = key.position_x, .y = key.position_y},
+                .rotation_offset = key.rotation,
+                .scale_factor = {.x = key.scale_x, .y = key.scale_y},
+                // The importer refuses a name it does not know, so the index is in range by
+                // the time it reaches here. Guarded anyway, because the two enumerations agree
+                // by position and nothing but this line and a comment says so.
+                .easing = key.easing < static_cast<std::uint8_t>(Easing::Count)
+                              ? static_cast<Easing>(key.easing)
+                              : Easing::Linear,
+            });
+        }
+
+        clip.frame_keys.reserve(decoded->frame_keys.size());
+        for (const auto& key : decoded->frame_keys) {
+            clip.frame_keys.push_back(FrameKey{.time_ns = key.time_ns, .cell = key.cell});
+        }
+
+        // Replaces whatever was there. A playing entity's clock lives in its pose and is
+        // untouched, so an edited clip is picked up from where playback had reached.
+        insert(id, std::move(clip));
+        registry.mark_ready(id);
+        ++created;
+    }
+    return created;
+}
+
 const Clip* ClipCache::find(assets::AssetId id) const noexcept {
     const auto it = m_clips.find(id);
     return it == m_clips.end() ? nullptr : it->second.get();

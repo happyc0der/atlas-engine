@@ -23,4 +23,6 @@ atlas_add_module(animation
         scene
 )
 
-add_subdirectory(tests)
+if(ATLAS_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()

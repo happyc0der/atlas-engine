@@ -115,6 +115,10 @@ class Registry {
     /// caller gets nothing. That is what stops two finalisers claiming the same asset.
     [[nodiscard]] std::optional<ImportedAudio> take_audio(AssetId id);
 
+    /// Take the decoded clip, if this asset has one waiting. Main thread only, and only from a
+    /// finaliser: the keys are moved out, so a second caller gets nothing.
+    [[nodiscard]] std::optional<ImportedAnimationClip> take_animation_clip(AssetId id);
+
     /// Bring finished work into the registry.
     ///
     /// Called once per frame on the main thread. Returns how many assets changed state,

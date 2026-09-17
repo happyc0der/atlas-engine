@@ -105,7 +105,7 @@ draw with the application's own code; and `apps/lab/main.cpp` is the composition
 puts a window, a device and an overlay around them.
 
 Third-party libraries are private to exactly one module: SDL3 to `platform` and `rhi`,
-EnTT and nlohmann-json to `scene`, Dear ImGui to `tools`, Tracy to `core` behind
+EnTT to `scene`, nlohmann-json to `scene` and `assets`, Dear ImGui to `tools`, Tracy to `core` behind
 compiled-out macros. EnTT is permitted in `atlas/scene` headers by ADR-0004 and does not
 appear in any of them.
 Because static-library `PRIVATE` dependencies propagate as `$<LINK_ONLY:>`, a public

@@ -49,6 +49,7 @@ struct Entry {
     std::optional<ImportedTexture> texture;
     std::optional<ImportedShader> shader;
     std::optional<ImportedAudio> audio;
+    std::optional<ImportedAnimationClip> clip;
     /// When the file was last read, for detecting a change on disk.
     std::optional<std::filesystem::file_time_type> loaded_at;
     /// Pumps this entry has spent decoded and unclaimed. See `kStalledPumps`.
@@ -70,6 +71,7 @@ struct Completion {
     std::optional<ImportedTexture> texture;
     std::optional<ImportedShader> shader;
     std::optional<ImportedAudio> audio;
+    std::optional<ImportedAnimationClip> clip;
     std::optional<std::filesystem::file_time_type> modified_at;
     std::string error;
     std::uint64_t bytes = 0;
@@ -202,14 +204,18 @@ struct Registry::Impl {
             completion.audio = std::move(*imported);
             break;
         }
-        case AssetType::AnimationClip:
-            // The type exists because a scene file records it: an asset identifier carries its
-            // type in the hash, so the number had to be fixed when the scene format gained an
-            // animator, one slice before the importer arrived. Requesting one in this build is
-            // a clear failure rather than an asset that decodes into nothing.
-            completion.error = std::format(
-                "'{}' is an animation clip, which this build cannot import yet", job.path.text());
+        case AssetType::AnimationClip: {
+            // Not cached, for the same reason audio is not: a clip is a few hundred bytes of
+            // text that parses faster than a cache entry would read, and the artifact cache is
+            // texture-shaped end to end.
+            auto imported = import_animation_clip(*bytes, job.path.text());
+            if (!imported) {
+                completion.error = imported.error().to_string();
+                break;
+            }
+            completion.clip = std::move(*imported);
             break;
+        }
         case AssetType::Unknown:
             completion.error = std::format("'{}' has no importer for its type", job.path.text());
             break;
@@ -385,6 +391,19 @@ std::optional<ImportedAudio> Registry::take_audio(AssetId id) {
     return std::nullopt;
 }
 
+std::optional<ImportedAnimationClip> Registry::take_animation_clip(AssetId id) {
+    if (m_impl == nullptr) {
+        return std::nullopt;
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    const std::scoped_lock lock{m_impl->entries_mutex};
+    if (const auto it = m_impl->entries.find(id); it != m_impl->entries.end()) {
+        return std::exchange(it->second.clip, std::nullopt);
+    }
+    return std::nullopt;
+}
+
 std::size_t Registry::pump() {
     if (m_impl == nullptr) {
         return 0;
@@ -431,6 +450,7 @@ std::size_t Registry::pump() {
         entry.texture = std::move(completion.texture);
         entry.shader = std::move(completion.shader);
         entry.audio = std::move(completion.audio);
+        entry.clip = std::move(completion.clip);
 
         // Decoded, not ready: a texture's pixels exist but its graphics resource does not,
         // and only the main thread may create one.

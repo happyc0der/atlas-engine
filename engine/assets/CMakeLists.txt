@@ -8,6 +8,11 @@
 # package, so it is found by path rather than by find_package.
 find_path(STB_INCLUDE_DIR NAMES stb_image.h REQUIRED)
 
+# The JSON reader, private here as it is in scene. M13 made this its second consumer: an
+# animation clip is a document a person writes, so it is read by the same library the scene file
+# is, rather than by a second bespoke parser in the same milestone that added one for audio.
+find_package(nlohmann_json CONFIG REQUIRED)
+
 atlas_add_module(assets
     SOURCES
         src/virtual_path.cpp
@@ -15,6 +20,7 @@ atlas_add_module(assets
         src/importer.cpp
         src/wav.cpp
         src/audio_import.cpp
+        src/animation_clip.cpp
         src/registry.cpp
         src/artifact_cache.cpp
         src/filesystem.cpp
@@ -29,6 +35,8 @@ atlas_add_module(assets
     DEPENDS
         core
         platform
+    PRIVATE_DEPS
+        nlohmann_json::nlohmann_json
 )
 
 # SYSTEM, so that the decoder's own warnings are not held to Atlas's first-party standard.

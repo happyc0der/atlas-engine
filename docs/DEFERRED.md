@@ -89,7 +89,17 @@ integration ran for the first time. What it found is recorded in
   decision to size plus modification time plus importer version, a warm import at 2048² is
   2.26 ms against 8.46 ms cold. Both designs and both sets of numbers are in
   `docs/PERFORMANCE.md`.
-- **An asset dependency graph.** With one asset type, nothing depends on anything.
+- **An asset dependency graph.** ~~With one asset type, nothing depends on anything.~~ **That
+  reason expired in M12**, when there were four. The conclusion still holds and the reason is
+  now different: no asset the engine loads *names* another. What M13 added is the first pair
+  that depends on the other in **meaning** without saying so — an animation clip cuts a sprite
+  sheet into a grid, and names neither the sheet nor its size, so a clip written for a
+  four-by-two sheet shows the wrong frames on a three-by-three one and nothing reports it.
+  Import refuses a cell outside the clip's own grid, which catches a clip disagreeing with
+  itself and cannot catch a clip disagreeing with a texture it never sees. **Picked up when
+  something is actually mis-framed by it**, or when a second such pair appears; the fix is a
+  clip declaring what it needs and the registry resolving it, which is a change to how every
+  asset is requested rather than to clips.
 
 ### M5 — scene
 
@@ -335,6 +345,27 @@ integration ran for the first time. What it found is recorded in
   case where the device disappears entirely.
 - **MP3, FLAC and Opus.** No consumer, and each is another decoder of untrusted input to
   harden.
+
+### M13 — animation
+
+- **A generalised asset payload, and a registration point for importers.** The registry keeps
+  one optional payload per type side by side in every entry and dispatches by a switch. That is
+  four payloads across five types after this milestone, and every edit needed to add another is
+  one the compiler points at, because the switch is exhaustive and a missing arm is an error.
+  **This entry exists because there was none**: the arrangement has been questioned twice, at
+  three types and at four, and kept both times without the reasoning being written anywhere.
+  Picked up when a payload is large enough that carrying it in every entry costs something
+  measurable, or when something outside this repository needs to add a type of its own — at
+  which point the switch stops being a complete list and becomes a limitation.
+- **A cap on the scene document's own length.** The clip reader has one, checked before the
+  parse, because that is the only bound a document parser can enforce: by the time any count
+  inside it is readable, the whole document has been allocated. The scene reader caps its entity
+  count and not its input, so the same hole is open there. Not fixed in a milestone about
+  animation, because widening that file carries its own risk; picked up the next time the scene
+  format is touched, which ADR-0012's own rule makes likely.
+- **An importer cache for clips.** A clip is a few hundred bytes of text that parses faster than
+  a cache entry would read, and the artifact cache is texture-shaped end to end. Same trigger as
+  audio: an import measured above five milliseconds.
 
 ## Decided by ADR-0010, planned as milestones
 

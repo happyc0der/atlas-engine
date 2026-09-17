@@ -10,6 +10,7 @@
 // The separation is also the right shape for what comes next: the day a second format is
 // supported, the choosing goes here and the decoding goes beside `wav.cpp`.
 
+#include "animation_clip.hpp"
 #include "wav.hpp"
 
 #include <algorithm>
@@ -39,6 +40,14 @@ Result<ImportedAudio> import_audio(std::span<const std::byte> bytes, std::string
               std::format("'{}' is not audio this engine decodes; it begins with '{}'. Only "
                           "RIFF/WAVE is supported.",
                           debug_name, leading)));
+}
+
+Result<ImportedAnimationClip> import_animation_clip(std::span<const std::byte> bytes,
+                                                    std::string_view debug_name) {
+    // One format, so there is nothing to choose between — but the document still names itself,
+    // and the parser checks that marker before anything else. A file's extension is a claim
+    // made by whoever named it; the marker is a claim the file has to honour to be read at all.
+    return detail::parse_animation_clip(bytes, debug_name);
 }
 
 }  // namespace atlas::assets

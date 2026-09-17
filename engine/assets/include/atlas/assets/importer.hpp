@@ -55,6 +55,40 @@ struct ImportedAudio {
     std::uint32_t sample_rate = 0;
 };
 
+/// One key on a clip's transform track, as it came out of a file.
+///
+/// Plain numbers, in nanoseconds. Deliberately not the animation module's own key type: an
+/// importer runs on a worker inside this module, which cannot see that one, and a payload that
+/// needed it would put file decoding and clip evaluation in the same place.
+struct ImportedTransformKey {
+    std::uint64_t time_ns = 0;
+    float position_x = 0.0F;
+    float position_y = 0.0F;
+    float rotation = 0.0F;
+    float scale_x = 1.0F;
+    float scale_y = 1.0F;
+    /// The easing's index in the animation module's own enumeration. The two agree by name in
+    /// the file and by position here; the parser refuses a name it does not know rather than
+    /// choosing one.
+    std::uint8_t easing = 0;
+};
+
+/// One key on a clip's frame track.
+struct ImportedFrameKey {
+    std::uint64_t time_ns = 0;
+    std::uint32_t cell = 0;
+};
+
+/// A decoded animation clip, ready to become one the module can sample.
+struct ImportedAnimationClip {
+    std::string name;
+    std::uint64_t duration_ns = 0;
+    std::uint32_t columns = 1;
+    std::uint32_t rows = 1;
+    std::vector<ImportedTransformKey> transform_keys;
+    std::vector<ImportedFrameKey> frame_keys;
+};
+
 /// Decode an image.
 ///
 /// Thread-safe and free of engine state, so it can run on a worker.
@@ -73,6 +107,15 @@ struct ImportedAudio {
 /// Thread-safe and free of engine state, so it can run on a worker.
 [[nodiscard]] Result<ImportedAudio> import_audio(std::span<const std::byte> bytes,
                                                  std::string_view debug_name);
+
+/// Decode an animation clip.
+///
+/// The format names and versions itself, and everything it claims is checked: the document's
+/// own length before it is parsed at all, then every count, every ordering, and every value.
+///
+/// Thread-safe and free of engine state, so it can run on a worker.
+[[nodiscard]] Result<ImportedAnimationClip> import_animation_clip(std::span<const std::byte> bytes,
+                                                                  std::string_view debug_name);
 
 /// Limits on what will be decoded.
 ///
@@ -95,6 +138,24 @@ struct ImportLimits {
     std::uint32_t max_audio_sample_rate = 192'000;
     /// Mono and stereo. More would mean deciding how to fold them down, and nothing asks.
     std::uint32_t max_audio_channels = 2;
+
+    /// The largest clip document, in bytes, **checked before it is parsed**.
+    ///
+    /// This is the one bound a document parser genuinely needs, and it is not the same
+    /// discipline the audio reader uses. That reader compares a declared size against the
+    /// bytes actually present before allocating anything. A parser cannot: by the time any
+    /// count inside the document can be read, the whole document is already in memory. So the
+    /// only place to refuse an enormous one is before the parse begins.
+    ///
+    /// A megabyte is enormous for a clip. The committed ones are a few hundred bytes.
+    std::uint64_t max_clip_bytes = 1024ULL * 1024;
+    /// Keys on either track. A clip is authored by a person or exported by a tool; either way
+    /// a hundred thousand of them is a mistake or an attack.
+    std::uint32_t max_clip_keys = 100'000;
+    /// Cells a sheet may be divided into, on each axis.
+    std::uint32_t max_clip_grid = 4096;
+    /// A clip longer than a day is not a clip.
+    std::uint64_t max_clip_duration_ms = 86'400'000;
 };
 
 [[nodiscard]] const ImportLimits& import_limits() noexcept;

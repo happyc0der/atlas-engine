@@ -29,7 +29,7 @@ distribution. All current dependencies are permissive and therefore compatible.
 | stb | Image decoding (`stb_image`). The port also installs `stb_vorbis.c` v1.22 on every triplet; Atlas does not compile it, and M12 deferred Ogg support. | 2024-07-29, port-version 1 | MIT / Unlicense | Yes | Private to the assets importer | M4 |
 | Dear ImGui | Debug overlay | 1.92.8, features `docking-experimental`, `sdl3-binding`, `sdlgpu3-binding` | MIT | Yes | Private to `tools` | M3 |
 | EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004; in practice private to `scene/src` | M5 |
-| nlohmann-json | Reading and writing the scene file | 3.12.0, port-version 2 | MIT | Yes | Private to `scene/src`; no JSON type appears in any Atlas header | M5 |
+| nlohmann-json | Reading and writing the scene file, and reading animation clips | 3.12.0, port-version 2 | MIT | Yes | Private to `scene/src` and `assets/src`; no JSON type appears in any Atlas header | M5, second consumer M13 |
 
 Dependencies are added in the milestone that first needs them, never in advance.
 
@@ -105,7 +105,7 @@ order fails to compile rather than aborting at run time.
 | Tracy | Another profiler | Remapping the macros in `core/profile.hpp` |
 | Catch2 | Another test framework | Mechanical test rewrite |
 | stb_image | libpng plus libjpeg-turbo | Rewriting one importer |
-| nlohmann-json | Another JSON library, or a bespoke format | Rewriting `scene/src/serialization.cpp`; no caller changes |
+| nlohmann-json | Another JSON library, or a bespoke format | Rewriting `scene/src/serialization.cpp` and `assets/src/animation_clip.cpp`; no caller changes |
 
 ## Update policy
 
