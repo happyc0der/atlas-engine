@@ -328,11 +328,19 @@ byte and half as good, because a whole word exclusive-ored in passes through exa
 multiply, and a multiply diffuses upward only, so a flip in a high bit of the last word reaches
 almost nothing. FNV-1a avoids this by accident: every byte gets a multiply of its own.
 
-Every avalanche figure above is bit-identical when the same benchmark is built with a
-different compiler and standard library, in the Linux container, at a different optimisation
-level — which is the portability a canonical hash has to have, obtained here for the price of
-running the check. The Linux timings are from a debug build and are not comparable as speed,
-so they are not quoted.
+Every avalanche figure above is bit-identical on AppleClang and arm64, on clang with
+libstdc++, and on MSVC 19.51 and x86_64 — three compilers, two architectures, three standard
+libraries, four optimisation levels. That is the portability a canonical hash has to have, and
+since M8 it is checked on every push rather than asserted: continuous integration builds the
+benchmarks on all three platforms and runs this group, whose own checks refuse to report a
+number for a candidate that is not deterministic or that ignores part of its input.
+
+The *speed* is not portable in the same way and the table above is one machine's. The same
+comparison on a shared two-core Windows runner puts FNV-1a at 15.3 ms and the four-lane
+candidate at 2.1 ms, a ratio of about seven rather than thirty-one. Runner timings are noise
+and nothing asserts a threshold on them; the point is only that the conclusion does not depend
+on the ratio, because even the pessimistic figure moves the hash from most of the tick to a
+small part of it.
 
 The fix is five operations once per hash, whatever the input size: MurmurHash3's fmix64
 finaliser. It costs nothing measurable (360 us either way) and lands at 32.02, slightly better
