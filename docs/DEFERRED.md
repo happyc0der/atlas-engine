@@ -146,9 +146,22 @@ integration ran for the first time. What it found is recorded in
   a `push_back` per cell that had been hidden behind the copies it was feeding. The picture is
   unchanged to within one least significant bit, checked byte by byte. See
   `docs/PERFORMANCE.md`.
-- **Snapshot pooling.** Building the snapshot costs 1.44 ms at a million cells, once per frame
-  after the last tick, and allocates a fresh one each time. The counter is in the overlay; the
-  pool is built when the counter says the allocation, not the fill, is what costs.
+- **Snapshot pooling.** ~~Building the snapshot costs 1.44 ms at a million cells and allocates a
+  fresh one each time. The pool is built when the counter says the allocation, not the fill, is
+  what costs.~~ **Measured in M8, and the condition is not met, so it is not built.** Filling a
+  reused snapshot takes 1.349 ms at a million cells; allocating a fresh one each time takes
+  1.374 ms — under two per cent, and indistinguishable at a hundred thousand. The benchmark
+  holds the previous snapshot while the next is built, as the channel does, so the allocator
+  cannot simply hand back the block it just freed; the allocation is cheap anyway because it
+  recycles. A pool would buy two per cent in exchange for knowing when the renderer has finished
+  with a snapshot, which is lifetime complexity for nothing. `simulation/snapshot` against
+  `simulation/snapshot_fresh` keeps the comparison honest if either ever changes.
+
+  The cost is the fill, and the candidate worth recording is a different one: all four palette
+  bands are filled every frame and the renderer reads one. Filling only the displayed band would
+  cut it roughly fourfold, at the price of a refill when the mode changes — about 0.34 ms once,
+  against 1 ms every frame. That trades away "a mode switch rebuilds nothing", which was a
+  deliberate M7 property, so it is a decision rather than an optimisation and is not taken here.
 - **Widgets in the overlay.** The lab's controls are keyboard only. That satisfies M7 and adds
   no engine surface for one caller; widgets arrive with M9's command and undo work, so that no
   widget becomes a second unvalidated path into state, the same reasoning that kept M5's scene

@@ -171,6 +171,28 @@ std::vector<Result> run() {
                                                                 {});
                                   }),
             cells, "cells"));
+
+        // The same work, but into a snapshot allocated afresh every time, which is what
+        // publishing does today. The difference between the two is what a pool would save, and
+        // docs/DEFERRED.md made measuring it the condition for building one.
+        std::shared_ptr<const atlas::lab::CellSnapshot> published;
+        results.push_back(with_units(
+            atlas::bench::measure(
+                "simulation/snapshot_fresh", std::format("cells={}", cells), 30, 3,
+                [&] {
+                    auto fresh = atlas::lab::build_snapshot(lab->world.world, lab->world.ids,
+                                                            lab->world.layout, {});
+                    require(fresh != nullptr
+                                ? atlas::ok()
+                                : std::unexpected(atlas::Error(atlas::ErrorCode::Internal,
+                                                               "build_snapshot returned nothing")),
+                            "building a snapshot");
+                    // Held while the next is built, which is what the channel does: the
+                    // allocator cannot hand back the block it just freed, and if allocation
+                    // were the cost this is where it would show.
+                    published = std::move(fresh);
+                }),
+            cells, "cells"));
     }
     return results;
 }

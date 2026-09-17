@@ -498,6 +498,27 @@ the quantisation moving, not the geometry — the old path sent a float colour t
 processor rounded when writing an eight-bit target, and the new one rounds before upload. A
 geometry error would not look like that.
 
+## Snapshot pooling, M8: measured and not built
+
+`docs/DEFERRED.md` set the condition for building a pool: the counter had to say that the
+allocation, rather than the fill, was what cost. It does not.
+
+| Cells | Filling a reused snapshot | Allocating a fresh one | Difference |
+|---|---|---|---|
+| 100k | 134.5 us | 134.3 us | none measurable |
+| 1M | 1.349 ms | 1.374 ms | 1.9% |
+
+`simulation/snapshot_fresh` holds the previous snapshot while the next is built, exactly as the
+channel does, so the allocator cannot hand back the block it has just freed. It is cheap anyway,
+because it recycles a block of the same size every frame. A pool would buy under two per cent in
+exchange for tracking when the renderer has finished with a snapshot.
+
+That is the third recorded candidate in M8 to die on measurement, after hashing only the tables
+a tick wrote and hashing in parallel. The pattern is worth naming: the things that looked
+expensive because they are conspicuous — an allocation, a copy, a lock — were not, and the
+things that turned out to matter were a per-byte multiply chain and a per-element capacity
+check. Both were found by measuring rather than by reading the code and forming an opinion.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted:
