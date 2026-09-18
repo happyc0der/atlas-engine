@@ -252,6 +252,8 @@ TEST_CASE("a state-dependent refusal is identical on both peers", "[net][lockste
         // and the whole claim here is that the *outcome of a contest* matches.
         CHECK(cells_a->owner[cell] == cells_b->owner[cell]);
         CHECK(cells_a->contested[cell] == cells_b->contested[cell]);
+        // And *who* was refused, not merely that somebody was.
+        CHECK(cells_a->last_refused[cell] == cells_b->last_refused[cell]);
         // And the winner is always the lower source, on both peers. That is not a preference —
         // it is the total order `(source, sequence)` being the order, visible in the state. A
         // peer resolving the contest by arrival would win some of these and lose others.
@@ -305,11 +307,19 @@ TEST_CASE("a held turn stalls the session rather than diverging it", "[net][lock
     }
 }
 
-TEST_CASE("a corrupted turn is caught rather than applied", "[net][lockstep]") {
-    // One flipped bit in a message body. Where it lands decides which guard catches it: a length
-    // or a count fails to decode, a payload byte decodes and is refused by the command's own
-    // validator, and a tick or a source is a protocol violation. Any of those is correct; what
-    // must never happen is that it is applied on one peer and not the other.
+TEST_CASE("a corrupted message never produces a silent disagreement", "[net][lockstep]") {
+    // One flipped bit in a message body, and the property asserted is the one that matters:
+    // **the peers never end up quietly holding different states**. Either the damage is caught —
+    // refused at decode, rejected as a protocol violation, or detected by a hash check — or it
+    // landed somewhere that changes nothing and the peers still agree.
+    //
+    // Stated that way rather than as "the session stops", because in this fixture the flip
+    // often does land inertly: it hits the high byte of a claimant whose claim is about to be
+    // refused anyway, or a per-system hash, which is carried for attribution and never
+    // compared. Asserting a stop would be asserting something that is not reliably true, and
+    // the version of this case that did assert it passed only because `stopped` happened to be
+    // set by a different message. The lab's own `loopback_corrupt_turn_is_caught` covers the
+    // detected path end to end, where a damaged `set_color_index` always changes a cell.
     Table table(2, {.peer_count = 2},
                 SessionConfig{.input_delay = 2, .hash_check_interval = 4, .seed = 5});
     table.settle();
@@ -317,13 +327,22 @@ TEST_CASE("a corrupted turn is caught rather than applied", "[net][lockstep]") {
         REQUIRE(table.frame());
     }
 
-    REQUIRE(table.hub->arm_fault(1, 0, LinkFault::Corrupt).has_value());
+    REQUIRE(table.hub->arm_fault(0, 1, LinkFault::Corrupt).has_value());
     bool stopped = false;
     for (int frame = 0; frame < 60 && !stopped; ++frame) {
         stopped = !table.frame();
     }
 
-    CHECK(stopped);
-    CHECK_FALSE(table.peers[0]->session->running());
+    // The fault fired: without this the case passes on a link that did nothing.
     CHECK(table.hub->stats().corrupted == 1);
+
+    if (stopped) {
+        // Caught. Somebody refused it, and no peer carried on with a state nobody else has.
+        CHECK_FALSE(table.peers[0]->session->running());
+    } else {
+        // Not caught, which means it changed nothing — and that must be provable rather than
+        // assumed. Compared as the whole world, so a difference in any table shows.
+        CHECK(table.peers[0]->peer.world.hash() == table.peers[1]->peer.world.hash());
+        CHECK(table.peers[0]->kernel->current_tick() == table.peers[1]->kernel->current_tick());
+    }
 }

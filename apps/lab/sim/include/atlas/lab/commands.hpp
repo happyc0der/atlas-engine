@@ -47,6 +47,15 @@ encode_set_color_index(std::uint32_t cell, std::uint8_t color) noexcept;
 [[nodiscard]] Status register_lab_commands(sim::CommandQueue& commands, const TableIds& ids,
                                            const std::shared_ptr<const CellBound>& cell_bound);
 
+/// The payloads a deterministic run would submit for one tick.
+///
+/// Separated from the submit below in M14 because a lockstep peer needs the commands **in
+/// hand**: it stamps them, submits them locally, and sends the same list to every other peer, so
+/// it cannot hand them to a queue and then ask what it just handed over. One generator either
+/// way, because two would drift and the whole point is that every peer produces the same bytes.
+[[nodiscard]] std::vector<std::vector<std::byte>>
+synthetic_payloads(Tick target, std::uint32_t count, std::uint64_t seed, std::uint32_t cell_count);
+
 /// A deterministic command source for headless runs, without which a replay test proves far
 /// less than it appears to: `count` set_color_index commands for `target`, drawn from a
 /// stream keyed by seed and tick. Failure: whatever submit reports.

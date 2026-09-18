@@ -16,6 +16,7 @@ atlas_add_app(lab
     DEPENDS
         atlas::app_common
         atlas::lab_sim
+        atlas::net
         atlas::lab_view
         atlas::audio
         atlas::platform

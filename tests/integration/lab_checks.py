@@ -412,6 +412,100 @@ def check_audio_follows_the_window(binary: str) -> None:
         raise CheckFailed("--no-audio opened an audio device anyway")
 
 
+def loopback(binary: str, args: list[str]) -> subprocess.CompletedProcess:
+    return run(binary, ["--headless", *SMALL, "--unbounded", *args])
+
+
+def peer_hashes(text: str) -> list[str]:
+    return re.findall(r"^peer \d+: final tick=\d+ state hash=(0x[0-9a-f]+)", text, re.M)
+
+
+def check_loopback_peers_agree(binary: str) -> None:
+    # Three peers over an in-memory link with latency and reordering, exchanging real messages
+    # through the real codec, inbox, gate and session. The binary asserts the agreement itself
+    # and exits non-zero if it fails; this checks the same thing from outside, and checks that
+    # the agreement was not reached by nothing happening.
+    result = loopback(binary, ["--ticks", "200", "--loopback-peers", "3", "--commands-per-tick", "2",
+                       "--link-latency", "2", "--link-reorder", "7"])
+    expect_exit(result, 0, "a three-peer loopback run")
+    text = output_of(result)
+
+    hashes = peer_hashes(text)
+    if len(hashes) != 3:
+        raise CheckFailed(f"expected three peer lines, got {len(hashes)}")
+    if len(set(hashes)) != 1:
+        raise CheckFailed(f"the peers finished at different hashes: {hashes}")
+
+    expect_contains(text, "divergences=0", "no peer diverged")
+    # Turns actually crossed the link. Without this the case passes on a session in which
+    # nobody sent anything and everybody trivially agreed.
+    if not re.search(r"turns received=[1-9]", text):
+        raise CheckFailed("no peer received a turn, so the agreement proves nothing")
+
+
+def check_loopback_differs_from_solo(binary: str) -> None:
+    # The anti-vacuity guard, and the same shape as seed_changes_hash: two peers apply twice as
+    # many commands as one, so their final hash **must** differ from a solo run's. If it matched,
+    # the second peer's commands are not reaching state — which is exactly what happens if a
+    # peer stamps SourceId::Local instead of its own identifier and the two streams collide.
+    common = ["--ticks", "200", "--commands-per-tick", "2"]
+    solo = loopback(binary, common)
+    expect_exit(solo, 0, "a solo run")
+    pair = loopback(binary, common + ["--loopback-peers", "2"])
+    expect_exit(pair, 0, "a two-peer run")
+
+    solo_hash = final_hash(output_of(solo), "solo")
+    pair_hash = peer_hashes(output_of(pair))
+    if not pair_hash:
+        raise CheckFailed("the loopback run printed no peer hashes")
+    if solo_hash == pair_hash[0]:
+        raise CheckFailed("a two-peer run reached the same state as a solo one, so the second "
+                          "peer's commands are not reaching the simulation")
+
+
+def check_loopback_held_turn_stalls_then_completes(binary: str) -> None:
+    # A turn nobody can deliver must stop every peer at that tick rather than being skipped, and
+    # releasing it must let both finish in the same state. The stall count is asserted non-zero
+    # because a hold that never held would pass every other assertion here.
+    result = loopback(binary, ["--ticks", "300", "--loopback-peers", "2", "--commands-per-tick", "2",
+                       "--loopback-fault", "hold:100", "--loopback-release-after", "50"])
+    expect_exit(result, 0, "a held turn that is later released")
+    text = output_of(result)
+    if "diverged" in text:
+        raise CheckFailed("a held turn produced a divergence; it should only have stalled")
+    expect_contains(text, "releasing held messages", "the hold was actually held and released")
+
+    hashes = peer_hashes(text)
+    if len(set(hashes)) != 1:
+        raise CheckFailed(f"the peers finished at different hashes after a stall: {hashes}")
+    if re.search(r"stalls=0\b", text):
+        raise CheckFailed("nothing stalled, so the hold did nothing")
+
+
+def check_loopback_unreleased_hold_fails_fast(binary: str) -> None:
+    # Lockstep does not degrade gracefully: it waits. A turn that is never delivered stops the
+    # session for ever, so the binary bounds its own wait and says what is waiting for what —
+    # otherwise this would be a timeout with no message rather than a failure.
+    result = loopback(binary, ["--ticks", "400", "--loopback-peers", "2", "--commands-per-tick", "2",
+                       "--loopback-fault", "hold:100"])
+    expect_exit(result, 1, "an unreleased hold")
+    expect_contains(output_of(result), "waiting on source", "the stall says what it waits for")
+
+
+def check_loopback_corrupt_turn_is_caught(binary: str) -> None:
+    # One flipped bit inside a command payload. It is applied by the sender and differently by
+    # the receiver, which is precisely the divergence the hash checks exist to catch. What must
+    # never happen is exit zero.
+    result = loopback(binary, ["--ticks", "300", "--loopback-peers", "2", "--commands-per-tick", "2",
+                       "--loopback-fault", "corrupt:100"])
+    expect_exit(result, 1, "a corrupted turn")
+    text = output_of(result)
+    expect_contains(text, "diverged at tick", "the corruption was detected")
+    # Attributed to a system, not merely detected: "something diverged at tick 112" is not a
+    # starting point for anybody.
+    expect_contains(text, "the first system whose writes differ", "the divergence names a system")
+
+
 CASES = {
     "version": check_version,
     "help": check_help,
@@ -427,6 +521,11 @@ CASES = {
     "load_different_grid_adopts_layout": check_load_different_grid_adopts_layout,
     "refuses_truncated_save": check_refuses_truncated_save,
     "refuses_mismatched_grid": check_refuses_mismatched_grid,
+    "loopback_peers_agree": check_loopback_peers_agree,
+    "loopback_differs_from_solo": check_loopback_differs_from_solo,
+    "loopback_held_turn_stalls_then_completes": check_loopback_held_turn_stalls_then_completes,
+    "loopback_unreleased_hold_fails_fast": check_loopback_unreleased_hold_fails_fast,
+    "loopback_corrupt_turn_is_caught": check_loopback_corrupt_turn_is_caught,
     "record_then_play_matches": check_record_then_play_matches,
     "replay_detects_tampering": check_replay_detects_tampering,
     "replay_refuses_wrong_seed": check_replay_refuses_wrong_seed,

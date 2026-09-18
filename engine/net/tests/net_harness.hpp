@@ -41,10 +41,19 @@ class CellTable final : public sim::Table {
     /// and a test asserting "both peers refused identically" would pass on two peers that never
     /// received it.
     std::vector<std::uint32_t> contested;
+    /// **Who** was refused most recently, not merely that somebody was.
+    ///
+    /// Without this the fixture saturates: once every cell is owned, every later claim is a
+    /// refusal, and a refusal that recorded only a count would make the claimant's identity
+    /// invisible. A corrupted claim would then be refused exactly as an intact one is, and a
+    /// fault-injection test would pass while injecting nothing observable — which is what
+    /// happened before this column existed.
+    std::vector<std::uint32_t> last_refused;
 
     void resize(std::size_t rows) {
         owner.assign(rows, 0);
         contested.assign(rows, 0);
+        last_refused.assign(rows, 0);
     }
 
     [[nodiscard]] std::size_t row_count() const noexcept override { return owner.size(); }
@@ -54,6 +63,7 @@ class CellTable final : public sim::Table {
         for (std::size_t i = 0; i < owner.size(); ++i) {
             hasher.add(owner[i]);
             hasher.add(contested[i]);
+            hasher.add(last_refused[i]);
         }
     }
 
@@ -62,18 +72,21 @@ class CellTable final : public sim::Table {
         for (std::size_t i = 0; i < owner.size(); ++i) {
             writer.write_u32(owner[i]);
             writer.write_u32(contested[i]);
+            writer.write_u32(last_refused[i]);
         }
     }
 
     [[nodiscard]] Status read_from(sim::SaveReader& reader) override {
-        auto rows = reader.read_count(kMaxRows, 8);
+        auto rows = reader.read_count(kMaxRows, 12);
         if (!rows) {
             return std::unexpected(std::move(rows).error());
         }
         std::vector<std::uint32_t> loaded_owner;
         std::vector<std::uint32_t> loaded_contested;
+        std::vector<std::uint32_t> loaded_refused;
         loaded_owner.reserve(*rows);
         loaded_contested.reserve(*rows);
+        loaded_refused.reserve(*rows);
         for (std::size_t i = 0; i < *rows; ++i) {
             auto o = reader.read_u32();
             if (!o) {
@@ -83,17 +96,24 @@ class CellTable final : public sim::Table {
             if (!c) {
                 return std::unexpected(std::move(c).error());
             }
+            auto r = reader.read_u32();
+            if (!r) {
+                return std::unexpected(std::move(r).error());
+            }
             loaded_owner.push_back(*o);
             loaded_contested.push_back(*c);
+            loaded_refused.push_back(*r);
         }
         owner = std::move(loaded_owner);
         contested = std::move(loaded_contested);
+        last_refused = std::move(loaded_refused);
         return ok();
     }
 
     void clear() override {
         owner.clear();
         contested.clear();
+        last_refused.clear();
     }
 };
 
@@ -185,6 +205,7 @@ inline const sim::CommandType kClaimCell = sim::command_type("claim cell");
             table->owner[cell] = claimant;
         } else {
             ++table->contested[cell];
+            table->last_refused[cell] = claimant;
         }
     };
     return handler;
@@ -209,7 +230,7 @@ inline const sim::CommandType kClaimCell = sim::command_type("claim cell");
         if (table != nullptr) {
             for (std::size_t i = 0; i < table->owner.size(); ++i) {
                 owned += table->owner[i];
-                refusals += table->contested[i];
+                refusals += table->contested[i] + table->last_refused[i];
             }
         }
         *scratch = {owned, refusals};

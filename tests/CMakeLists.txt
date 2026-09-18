@@ -100,6 +100,11 @@ set(_atlas_lab_headless_cases
     refuses_truncated_save
     refuses_mismatched_grid
     record_then_play_matches
+    loopback_peers_agree
+    loopback_differs_from_solo
+    loopback_held_turn_stalls_then_completes
+    loopback_unreleased_hold_fails_fast
+    loopback_corrupt_turn_is_caught
     replay_detects_tampering
     replay_refuses_wrong_seed
     rejects_unknown_option

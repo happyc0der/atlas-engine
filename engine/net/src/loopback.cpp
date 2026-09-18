@@ -9,12 +9,10 @@
 namespace atlas::net {
 namespace {
 
-/// Where a corrupting bit flip lands.
+/// The shortest message worth corrupting: anything longer than the header has a body to damage.
 ///
-/// Past the sixteen-byte header, so the message still claims to be an Atlas message of a known
-/// type and the damage has to be found by decoding the body or by the hashes disagreeing. A
-/// flip inside the magic would be refused before anything interesting happened, which would
-/// make the fault a test of the magic check rather than of the session.
+/// A flip inside the sixteen-byte header would be refused as "not an Atlas message" before
+/// anything interesting happened, which would test the magic check rather than the session.
 constexpr std::size_t kCorruptionFloor = 16;
 
 }  // namespace
@@ -104,7 +102,16 @@ Status LoopbackHub::send(std::size_t from, std::size_t to, std::span<const std::
         case LinkFault::Drop: ++m_stats.dropped; return {};
         case LinkFault::Corrupt:
             if (pending.bytes.size() > kCorruptionFloor) {
-                pending.bytes[kCorruptionFloor] ^= std::byte{0x01};
+                // The **last** byte, which in a turn carrying commands is inside a payload.
+                //
+                // Corrupting near the front hits the tick instead, and a turn for a different
+                // tick is a valid message that marks the wrong turn — so the session stalls
+                // rather than noticing, which is a correct outcome but not the interesting one.
+                // A damaged payload is applied by the sender and refused or applied differently
+                // by the receiver, which is precisely the divergence the hash checks exist to
+                // catch. The header stays intact either way, so the message still claims to be
+                // what it is rather than being thrown out as not an Atlas message at all.
+                pending.bytes.back() ^= std::byte{0x01};
                 ++m_stats.corrupted;
             }
             break;

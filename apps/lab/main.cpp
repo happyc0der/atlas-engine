@@ -27,6 +27,8 @@
 #include <atlas/lab/generate.hpp>
 #include <atlas/lab/snapshot.hpp>
 #include <atlas/lab/systems.hpp>
+#include <atlas/net/loopback.hpp>
+#include <atlas/net/session.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/rhi/device.hpp>
 #include <atlas/simulation/kernel.hpp>
@@ -34,6 +36,7 @@
 #include <atlas/simulation/save.hpp>
 #include <atlas/simulation/snapshot.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
+#include <atlas/simulation/turn_gate.hpp>
 #include <atlas/tasks/worker_pool.hpp>
 #include <atlas/tools/debug_ui.hpp>
 #include <atlas/tools/panels.hpp>
@@ -90,6 +93,15 @@ struct Options {
     std::uint32_t chunk = 32;
     std::uint32_t ticks_per_second = 60;
     std::uint32_t commands_per_tick = 0;
+    /// Zero means no loopback session; two or more runs that many peers in this process.
+    std::uint32_t loopback_peers = 0;
+    std::uint32_t input_delay = 2;
+    std::uint32_t link_latency = 0;
+    std::uint64_t link_reorder = 0;
+    std::string_view loopback_fault;
+    /// Polls without progress before a held message is released. Counted in polls rather than
+    /// ticks because a stalled run's tick is the thing that stops advancing.
+    std::uint64_t loopback_release_after = 0;
     std::uint32_t max_ticks_per_frame = 8;
     std::size_t workers = 0;
     bool workers_set = false;
@@ -108,6 +120,16 @@ Options:
   --tps N                Ticks per second. Default 60.
   --unbounded            Run ticks as fast as possible.
   --paused               Start paused.
+  --loopback-peers N     Run N peers in this process over an in-memory link and check that
+                         they agree hash for hash. 2..8. Default 0, meaning off.
+  --input-delay N        Ticks between stamping a command and running it. 1..16. Default 2.
+  --link-latency N       Delivery delay, in receiver polls rather than ticks. 0..16.
+  --link-reorder SEED    Reorder messages within a poll, driven by SEED. 0 is off.
+  --loopback-fault SPEC  drop:T, corrupt:T or hold:T — one fault from peer 1 to peer 0 at
+                         tick T.
+  --loopback-release-after N  Release held messages once the run has made no progress for N
+                         polls. Counted in polls rather than ticks because a stalled run's
+                         tick is exactly what stops advancing. Use with hold:T.
   --commands-per-tick N  Submit N deterministic set_color_index commands each tick.
   --workers N            Worker threads beside this one for the simulation's compute phase.
                          Default: one per hardware thread beyond this one. Zero runs everything
@@ -232,6 +254,45 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
         return std::unexpected(per_tick.error());
     }
     options.commands_per_tick = static_cast<std::uint32_t>(*per_tick);
+
+    // Zero is off. One peer is a solo run, which is what this binary does without the option at
+    // all, so it is refused rather than quietly meaning the same thing.
+    const auto peers = bounded(args, "loopback-peers", 0, 0, 8);
+    if (!peers) {
+        return std::unexpected(peers.error());
+    }
+    if (*peers == 1) {
+        return std::unexpected(atlas::Error(
+            atlas::ErrorCode::InvalidArgument,
+            "--loopback-peers 1 is a solo run, which is what this binary does without the "
+            "option; use 2 or more, or leave it out"));
+    }
+    options.loopback_peers = static_cast<std::uint32_t>(*peers);
+
+    const auto delay = bounded(args, "input-delay", 2, 1, 16);
+    if (!delay) {
+        return std::unexpected(delay.error());
+    }
+    options.input_delay = static_cast<std::uint32_t>(*delay);
+
+    const auto latency = bounded(args, "link-latency", 0, 0, 16);
+    if (!latency) {
+        return std::unexpected(latency.error());
+    }
+    options.link_latency = static_cast<std::uint32_t>(*latency);
+
+    const auto reorder = bounded(args, "link-reorder", 0, 0, ~std::uint64_t{0});
+    if (!reorder) {
+        return std::unexpected(reorder.error());
+    }
+    options.link_reorder = *reorder;
+
+    options.loopback_fault = args.value_or("loopback-fault", std::string_view{});
+    const auto release_at = bounded(args, "loopback-release-after", 0, 0, ~std::uint64_t{0});
+    if (!release_at) {
+        return std::unexpected(release_at.error());
+    }
+    options.loopback_release_after = *release_at;
     if (args.has("workers")) {
         const auto workers = bounded(args, "workers", 0, 0, atlas::tasks::WorkerPool::kMaxWorkers);
         if (!workers) {
@@ -281,8 +342,11 @@ struct Simulation {
     std::unique_ptr<atlas::sim::Kernel> kernel;  ///< Always set once make_simulation returns.
 };
 
+/// `gate` is borrowed and optional: null is a solo run, which is every run but a loopback one.
+/// A kernel given no gate never refuses a tick, which is the path this binary has always taken.
 [[nodiscard]] atlas::Result<std::unique_ptr<Simulation>>
-make_simulation(const Options& options, atlas::tasks::WorkerPool* pool) {
+make_simulation(const Options& options, atlas::tasks::WorkerPool* pool,
+                const atlas::sim::TurnGate* gate = nullptr) {
     auto simulation = std::make_unique<Simulation>();
     auto generated = atlas::lab::generate({.width = options.grid,
                                            .height = options.grid,
@@ -314,9 +378,13 @@ make_simulation(const Options& options, atlas::tasks::WorkerPool* pool) {
             // Measured at a million cells: the world hash is 11.8 ms of
             // a 13.4 ms tick, and the per-system hashes add about as
             // much again. See docs/PERFORMANCE.md.
-            .record_system_hashes = !options.record_path.empty(),
+            // And for a loopback run, whatever the recording options say: a divergence
+            // between peers that cannot be attributed to a system is exactly what the hash
+            // checks exist to avoid.
+            .record_system_hashes = !options.record_path.empty() || options.loopback_peers > 0,
             .record_applied_commands = !options.record_path.empty(),
             .pool = pool,
+            .gate = gate,
         });
     return simulation;
 }
@@ -374,6 +442,329 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
     }
     ATLAS_LOG_INFO(kApp, "loaded '{}': tick {} hash {:#018x}", path.string(),
                    simulation.kernel->current_tick(), simulation.lab.world.hash());
+    return atlas::ok();
+}
+
+/// Run several peers in this process and check that they agree.
+///
+/// This is M14's whole-program proof. Everything the engine tests in isolation — the gate, the
+/// codec, the inbox, the link, the session — is wired together here over the lab's real
+/// simulation, and the binary itself refuses to exit zero unless every peer reached the same
+/// state. A script comparing two printed numbers is a fine second opinion; the binary refusing
+/// is what makes the property hold for every loopback run anybody ever does.
+///
+/// All of it lives here rather than in `lab_sim`, which is fenced at configure time to link
+/// nothing but `atlas::simulation` so that the headless benchmark stays independent of anything
+/// that draws.
+[[nodiscard]] atlas::Status run_loopback(const Options& options) {
+    const std::size_t peer_count = options.loopback_peers;
+
+    // Parse the fault before building anything, so a typo fails immediately rather than after a
+    // world has been generated for every peer.
+    std::optional<atlas::net::LinkFault> fault;
+    atlas::Tick fault_at = 0;
+    if (!options.loopback_fault.empty()) {
+        const auto colon = options.loopback_fault.find(':');
+        if (colon == std::string_view::npos) {
+            return atlas::fail(atlas::ErrorCode::InvalidArgument,
+                               "--loopback-fault wants drop:TICK, corrupt:TICK or hold:TICK");
+        }
+        const std::string_view kind = options.loopback_fault.substr(0, colon);
+        if (kind == "drop") {
+            fault = atlas::net::LinkFault::Drop;
+        } else if (kind == "corrupt") {
+            fault = atlas::net::LinkFault::Corrupt;
+        } else if (kind == "hold") {
+            fault = atlas::net::LinkFault::Hold;
+        } else {
+            return atlas::fail(atlas::ErrorCode::InvalidArgument,
+                               std::format("'{}' is not a fault this build has; use drop, "
+                                           "corrupt or hold",
+                                           kind));
+        }
+        const auto tick_text = options.loopback_fault.substr(colon + 1);
+        std::uint64_t parsed = 0;
+        for (const char digit : tick_text) {
+            if (digit < '0' || digit > '9') {
+                return atlas::fail(atlas::ErrorCode::InvalidArgument,
+                                   "--loopback-fault wants a whole tick after the colon");
+            }
+            parsed = (parsed * 10) + static_cast<std::uint64_t>(digit - '0');
+        }
+        fault_at = parsed;
+    }
+
+    auto hub = atlas::net::LoopbackHub::create({
+        .peer_count = peer_count,
+        .latency_polls = options.link_latency,
+        .reorder = options.link_reorder != 0,
+        .reorder_seed = options.link_reorder,
+    });
+    if (!hub) {
+        return std::unexpected(std::move(hub).error());
+    }
+
+    struct Participant {
+        std::unique_ptr<Simulation> sim;
+        atlas::sim::TurnGate gate;
+        std::unique_ptr<atlas::net::Session> session;
+        atlas::Tick next_turn = 0;
+        std::uint64_t last_hash = 0;
+        std::size_t applied = 0;
+    };
+
+    std::vector<std::unique_ptr<Participant>> peers;
+    peers.reserve(peer_count);
+    std::uint64_t initial_hash = 0;
+
+    for (std::size_t i = 0; i < peer_count; ++i) {
+        auto participant = std::make_unique<Participant>();
+        // No worker pool. One pool per peer would spawn N times the hardware's worth of
+        // threads and one shared pool would make the peers contend; neither changes results,
+        // because the hash is worker-count independent, and both make the timing meaningless.
+        auto made = make_simulation(options, nullptr, &participant->gate);
+        if (!made) {
+            return std::unexpected(std::move(made).error());
+        }
+        participant->sim = *std::move(made);
+
+        // Per-system hashes on, whatever the recording options say: a divergence that cannot be
+        // attributed to a system is exactly what the hash checks exist to avoid.
+
+        const std::uint64_t hash = participant->sim->lab.world.hash();
+        if (i == 0) {
+            initial_hash = hash;
+        } else if (hash != initial_hash) {
+            // Checked before the handshake would catch it, so that a generation bug is reported
+            // as a generation bug rather than blamed on the network.
+            return atlas::fail(
+                atlas::ErrorCode::Internal,
+                std::format("peer {} generated a different world from peer 0 ({:#018x} against "
+                            "{:#018x}); nothing has been sent yet, so this is world generation "
+                            "and not the link",
+                            i, hash, initial_hash));
+        }
+
+        auto session = atlas::net::Session::create(
+            (*hub)->end(i), {
+                                .input_delay = options.input_delay,
+                                .hash_check_interval = 16,
+                                .seed = options.seed,
+                                .start_tick = 0,
+                                .initial_state_hash = hash,
+                                .tick_rate = options.ticks_per_second,
+                                .build_id = std::string{atlas::build_info::summary()},
+                            });
+        if (!session) {
+            return std::unexpected(std::move(session).error());
+        }
+        participant->session = *std::move(session);
+        participant->session->set_schedule(&participant->sim->schedule);
+        peers.push_back(std::move(participant));
+    }
+
+    ATLAS_LOG_INFO(kApp, "loopback: {} peers, delay {}, latency {} poll(s), reorder {}", peer_count,
+                   options.input_delay, options.link_latency, options.link_reorder);
+
+    // Settle the handshake before anything is announced. Every peer has to have agreed the
+    // session — and learned its own identifier — before it can stamp a command with it, and
+    // under latency that takes a few polls rather than one. Bounded, so a handshake that cannot
+    // complete says so instead of hanging.
+    {
+        constexpr int kMaxHandshakePolls = 256;
+        int polls = 0;
+        bool agreed = false;
+        while (!agreed && polls < kMaxHandshakePolls) {
+            for (auto& peer : peers) {
+                auto report = peer->session->poll(0, peer->sim->commands, peer->gate);
+                if (!report) {
+                    return std::unexpected(std::move(report).error().context("the handshake"));
+                }
+            }
+            agreed = std::ranges::all_of(peers,
+                                         [](const auto& peer) { return peer->session->running(); });
+            ++polls;
+        }
+        if (!agreed) {
+            return atlas::fail(atlas::ErrorCode::Unavailable,
+                               std::format("the loopback handshake did not complete in {} polls",
+                                           kMaxHandshakePolls));
+        }
+        ATLAS_LOG_INFO(kApp, "loopback handshake agreed in {} poll(s), input delay {}", polls,
+                       peers.front()->session->agreed_delay());
+    }
+
+    // A stall makes no progress by design, so bounding by --ticks alone would let an unreleased
+    // hold run until the harness killed it — a timeout with no message rather than a failure
+    // that says what is waiting for what.
+    constexpr std::uint64_t kMaxPollsWithoutProgress = 10'000;
+    std::uint64_t idle_polls = 0;
+    bool released = options.loopback_release_after == 0;
+    std::uint64_t divergences = 0;
+    std::uint64_t stalls = 0;
+
+    const auto poll_all = [&] -> atlas::Status {
+        for (auto& peer : peers) {
+            auto report = peer->session->poll(peer->sim->kernel->current_tick(),
+                                              peer->sim->commands, peer->gate);
+            if (!report) {
+                return std::unexpected(std::move(report).error());
+            }
+        }
+        return atlas::ok();
+    };
+
+    while (true) {
+        atlas::Tick lowest = peers.front()->sim->kernel->current_tick();
+        for (const auto& peer : peers) {
+            lowest = std::min(lowest, peer->sim->kernel->current_tick());
+        }
+        if (options.max_ticks != 0 && lowest >= options.max_ticks) {
+            break;
+        }
+
+        if (fault.has_value() && lowest >= fault_at) {
+            if (auto status = (*hub)->arm_fault(1, 0, *fault); !status) {
+                return status;
+            }
+            fault.reset();
+        }
+
+        if (auto status = poll_all(); !status) {
+            for (std::size_t i = 0; i < peers.size(); ++i) {
+                if (peers[i]->session->divergence().has_value()) {
+                    ++divergences;
+                    // The wording matches what a replay divergence prints, so one expression
+                    // reads both.
+                    ATLAS_LOG_ERROR(kApp, "loopback peer {} {}", i,
+                                    peers[i]->session->divergence()->description);
+                }
+            }
+            return std::unexpected(std::move(status).error().context("a loopback peer"));
+        }
+
+        // Announce every turn each peer owes, tracking its own tick rather than a frame count:
+        // a peer that has stalled must stop announcing, or its partner runs ahead of it.
+        for (std::size_t i = 0; i < peers.size(); ++i) {
+            auto& peer = *peers[i];
+            const atlas::Tick horizon = peer.sim->kernel->current_tick() + options.input_delay;
+            while (peer.next_turn <= horizon) {
+                std::vector<atlas::sim::Command> turn;
+                if (options.commands_per_tick > 0 && peer.next_turn >= options.input_delay) {
+                    // Built rather than submitted-and-asked-for: a peer sends the same list it
+                    // applies, so it has to hold it. The seed differs per peer so the streams
+                    // genuinely differ rather than being the same commands under two names,
+                    // which is what makes the agreement worth anything.
+                    const auto source = peer.session->self();
+                    for (auto& payload : atlas::lab::synthetic_payloads(
+                             peer.next_turn, options.commands_per_tick, options.seed + i,
+                             peer.sim->lab.layout.cell_count())) {
+                        atlas::sim::Command command{
+                            .target = peer.next_turn,
+                            .source = source,
+                            .sequence = peer.sim->commands.next_sequence(source),
+                            .type = atlas::lab::kSetColorIndex,
+                            .payload = std::move(payload),
+                        };
+                        if (auto status = peer.sim->commands.submit_stamped(command); !status) {
+                            return std::unexpected(std::move(status).error());
+                        }
+                        turn.push_back(std::move(command));
+                    }
+                }
+                if (auto status = peer.session->send_turn(peer.next_turn, turn, peer.gate);
+                    !status) {
+                    return std::unexpected(std::move(status).error());
+                }
+                ++peer.next_turn;
+            }
+        }
+
+        if (auto status = poll_all(); !status) {
+            return std::unexpected(std::move(status).error().context("a loopback peer"));
+        }
+
+        bool progressed = false;
+        for (auto& peer : peers) {
+            while (peer->sim->kernel->ready()) {
+                auto report = peer->sim->kernel->step();
+                if (!report) {
+                    return std::unexpected(std::move(report).error());
+                }
+                progressed = true;
+                peer->last_hash = report->state_hash;
+                peer->applied += report->commands_applied;
+                peer->gate.retire_before(report->tick);
+                if (auto status = peer->session->send_hash_check(report->tick, report->state_hash,
+                                                                 report->system_hashes);
+                    !status) {
+                    return std::unexpected(std::move(status).error());
+                }
+            }
+        }
+
+        if (progressed) {
+            idle_polls = 0;
+        } else {
+            ++stalls;
+            if (!released && idle_polls >= options.loopback_release_after) {
+                (*hub)->release_held();
+                released = true;
+                ATLAS_LOG_INFO(kApp, "releasing held messages after {} poll(s) without progress",
+                               idle_polls);
+            }
+            if (++idle_polls > kMaxPollsWithoutProgress) {
+                std::string waiting;
+                std::vector<atlas::sim::SourceId> outstanding;
+                for (std::size_t i = 0; i < peers.size(); ++i) {
+                    peers[i]->gate.waiting_on(peers[i]->sim->kernel->current_tick(), outstanding);
+                    for (const auto source : outstanding) {
+                        waiting += std::format("peer {} waiting on source {}; ", i,
+                                               static_cast<std::uint32_t>(source));
+                    }
+                }
+                return atlas::fail(atlas::ErrorCode::Unavailable,
+                                   std::format("the loopback made no progress for {} polls: {}",
+                                               kMaxPollsWithoutProgress, waiting));
+            }
+        }
+    }
+
+    std::uint64_t agreed = 0;
+    for (std::size_t i = 0; i < peers.size(); ++i) {
+        const auto& peer = *peers[i];
+        agreed += peer.session->stats().hash_checks_agreed;
+        std::printf("peer %zu: final tick=%llu state hash=%#018llx commands applied=%zu source=%u "
+                    "turns sent=%llu turns received=%llu\n",
+                    i, static_cast<unsigned long long>(peer.sim->kernel->current_tick()),
+                    static_cast<unsigned long long>(peer.last_hash), peer.applied,
+                    static_cast<unsigned>(peer.session->self()),
+                    static_cast<unsigned long long>(peer.session->stats().turns_sent),
+                    static_cast<unsigned long long>(peer.session->stats().turns_received));
+    }
+    std::printf("loopback: peers=%zu delay=%u latency=%u reorder=%llu agreed hashes=%llu "
+                "divergences=%llu stalls=%llu\n",
+                peer_count, options.input_delay, options.link_latency,
+                static_cast<unsigned long long>(options.link_reorder),
+                static_cast<unsigned long long>(agreed),
+                static_cast<unsigned long long>(divergences),
+                static_cast<unsigned long long>(stalls));
+
+    // The binary asserts this itself rather than leaving it to whoever reads the output. A
+    // property checked only by a script holds only when somebody runs the script.
+    for (std::size_t i = 1; i < peers.size(); ++i) {
+        if (peers[i]->last_hash != peers[0]->last_hash) {
+            return atlas::fail(atlas::ErrorCode::IntegrityCheckFailed,
+                               std::format("peer {} finished at {:#018x} and peer 0 at {:#018x}", i,
+                                           peers[i]->last_hash, peers[0]->last_hash));
+        }
+        if (peers[i]->sim->kernel->current_tick() != peers[0]->sim->kernel->current_tick()) {
+            return atlas::fail(atlas::ErrorCode::IntegrityCheckFailed,
+                               std::format("peer {} ran {} ticks and peer 0 ran {}", i,
+                                           peers[i]->sim->kernel->current_tick(),
+                                           peers[0]->sim->kernel->current_tick()));
+        }
+    }
     return atlas::ok();
 }
 
@@ -515,6 +906,10 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
     atlas::mark_main_thread();
     ATLAS_THREAD_NAME("main");
     ATLAS_LOG_INFO(kApp, "startup: {}", atlas::build_info::summary());
+
+    if (options->loopback_peers > 0) {
+        return run_loopback(*options);
+    }
 
     if (!options->play_path.empty()) {
         return play_replay(*options);

@@ -67,17 +67,27 @@ Status register_lab_commands(sim::CommandQueue& commands, const TableIds& ids,
     return commands.register_handler(kSetColorIndex, std::move(handler));
 }
 
-Status submit_synthetic_commands(sim::CommandQueue& commands, Tick target, std::uint32_t count,
-                                 std::uint64_t seed, std::uint32_t cell_count,
-                                 sim::SourceId source) {
+std::vector<std::vector<std::byte>>
+synthetic_payloads(Tick target, std::uint32_t count, std::uint64_t seed, std::uint32_t cell_count) {
+    std::vector<std::vector<std::byte>> payloads;
     if (cell_count == 0) {
-        return ok();
+        return payloads;
     }
+    payloads.reserve(count);
     sim::RngStream stream(seed, sim::stream_id("synthetic_commands"), target);
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto cell = static_cast<std::uint32_t>(stream.next_below(cell_count));
         const auto color = static_cast<std::uint8_t>(stream.next_below(kColorCount));
-        const auto payload = encode_set_color_index(cell, color);
+        const auto encoded = encode_set_color_index(cell, color);
+        payloads.emplace_back(encoded.begin(), encoded.end());
+    }
+    return payloads;
+}
+
+Status submit_synthetic_commands(sim::CommandQueue& commands, Tick target, std::uint32_t count,
+                                 std::uint64_t seed, std::uint32_t cell_count,
+                                 sim::SourceId source) {
+    for (const auto& payload : synthetic_payloads(target, count, seed, cell_count)) {
         if (auto status = commands.submit(target, source, kSetColorIndex, payload); !status) {
             return status;
         }
