@@ -12,9 +12,13 @@
 # loopback link that exercises it hard enough to be worth something.
 atlas_add_module(net
     SOURCES
+        src/inbox.cpp
+        src/loopback.cpp
         src/message.cpp
         src/protocol.cpp
     HEADERS
+        include/atlas/net/inbox.hpp
+        include/atlas/net/loopback.hpp
         include/atlas/net/message.hpp
         include/atlas/net/protocol.hpp
     DEPENDS
