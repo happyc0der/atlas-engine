@@ -1,0 +1,202 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// What lockstep bookkeeping costs per tick.
+//
+// Three scenarios:
+//
+//   net/gate_and_poll — every peer polls, sends its turn and marks the gate, and **does not
+//                       step the kernel**. Stepping inside the measurement would measure the
+//                       kernel — 11.8 ms of a 13.4 ms tick at a million cells, per
+//                       PERFORMANCE.md — and report the network as free.
+//   net/encode_turn   — the codec alone, writing.
+//   net/decode_turn   — the codec alone, reading. Separate from encoding because decode is the
+//                       one on the untrusted path, with every bound checked, and a change that
+//                       speeds encoding by moving work into decoding should be visible as such.
+//
+// ---------------------------------------------------------------------------------------
+// PREDICTION, written before the first run and committed before the numbers exist.
+//
+// `net/gate_and_poll` at two peers with eight commands per turn: **2 to 6 microseconds per peer
+// per tick**, dominated by allocation rather than arithmetic. One turn is one writer buffer
+// (one or two vector growths), one push under an uncontended mutex, one swap out, one reader
+// pass, and eight calls to submit_stamped, each copying a small payload into a fresh vector —
+// roughly twelve to twenty allocations per peer per tick. An uncontended mutex pair is tens of
+// nanoseconds and should not appear at all.
+//
+// At sixty ticks a second and four peers that is under 0.15% of a 16.6 ms frame, so **the claim
+// this benchmark is expected to support is that lockstep bookkeeping does not need optimising**,
+// and the number exists to make that checkable rather than assumed. Above 50 µs the cause will
+// be per-command allocation in `Command::payload`, and the fix would be a small-buffer payload —
+// a `simulation` change, and outside M14.
+//
+// `net/decode_turn` will be **1.5 to 3 times** `net/encode_turn` at equal command count,
+// because decoding allocates a vector per payload while encoding writes into one buffer.
+//
+// Being wrong here is fine and is the point of writing it down. Being unable to be wrong is not.
+// ---------------------------------------------------------------------------------------
+
+#include <atlas/core/assert.hpp>
+#include <atlas/net/loopback.hpp>
+#include <atlas/net/message.hpp>
+#include <atlas/net/session.hpp>
+#include <atlas/simulation/command.hpp>
+#include <atlas/simulation/turn_gate.hpp>
+
+#include "harness.hpp"
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <format>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace {
+
+using atlas::bench::Result;
+
+void require(const atlas::Status& status, std::string_view what) {
+    if (!status) {
+        std::fprintf(stderr, "benchmark setup failed (%s): %s\n", std::string{what}.c_str(),
+                     std::string{status.error().message()}.c_str());
+        std::exit(1);
+    }
+}
+
+const atlas::sim::CommandType kPoke = atlas::sim::command_type("bench poke");
+
+[[nodiscard]] atlas::sim::CommandHandler poke_handler() {
+    atlas::sim::CommandHandler handler;
+    handler.validate = [](std::span<const std::byte> payload) -> atlas::Status {
+        if (payload.size() != 5) {
+            return std::unexpected(
+                atlas::Error(atlas::ErrorCode::MalformedData, "expected five bytes"));
+        }
+        return atlas::ok();
+    };
+    handler.apply = [](atlas::sim::World&, std::span<const std::byte>) {};
+    return handler;
+}
+
+[[nodiscard]] std::vector<atlas::sim::Command>
+turn_of(std::size_t count, atlas::sim::SourceId source, atlas::Tick tick) {
+    std::vector<atlas::sim::Command> commands;
+    commands.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        commands.push_back(atlas::sim::Command{
+            .target = tick,
+            .source = source,
+            .sequence = i,
+            .type = kPoke,
+            .payload = std::vector<std::byte>(5, std::byte{0x2A}),
+        });
+    }
+    return commands;
+}
+
+/// One peer's session, queue and gate, wired through a shared hub.
+struct Participant {
+    atlas::sim::CommandQueue queue;
+    atlas::sim::TurnGate gate;
+    std::unique_ptr<atlas::net::Session> session;
+    atlas::Tick next_turn = 0;
+};
+
+[[nodiscard]] std::vector<Result> run() {
+    std::vector<Result> results;
+
+    for (const std::size_t peers : {std::size_t{2}, std::size_t{4}}) {
+        for (const std::size_t commands : {std::size_t{0}, std::size_t{8}}) {
+            auto hub = atlas::net::LoopbackHub::create({.peer_count = peers});
+            if (!hub) {
+                std::fprintf(stderr, "benchmark setup failed: no hub\n");
+                std::exit(1);
+            }
+
+            std::vector<std::unique_ptr<Participant>> table;
+            table.reserve(peers);
+            for (std::size_t i = 0; i < peers; ++i) {
+                auto participant = std::make_unique<Participant>();
+                require(participant->queue.register_handler(kPoke, poke_handler()), "handler");
+                auto session = atlas::net::Session::create((*hub)->end(i), {});
+                if (!session) {
+                    std::fprintf(stderr, "benchmark setup failed: no session\n");
+                    std::exit(1);
+                }
+                participant->session = *std::move(session);
+                table.push_back(std::move(participant));
+            }
+
+            // Settle the handshake outside the timed section: it happens once and is not what
+            // this measures.
+            for (int attempt = 0; attempt < 64; ++attempt) {
+                for (auto& participant : table) {
+                    auto report =
+                        participant->session->poll(0, participant->queue, participant->gate);
+                    if (!report) {
+                        std::fprintf(stderr, "benchmark setup failed: handshake\n");
+                        std::exit(1);
+                    }
+                }
+            }
+
+            // Deliberately no kernel step. Stepping would measure the simulation and report the
+            // network as free.
+            results.push_back(atlas::bench::measure(
+                "net/gate_and_poll", std::format("peers={} commands={}", peers, commands), 2000,
+                200, [&table, commands] {
+                    for (auto& participant : table) {
+                        const auto tick = participant->next_turn++;
+                        auto turn = turn_of(commands, participant->session->self(), tick);
+                        require(participant->session->send_turn(tick, turn, participant->gate),
+                                "send_turn");
+                    }
+                    for (auto& participant : table) {
+                        auto report =
+                            participant->session->poll(0, participant->queue, participant->gate);
+                        if (!report) {
+                            std::fprintf(stderr, "benchmark run failed: poll\n");
+                            std::exit(1);
+                        }
+                        // Retired so the gate's window does not run out over two thousand
+                        // iterations, which would turn this into a measurement of refusals.
+                        participant->gate.retire_before(participant->gate.ready_horizon());
+                        participant->queue.clear();
+                    }
+                }));
+        }
+    }
+
+    for (const std::size_t commands : {std::size_t{0}, std::size_t{8}, std::size_t{64}}) {
+        const atlas::net::Message message{
+            atlas::net::Turn{.tick = 41,
+                             .source = atlas::sim::SourceId{1},
+                             .commands = turn_of(commands, atlas::sim::SourceId{1}, 41)}};
+        results.push_back(atlas::bench::measure(
+            "net/encode_turn", std::format("commands={}", commands), 20'000, 2'000, [&message] {
+                const auto bytes = atlas::net::encode(message);
+                if (!bytes) {
+                    std::exit(1);
+                }
+            }));
+
+        const auto encoded = atlas::net::encode(message);
+        if (!encoded) {
+            std::exit(1);
+        }
+        results.push_back(atlas::bench::measure(
+            "net/decode_turn", std::format("commands={}", commands), 20'000, 2'000, [&encoded] {
+                const auto back = atlas::net::decode(*encoded);
+                if (!back) {
+                    std::exit(1);
+                }
+            }));
+    }
+
+    return results;
+}
+
+const bool kRegistered = atlas::bench::register_benchmark("net", run);
+
+}  // namespace
