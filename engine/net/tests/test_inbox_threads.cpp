@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <thread>
 #include <vector>
@@ -26,7 +27,32 @@ const bool kMainThreadMarkedForThreads = [] {
 }();
 
 constexpr std::size_t kProducers = 4;
-constexpr std::size_t kPerProducer = 400;
+
+/// Chosen so that every producer's messages fit in the inbox at once.
+///
+/// **No producer can ever block**, which removes the possibility of a spin by construction
+/// rather than by tuning. Two attempts at this file failed slowly instead of quickly — once by
+/// bounding the consumer at an arbitrary count that a slow machine reached legitimately, and
+/// once by letting a consumer and four producers contend on one mutex until the thread
+/// sanitizer's instrumentation exhausted a 1500-second timeout. Neither was a defect in the
+/// inbox. Sizing the run below the bound means the handover is still exercised concurrently and
+/// nothing can wait on anything.
+constexpr std::size_t kPerProducer = (CommandInbox::kMaxMessages / kProducers) - 4;
+static_assert(kProducers * kPerProducer < CommandInbox::kMaxMessages,
+              "this case must never fill the inbox, or a producer can block");
+
+/// What the overflow case pushes, which is deliberately far more.
+constexpr std::size_t kPerFlooder = CommandInbox::kMaxMessages;
+
+/// How long to wait before looking again, rather than spinning on the lock.
+///
+/// Every `push` and `drain` takes the same mutex, and the thread sanitizer instruments every
+/// one of them. A consumer that spins while four producers work turns a test that should take
+/// milliseconds into one that exhausted a 1500-second timeout on a continuous integration
+/// runner — which is what happened, and is the second way this file found to fail slowly rather
+/// than quickly. Sleeping between empty looks costs nothing here and removes the contention
+/// entirely.
+constexpr auto kIdleWait = std::chrono::microseconds(200);
 
 /// A message naming its producer and its position in that producer's sequence.
 [[nodiscard]] std::vector<std::byte> tagged(std::size_t producer, std::size_t index) {
@@ -61,10 +87,10 @@ TEST_CASE("many producers lose nothing, duplicate nothing, and keep their own or
     for (std::size_t producer = 0; producer < kProducers; ++producer) {
         producers.emplace_back([&inbox, &finished, producer] {
             for (std::size_t i = 0; i < kPerProducer; ++i) {
-                // Retried rather than dropped: this case is about the handover, not the bound.
-                while (inbox.push(tagged(producer, i)) != CommandInbox::Push::Accepted) {
-                    std::this_thread::yield();
-                }
+                // Never refused: the constants above guarantee room for every message. A
+                // refusal here would mean the bound moved, so it is an assertion rather than a
+                // retry — retrying is how this case learned to spin.
+                REQUIRE(inbox.push(tagged(producer, i)) == CommandInbox::Push::Accepted);
             }
             finished.fetch_add(1, std::memory_order_release);
         });
@@ -73,9 +99,12 @@ TEST_CASE("many producers lose nothing, duplicate nothing, and keep their own or
     std::vector<std::vector<std::byte>> batch;
     while (finished.load(std::memory_order_acquire) < kProducers || inbox.depth() > 0) {
         inbox.drain(batch);
+        if (batch.empty()) {
+            std::this_thread::sleep_for(kIdleWait);
+            continue;
+        }
         collected.insert(collected.end(), std::make_move_iterator(batch.begin()),
                          std::make_move_iterator(batch.end()));
-        std::this_thread::yield();
     }
     for (auto& producer : producers) {
         producer.join();
@@ -119,7 +148,7 @@ TEST_CASE("a producer that overruns the bound is refused rather than racing", "[
     producers.reserve(kProducers);
     for (std::size_t producer = 0; producer < kProducers; ++producer) {
         producers.emplace_back([&inbox, producer] {
-            for (std::size_t i = 0; i < kPerProducer; ++i) {
+            for (std::size_t i = 0; i < kPerFlooder; ++i) {
                 (void)inbox.push(tagged(producer, i));
             }
         });
@@ -129,7 +158,7 @@ TEST_CASE("a producer that overruns the bound is refused rather than racing", "[
     }
 
     CHECK(inbox.overflowed());
-    CHECK(inbox.accepted() + inbox.refused() == kProducers * kPerProducer);
+    CHECK(inbox.accepted() + inbox.refused() == kProducers * kPerFlooder);
     CHECK(inbox.accepted() <= CommandInbox::kMaxMessages);
     CHECK(inbox.depth() == inbox.accepted());
 }

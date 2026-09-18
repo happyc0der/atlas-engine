@@ -17,3 +17,16 @@ atlas_add_test(net
     LABELS
         "unit"
 )
+
+# The lockstep proof runs two kernels in one process and compares them tick by tick. It carries
+# the "determinism" label rather than "unit" for the same reason the simulation's own does: the
+# sanitizer presets select that label, and a determinism proof no sanitizer runs is a proof with
+# a hole in it.
+atlas_add_test(net_lockstep
+    SOURCES
+        test_lockstep.cpp
+    DEPENDS
+        atlas::net
+    LABELS
+        "determinism"
+)

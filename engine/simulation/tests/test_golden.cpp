@@ -21,6 +21,7 @@
 #include <atlas/core/assert.hpp>
 #include <atlas/simulation/golden.hpp>
 #include <atlas/simulation/kernel.hpp>
+#include <atlas/simulation/turn_gate.hpp>
 
 #include "synthetic_systems.hpp"
 #include <catch2/catch_test_macros.hpp>
@@ -99,6 +100,35 @@ TEST_CASE("the fixed scenario still produces its recorded hashes", "[sim][golden
     // and only the function that reduces it to a number changed.
     CHECK(golden.final_state == kGoldenFinalState);
     CHECK(golden.all_ticks == kGoldenAllTicks);
+}
+
+TEST_CASE("the fixed scenario is unchanged by a gate that expects nobody", "[sim][golden]") {
+    // The only case that proves M14 changed no simulation. Every lockstep test compares two runs
+    // that move together, and two runs can move together while both being wrong; this compares a
+    // run against numbers written down before any of it existed.
+    //
+    // A gate expecting nobody is what a solo run has, and it must be indistinguishable from
+    // having no gate at all. If the gate, the source identifiers or the command ordering had
+    // shifted, this is where it would show.
+    Harness h(kGoldenRows);
+    REQUIRE(h.schedule.add(increment_values(h.values)).has_value());
+    REQUIRE(h.schedule.add(sum_into_counter(h.values, h.counter)).has_value());
+    REQUIRE(h.schedule.add(random_into_counter(h.counter)).has_value());
+    REQUIRE(h.schedule.finalise(h.world).has_value());
+
+    const atlas::sim::TurnGate gate;
+    Kernel kernel(h.world, h.schedule, h.commands,
+                  KernelConfig{.seed = kGoldenSeed, .gate = &gate});
+    const auto reports = kernel.run(kGoldenTicks);
+    REQUIRE(reports.has_value());
+
+    atlas::Hasher over_time;
+    for (const auto& report : *reports) {
+        over_time.add(report.state_hash);
+    }
+    CHECK(reports->back().state_hash == kGoldenFinalState);
+    CHECK(over_time.value() == kGoldenAllTicks);
+    CHECK(kernel.stalled_steps() == 0);
 }
 
 TEST_CASE("the fixed scenario is stable within a run", "[sim][golden]") {
