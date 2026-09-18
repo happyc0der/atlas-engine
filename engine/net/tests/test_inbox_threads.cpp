@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <thread>
 #include <vector>
@@ -46,41 +47,36 @@ TEST_CASE("many producers lose nothing, duplicate nothing, and keep their own or
     CommandInbox inbox;
     std::vector<std::vector<std::byte>> collected;
 
+    // The consumer stops when the producers have finished and the mailbox is empty, rather than
+    // when it has collected what it expected. Waiting for a count went wrong twice over: against
+    // an inbox that silently evicted instead of refusing, the count is never reached and the
+    // loop spins for ever; and an arbitrary iteration bound instead turned a slow machine into a
+    // failure — on a sanitizer runner the consumer span a million times while the producers had
+    // managed 714 of 1600, which is not a defect. Ending on the condition that actually matters
+    // catches the eviction in the assertion afterwards and never mistakes slowness for loss.
+    std::atomic<std::size_t> finished{0};
+
     std::vector<std::jthread> producers;
     producers.reserve(kProducers);
     for (std::size_t producer = 0; producer < kProducers; ++producer) {
-        producers.emplace_back([&inbox, producer] {
+        producers.emplace_back([&inbox, &finished, producer] {
             for (std::size_t i = 0; i < kPerProducer; ++i) {
-                // Retried rather than dropped, because this case is about the handover and
-                // not the bound. Bounded anyway: an inbox that had latched overflow would
-                // otherwise leave this thread spinning for ever, and the join below would hang
-                // rather than the assertion failing.
-                int attempts = 0;
-                while (inbox.push(tagged(producer, i)) != CommandInbox::Push::Accepted &&
-                       attempts < 1'000'000) {
+                // Retried rather than dropped: this case is about the handover, not the bound.
+                while (inbox.push(tagged(producer, i)) != CommandInbox::Push::Accepted) {
                     std::this_thread::yield();
-                    ++attempts;
                 }
             }
+            finished.fetch_add(1, std::memory_order_release);
         });
     }
 
-    // Bounded rather than "until they all arrive". An inbox that silently evicted instead of
-    // refusing would lose messages, the target would never be reached, and this loop would spin
-    // for ever — so the defect would show up in continuous integration as a timeout with no
-    // message rather than as a failure that says what is wrong. A test that hangs on a bug is
-    // worse than one that fails on it, and mutation testing is how this one was found.
-    constexpr int kMaxDrains = 1'000'000;
     std::vector<std::vector<std::byte>> batch;
-    int drains = 0;
-    while (collected.size() < kProducers * kPerProducer && drains < kMaxDrains) {
+    while (finished.load(std::memory_order_acquire) < kProducers || inbox.depth() > 0) {
         inbox.drain(batch);
         collected.insert(collected.end(), std::make_move_iterator(batch.begin()),
                          std::make_move_iterator(batch.end()));
-        ++drains;
+        std::this_thread::yield();
     }
-    INFO("drained " << drains << " times, collected " << collected.size());
-    REQUIRE(drains < kMaxDrains);
     for (auto& producer : producers) {
         producer.join();
     }
@@ -88,6 +84,7 @@ TEST_CASE("many producers lose nothing, duplicate nothing, and keep their own or
     collected.insert(collected.end(), std::make_move_iterator(batch.begin()),
                      std::make_move_iterator(batch.end()));
 
+    INFO("collected " << collected.size());
     REQUIRE(collected.size() == kProducers * kPerProducer);
     CHECK(inbox.accepted() == kProducers * kPerProducer);
 

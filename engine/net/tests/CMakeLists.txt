@@ -11,6 +11,7 @@ atlas_add_test(net
         test_loopback.cpp
         test_message.cpp
         test_protocol.cpp
+        test_session.cpp
     DEPENDS
         atlas::net
     LABELS

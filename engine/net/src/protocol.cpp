@@ -17,4 +17,16 @@ static_assert(kProtocolVersion == 1, "bumping the protocol version is a decision
 static_assert(kMaxMessageBytes > sim::CommandQueue::kMaxPayload,
               "one command must fit in one message");
 
+std::string_view to_string(ByeReason reason) noexcept {
+    switch (reason) {
+    case ByeReason::Quit: return "quit";
+    case ByeReason::ProtocolError: return "protocol error";
+    case ByeReason::Diverged: return "diverged";
+    case ByeReason::Overflow: return "overflow";
+    case ByeReason::VersionMismatch: return "version mismatch";
+    }
+    // A value the decoder refuses, so this is only reachable through a hand-built enumerator.
+    return "unknown";
+}
+
 }  // namespace atlas::net

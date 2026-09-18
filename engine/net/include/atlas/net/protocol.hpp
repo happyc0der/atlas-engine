@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 namespace atlas::net {
 
@@ -58,6 +59,9 @@ enum class ByeReason : std::uint32_t {
     /// The handshake found a version or a golden hash that does not match.
     VersionMismatch = 5,
 };
+
+/// The name of a farewell reason, for a log line a person reads.
+[[nodiscard]] std::string_view to_string(ByeReason reason) noexcept;
 
 /// Most peers one session will hold.
 ///

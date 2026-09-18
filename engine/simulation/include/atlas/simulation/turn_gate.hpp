@@ -193,24 +193,4 @@ class TurnGate {
     Tick m_floor = 0;
 };
 
-/// The right to mark one source's turns, and no other's.
-///
-/// A `CommandSource` is handed this rather than the gate itself. With a `TurnGate&` the rule
-/// "mark only your own turn" could only be written in a comment — and in M15 the thing on the
-/// other side of that comment is a sandboxed mod. Two pointers' worth of state, no allocation,
-/// no virtual call, and the rule becomes unrepresentable instead of documented.
-class SourceGate {
-  public:
-    SourceGate(TurnGate& gate, SourceId source) noexcept : m_gate(&gate), m_source(source) {}
-
-    /// Failure: whatever `TurnGate::mark_complete` reports for this source.
-    [[nodiscard]] Status mark_complete(Tick tick) { return m_gate->mark_complete(m_source, tick); }
-
-    [[nodiscard]] SourceId source() const noexcept { return m_source; }
-
-  private:
-    TurnGate* m_gate;
-    SourceId m_source;
-};
-
 }  // namespace atlas::sim

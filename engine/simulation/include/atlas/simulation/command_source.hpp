@@ -86,15 +86,22 @@ class CommandSource {
     ///
     /// Must not: call `drain`, `apply`, `clear` or `register_handler` on the queue; touch the
     /// `World`; step the kernel; submit a command stamped before `now`, which would be counted
-    /// late and is this source lying about its own timing; or mark a turn for any source but its
-    /// own — `turns` is bound to one identifier, so it cannot.
+    /// late and is this source lying about its own timing; or mark a turn for a source it does
+    /// not speak for.
+    ///
+    /// **That last one is a rule rather than a type, and it was briefly the other way round.**
+    /// M14 first gave this a handle bound to a single identifier, so the rule could not be
+    /// broken — which is right for a sandboxed mod and wrong for the first real implementation,
+    /// a lockstep session, which speaks for every peer it is connected to and must mark all of
+    /// their turns. The constraint belongs where the untrusted producer is, not in the interface
+    /// every producer shares; `docs/DEFERRED.md` records it with M15 as the trigger.
     ///
     /// Failure is reserved for a source that has broken in a way the driver must act on, such as
     /// a transport that cannot be read at all. **Bad data from the far end is a refused command
     /// in the report, not an error**: refusing to poll because one message was malformed hands
     /// anybody who can send a message a way to stop the session.
     [[nodiscard]] virtual Result<PollReport> poll(Tick now, CommandQueue& queue,
-                                                  SourceGate& turns) = 0;
+                                                  TurnGate& turns) = 0;
 };
 
 }  // namespace atlas::sim

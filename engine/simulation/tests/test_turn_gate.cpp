@@ -13,7 +13,6 @@
 
 using atlas::ErrorCode;
 using atlas::Tick;
-using atlas::sim::SourceGate;
 using atlas::sim::SourceId;
 using atlas::sim::TurnGate;
 
@@ -304,18 +303,4 @@ TEST_CASE("what a tick is waiting on is reported in identifier order", "[sim][ga
     // report every source it has ever waited on.
     gate.waiting_on(0, waiting);
     CHECK(waiting.size() == 2);
-}
-
-TEST_CASE("a source gate can mark its own turns and no others", "[sim][gate]") {
-    // The rule is enforced by the type rather than by a comment: there is no way to name
-    // another source through this handle at all, which is what M15's untrusted mod needs.
-    TurnGate gate = two_peers();
-    SourceGate mine(gate, SourceId{1});
-    CHECK(mine.source() == SourceId{1});
-    REQUIRE(mine.mark_complete(0).has_value());
-
-    std::vector<SourceId> waiting;
-    gate.waiting_on(0, waiting);
-    REQUIRE(waiting.size() == 1);
-    CHECK(waiting.front() == SourceId{0});
 }

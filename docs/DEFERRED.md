@@ -353,6 +353,29 @@ integration ran for the first time. What it found is recorded in
 - **MP3, FLAC and Opus.** No consumer, and each is another decoder of untrusted input to
   harden.
 
+### M14 — networking
+
+- **A command source that can only mark its own turns.** M14 built one — a handle binding the
+  turn gate to a single identifier, so that "mark only your own turn" was unrepresentable rather
+  than documented — and then removed it in the same milestone, because the first real
+  implementation wanted the opposite. A lockstep session speaks for every peer it is connected
+  to and must mark all of their turns; the only producer that should be held to one identifier is
+  an untrusted one, and there is not one yet. The constraint belongs at the boundary with the
+  untrusted thing rather than in the interface every producer shares. **Picked up by M15's mod
+  host**, which is that boundary: it can hand a mod a restricted handle without the interface
+  itself being restricted. Recorded rather than left implicit because building it early was a
+  mistake worth being able to find again.
+- **A transport.** No socket, by decision (ADR-0014). The criteria are recorded there rather than
+  resolved: a reliable ordered channel, because lockstep tolerates no loss and raw datagrams
+  would mean writing reliability; Windows support in the pinned baseline; licence compatibility;
+  whether encryption and traversal are wanted; and whether it may own a thread. Picked up when
+  two machines need to play, which no consumer needs today.
+- **Resynchronisation after a divergence.** Detected, attributed and stopped, the same treatment
+  device loss gets. Recovering would mean shipping state, which is the thing lockstep exists not
+  to do. Picked up if a consumer would rather continue wrongly than stop.
+- **More than sixteen peers, spectators, and a relay topology.** A relay costs nothing later
+  because a turn is addressed by source rather than by socket. Picked up by a consumer.
+
 ### M13 — animation
 
 - **A generalised asset payload, and a registration point for importers.** The registry keeps
