@@ -6,6 +6,7 @@
 # that never runs.
 atlas_add_test(net
     SOURCES
+        test_message.cpp
         test_protocol.cpp
     DEPENDS
         atlas::net

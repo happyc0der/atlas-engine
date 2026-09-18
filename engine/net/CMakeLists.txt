@@ -12,8 +12,10 @@
 # loopback link that exercises it hard enough to be worth something.
 atlas_add_module(net
     SOURCES
+        src/message.cpp
         src/protocol.cpp
     HEADERS
+        include/atlas/net/message.hpp
         include/atlas/net/protocol.hpp
     DEPENDS
         core
