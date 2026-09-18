@@ -5,6 +5,7 @@
 #include "synthetic_systems.hpp"
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -15,6 +16,7 @@ using atlas::sim::CommandType;
 using atlas::sim::Kernel;
 using atlas::sim::KernelConfig;
 using atlas::sim::SourceId;
+using atlas::sim::TurnGate;
 using atlas::sim::World;
 using atlas::sim::testing::Harness;
 using atlas::sim::testing::increment_values;
@@ -315,6 +317,126 @@ TEST_CASE("a late command and an invalid one are counted apart", "[sim][kernel]"
     CHECK(report->commands_rejected() == 2);
     CHECK(kernel.late_commands() == 1);
     CHECK(kernel.invalid_commands() == 1);
+}
+
+TEST_CASE("a tick the gate has not cleared takes nothing out of the queue", "[sim][kernel]") {
+    // The case that matters most in the whole slice. `drain` *removes* what it returns, so a
+    // refusal placed after it would take this command out of the queue and throw it away with
+    // the discarded report — and the retry would run the same tick with fewer commands and
+    // reach a different state from every peer. Silent, and exactly the property lockstep exists
+    // to provide.
+    Harness h;
+    REQUIRE(h.commands.register_handler(kSetFirst, set_first_handler(h.values)).has_value());
+    REQUIRE(h.schedule.finalise(h.world).has_value());
+
+    TurnGate gate;
+    const std::array<SourceId, 1> peers{SourceId{1}};
+    REQUIRE(gate.expect_sources(peers).has_value());
+
+    Kernel kernel(h.world, h.schedule, h.commands, KernelConfig{.gate = &gate});
+    REQUIRE(h.commands.submit(0, SourceId{1}, kSetFirst, int_payload(42)).has_value());
+    const std::uint64_t hash_before = h.world.hash();
+
+    CHECK_FALSE(kernel.ready());
+    const auto refused = kernel.step();
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().code() == ErrorCode::Unavailable);
+    // The message names who, because a stall that does not say what it is waiting for is a
+    // stall nobody can act on.
+    CHECK(refused.error().message().contains("source 1"));
+
+    // Nothing moved: not the tick, not the world, not the queue.
+    CHECK(kernel.current_tick() == 0);
+    CHECK(h.world.hash() == hash_before);
+    CHECK(kernel.stalled_steps() == 1);
+
+    // And the command is still there to be applied once the turn arrives, which is what proves
+    // the queue was not drained.
+    REQUIRE(gate.mark_complete(SourceId{1}, 0).has_value());
+    CHECK(kernel.ready());
+    const auto report = kernel.step();
+    REQUIRE(report.has_value());
+    CHECK(report->commands_applied == 1);
+    CHECK(h.value_table().value[0] == 42);
+}
+
+TEST_CASE("a gate expecting nobody is the run there always was", "[sim][kernel]") {
+    // The solo guarantee at the level of the kernel rather than the gate: an empty expectation
+    // set must be indistinguishable from no gate at all, or every golden hash moves.
+    Harness h;
+    REQUIRE(h.schedule.add(increment_values(h.values)).has_value());
+    REQUIRE(h.schedule.finalise(h.world).has_value());
+
+    // No gate at all, which is what every application that knows nothing about peers passes.
+    // `ready()` is the function a driver is told to call before stepping, so this returning
+    // false would freeze every solo run — and nothing else here would notice, because every
+    // other case in this file constructs a gate.
+    Kernel solo(h.world, h.schedule, h.commands, KernelConfig{.seed = 5});
+    CHECK(solo.ready());
+    CHECK(solo.ready_horizon() == TurnGate::kUnboundedHorizon);
+    CHECK(solo.stalled_steps() == 0);
+
+    const TurnGate empty;
+    Kernel gated(h.world, h.schedule, h.commands, KernelConfig{.seed = 5, .gate = &empty});
+    CHECK(gated.ready());
+    CHECK(gated.ready_horizon() == TurnGate::kUnboundedHorizon);
+    const auto gated_reports = gated.run(10);
+    REQUIRE(gated_reports.has_value());
+    CHECK(gated.stalled_steps() == 0);
+
+    Harness other;
+    REQUIRE(other.schedule.add(increment_values(other.values)).has_value());
+    REQUIRE(other.schedule.finalise(other.world).has_value());
+    Kernel ungated(other.world, other.schedule, other.commands, KernelConfig{.seed = 5});
+    const auto ungated_reports = ungated.run(10);
+    REQUIRE(ungated_reports.has_value());
+
+    // Tick by tick rather than only at the end: a run that diverged and converged again
+    // diverged.
+    REQUIRE(gated_reports->size() == ungated_reports->size());
+    for (std::size_t i = 0; i < gated_reports->size(); ++i) {
+        INFO("tick " << i);
+        CHECK((*gated_reports)[i].state_hash == (*ungated_reports)[i].state_hash);
+    }
+}
+
+TEST_CASE("an unfinalised schedule is reported even while a peer is missing", "[sim][kernel]") {
+    // Order matters. If the gate were consulted first, a real misconfiguration would be masked
+    // for as long as a peer stayed missing, and whoever was debugging would go and look at the
+    // network instead of at the schedule.
+    Harness h;
+    TurnGate gate;
+    const std::array<SourceId, 1> peers{SourceId{1}};
+    REQUIRE(gate.expect_sources(peers).has_value());
+
+    Kernel kernel(h.world, h.schedule, h.commands, KernelConfig{.gate = &gate});
+    const auto refused = kernel.step();
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().code() == ErrorCode::InvalidArgument);
+    CHECK(kernel.stalled_steps() == 0);
+}
+
+TEST_CASE("the ready horizon says how many ticks may run from here", "[sim][kernel]") {
+    Harness h;
+    REQUIRE(h.schedule.finalise(h.world).has_value());
+
+    TurnGate gate;
+    const std::array<SourceId, 2> peers{SourceId{1}, SourceId{2}};
+    REQUIRE(gate.expect_sources(peers).has_value());
+    Kernel kernel(h.world, h.schedule, h.commands, KernelConfig{.gate = &gate});
+
+    CHECK(kernel.ready_horizon() == 0);
+    for (atlas::Tick tick = 0; tick < 3; ++tick) {
+        REQUIRE(gate.mark_complete(SourceId{1}, tick).has_value());
+        REQUIRE(gate.mark_complete(SourceId{2}, tick).has_value());
+    }
+    // Half-open: three ticks are ready, so the horizon is 3 and the subtraction from the
+    // current tick needs no adjustment.
+    CHECK(kernel.ready_horizon() == 3);
+    CHECK(kernel.ready_horizon() - kernel.current_tick() == 3);
+    REQUIRE(kernel.run(3).has_value());
+    CHECK(kernel.current_tick() == 3);
+    CHECK_FALSE(kernel.ready());
 }
 
 TEST_CASE("the tick can be moved, as a load does", "[sim][kernel]") {

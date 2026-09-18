@@ -22,6 +22,7 @@ atlas_add_module(simulation
         include/atlas/simulation/save_stream.hpp
         include/atlas/simulation/command.hpp
         include/atlas/simulation/command_codec.hpp
+        include/atlas/simulation/command_source.hpp
         include/atlas/simulation/divergence.hpp
         include/atlas/simulation/golden.hpp
         include/atlas/simulation/kernel.hpp

@@ -28,6 +28,7 @@
 #include <atlas/core/time.hpp>
 #include <atlas/simulation/command.hpp>
 #include <atlas/simulation/schedule.hpp>
+#include <atlas/simulation/turn_gate.hpp>
 #include <atlas/simulation/world.hpp>
 
 #include <cstdint>
@@ -110,6 +111,16 @@ struct KernelConfig {
     /// work further. Without one, everything runs on the calling thread. The results are the
     /// same either way, which the determinism tests check rather than assume.
     tasks::WorkerPool* pool = nullptr;
+
+    /// Which ticks are allowed to run yet. Optional, and borrowed: the kernel does not own it
+    /// and it must outlive the kernel. It only ever asks; marking a turn is the driver's job,
+    /// which is why this is const.
+    ///
+    /// Null is a solo run and is the default, and a solo run takes byte-for-byte the path it
+    /// took before M14 — `step` cannot refuse, `ready` is always true, and the golden hashes
+    /// are the golden hashes. A gate expecting nobody behaves identically; the null case exists
+    /// so a caller with no notion of peers need not construct one.
+    const TurnGate* gate = nullptr;
 };
 
 /// Advances a world through ticks.
@@ -123,11 +134,41 @@ class Kernel {
 
     /// Run exactly one tick.
     ///
-    /// Fails only when the setup is wrong, never because of what a system did: a system has
-    /// no way to report failure, by design. A command that no longer validates is counted as
-    /// rejected and skipped rather than stopping the tick, because one bad command from one
-    /// source must not halt a simulation that others are also driving.
+    /// Fails when the setup is wrong — a system has no way to report failure, by design, and a
+    /// command that no longer validates is counted and skipped rather than stopping the tick,
+    /// because one bad command from one source must not halt a simulation that others are also
+    /// driving.
+    ///
+    /// **And fails with `Unavailable` when a turn gate says this tick is not ready yet**, naming
+    /// the sources it is waiting on. That is a runtime condition rather than a setup error, and
+    /// it is the one place this contract was widened: until M14 this sentence read "fails only
+    /// when the setup is wrong, never because of what a system did". The change is deliberate
+    /// and is recorded in [ADR-0014](../../../../../docs/adr/0014-deterministic-lockstep.md)
+    /// rather than left to be discovered here.
+    ///
+    /// **A refused tick changes nothing**: no command is drained, no system runs, the tick
+    /// number does not move, and retrying it later is exactly equivalent to having waited. That
+    /// holds by construction rather than by cleanup, because the check precedes every mutation
+    /// — in particular it precedes the drain, which *removes* what it returns.
+    ///
+    /// **Ask `ready()` first.** Constructing an `Error` allocates, and a stall lasting a
+    /// thousand frames should not allocate a thousand formatted strings inside the tick loop to
+    /// report that nothing happened. A refusal is for a caller that did not ask.
     [[nodiscard]] Result<TickReport> step();
+
+    /// Whether `step` would run this tick rather than refuse it.
+    ///
+    /// Answers the gate's question and only the gate's question: a schedule that was never
+    /// finalised still fails in `step`, deliberately, because that is a setup error asked once
+    /// at startup while this is asked every frame.
+    [[nodiscard]] bool ready() const noexcept;
+
+    /// The first tick `step` would refuse.
+    ///
+    /// `current_tick()` when it would refuse now, and `TurnGate::kUnboundedHorizon` with no
+    /// gate. Half-open, so `ready_horizon() - current_tick()` is how many ticks may run from
+    /// here with no adjustment.
+    [[nodiscard]] Tick ready_horizon() const noexcept;
 
     /// Run `count` ticks, returning a report for each.
     [[nodiscard]] Result<std::vector<TickReport>> run(std::uint64_t count);
@@ -156,6 +197,18 @@ class Kernel {
     /// every peer refuses it identically, and the run is unaffected.
     [[nodiscard]] std::uint64_t invalid_commands() const noexcept { return m_invalid_commands; }
 
+    /// Calls to `step` refused because the gate was not ready.
+    ///
+    /// Counted apart from the accumulator's `dropped_ticks`, and **the two must never be added
+    /// together**. A dropped tick is one the simulation decided not to run and never will; a
+    /// stalled tick is one it will run, at its own number, as soon as the marks arrive. Summing
+    /// them would report a stall as lost work and send somebody optimising a simulation that
+    /// was waiting on a peer.
+    ///
+    /// Attempts rather than ticks: one tick refused on three hundred consecutive frames counts
+    /// three hundred, which is why it is named for steps and not for ticks.
+    [[nodiscard]] std::uint64_t stalled_steps() const noexcept { return m_stalled_steps; }
+
   private:
     World* m_world;
     Schedule* m_schedule;
@@ -164,6 +217,9 @@ class Kernel {
     Tick m_tick = 0;
     std::uint64_t m_late_commands = 0;
     std::uint64_t m_invalid_commands = 0;
+    std::uint64_t m_stalled_steps = 0;
+    /// Reused by the refusal message, so a stall asked about every frame does not allocate one.
+    std::vector<SourceId> m_waiting;
 };
 
 }  // namespace atlas::sim

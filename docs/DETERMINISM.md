@@ -25,6 +25,13 @@ its own. Speed is a rational multiplier applied when converting elapsed real tim
 accumulated tick units; it never scales any value inside a simulation equation. Catch-up is
 clamped and surplus ticks are discarded, so falling behind changes throughput, never results.
 
+Under a turn gate that last sentence needs a second half rather than a correction, because it
+stays exactly true of every ungated run — which is every solo run, for ever. A gated tick is
+neither run nor discarded but **postponed**: it runs at its own number as soon as every source
+has reported. So a slow peer changes *when* a tick runs and never *which commands it runs*, and
+a stall is counted separately from a dropped tick precisely because the two are opposite things.
+See [ADR-0014](adr/0014-deterministic-lockstep.md).
+
 ## Command ordering
 
 Commands are stamped with a target tick, a source identifier, and a monotonic per-source

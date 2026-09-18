@@ -30,6 +30,38 @@ namespace atlas::app {
     return remaining < planned ? static_cast<std::uint32_t>(remaining) : planned;
 }
 
+/// How many of the ticks planned so far a turn gate has agreed to, given how far ahead it has
+/// cleared.
+///
+/// `ready_horizon` is the first tick that is **not** ready, so a horizon equal to `current`
+/// permits nothing and `TurnGate::kUnboundedHorizon` permits everything. Takes the horizon as a
+/// plain tick rather than a gate, so this header keeps its single dependency and the caller
+/// writes `kernel.ready_horizon()`.
+///
+/// **Throughput changes; results cannot.** Every tick this permits was ready before it ran, so
+/// it ran with every source's commands, in the order `(source, sequence)` fixes. A slow peer
+/// makes a run slower and cannot make it different, which is the whole of what a gate buys,
+/// stated as an expression.
+///
+/// A gated tick is postponed rather than discarded, and the difference is visible here: this is
+/// a minimum, so it can only ever lower a tick count and never raise one. `TickPlan::dropped_ticks`
+/// therefore keeps its old meaning untouched — a gate drops nothing — and a stall is counted by
+/// `Kernel::stalled_steps()` instead. That it can only lower the count is also why the existing
+/// catch-up bound cannot regress whatever the gate does.
+///
+/// Composes with `clamp_ticks` in either order, both being minima; applied after it so that
+/// `--ticks N` reads as the outer contract.
+[[nodiscard]] constexpr std::uint32_t clamp_to_ready(std::uint32_t planned, Tick current,
+                                                     Tick ready_horizon) noexcept {
+    if (ready_horizon <= current) {
+        return 0;
+    }
+    // Guarded by the comparison above, so this cannot wrap at any tick value — including an
+    // unbounded horizon against a current tick of zero.
+    const std::uint64_t available = ready_horizon - current;
+    return available < planned ? static_cast<std::uint32_t>(available) : planned;
+}
+
 /// Upper bound on a single headless wait, so that a very low tick rate still checks its
 /// stop conditions promptly.
 inline constexpr std::uint64_t kMaxHeadlessSleepNs = 5'000'000;  // 5 ms

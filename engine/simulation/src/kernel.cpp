@@ -5,6 +5,7 @@
 #include <atlas/simulation/kernel.hpp>
 
 #include <format>
+#include <string>
 
 namespace atlas::sim {
 namespace {
@@ -25,6 +26,38 @@ Result<TickReport> Kernel::step() {
             Error(ErrorCode::InvalidArgument,
                   "the schedule has not been finalised; call finalise() so the declarations are "
                   "checked and the batches derived before anything runs"));
+    }
+
+    // Before anything else that could change state, and in particular **before the drain**.
+    // `drain` removes what it returns, so a tick refused after it has already taken its
+    // commands out of the queue and would throw them away with this report; the retry would
+    // then run the same tick with fewer commands and reach a different state from every peer.
+    // Placed here, "a refused tick changes nothing" is true because nothing has happened yet.
+    //
+    // After the finalised() check, so that a schedule that was never finalised is still
+    // reported as a setup error while a peer is missing. The other way round, a missing peer
+    // would mask a real misconfiguration for as long as it stayed missing, and whoever was
+    // debugging would go looking at the network.
+    if (m_config.gate != nullptr && !m_config.gate->ready(m_tick)) {
+        ++m_stalled_steps;
+        m_config.gate->waiting_on(m_tick, m_waiting);
+
+        std::string names;
+        for (const SourceId source : m_waiting) {
+            if (!names.empty()) {
+                names += ", ";
+            }
+            names += std::format("source {}", static_cast<std::uint32_t>(source));
+        }
+
+        return std::unexpected(Error(
+            ErrorCode::Unavailable,
+            std::format("tick {} is not ready: waiting on {} of {} sources ({}). A lockstep tick "
+                        "runs only once every source has reported, because running one without a "
+                        "source's commands would make the result depend on which message arrived "
+                        "first",
+                        m_tick, m_waiting.size(), m_config.gate->expected_sources().size(),
+                        names)));
     }
 
     TickReport report;
@@ -152,6 +185,14 @@ Result<TickReport> Kernel::step() {
 
     ++m_tick;
     return report;
+}
+
+bool Kernel::ready() const noexcept {
+    return m_config.gate == nullptr || m_config.gate->ready(m_tick);
+}
+
+Tick Kernel::ready_horizon() const noexcept {
+    return m_config.gate == nullptr ? TurnGate::kUnboundedHorizon : m_config.gate->ready_horizon();
 }
 
 Result<std::vector<TickReport>> Kernel::run(std::uint64_t count) {
