@@ -274,6 +274,28 @@ Status Session::handle(std::size_t peer, const Message& message, Tick now, sim::
                             peer, turn->tick, now)));
         }
 
+        // The same rule, one level down. The check above proves the *envelope* belongs to the
+        // peer that sent it; each command inside carries its own `source`, and until M15's
+        // opening sweep nothing looked at it. A peer could therefore label a command as coming
+        // from another peer, and because `submit_stamped` keeps the recorded sequence number,
+        // two commands could end up sharing one `(source, sequence)` key — at which point the
+        // total order `drain` relies on is not total and two peers can order them differently.
+        // That is a silent divergence reachable from the wire, so it is a protocol violation
+        // like the envelope, not a counted refusal.
+        //
+        // Checked before anything is submitted rather than inside the loop below. A turn is one
+        // message and one event: submitting half of it and then refusing the rest would leave
+        // the queue holding commands from a turn this session has decided is invalid.
+        for (const sim::Command& command : turn->commands) {
+            if (command.source != peer_source) {
+                return std::unexpected(Error(
+                    ErrorCode::InvalidArgument,
+                    std::format("peer {} sent a turn for tick {} containing a command labelled "
+                                "source {}; a peer may speak only for itself",
+                                peer, turn->tick, static_cast<std::uint32_t>(command.source))));
+            }
+        }
+
         for (const sim::Command& command : turn->commands) {
             if (const auto status = queue.submit_stamped(command); !status) {
                 // One peer's bad command does not stop the others being read. Counted, because

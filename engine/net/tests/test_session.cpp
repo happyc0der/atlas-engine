@@ -231,6 +231,36 @@ TEST_CASE("a peer cannot submit a turn on another peer's behalf", "[net][session
     CHECK(pair.a->state() == SessionState::Ended);
 }
 
+TEST_CASE("a peer cannot label a command inside its own turn with another peer's source",
+          "[net][session]") {
+    // The envelope check above is not enough on its own. A turn may legitimately come from
+    // peer 1 while a command inside it claims to be peer 0 — and `submit_stamped` keeps the
+    // sequence number it is given, so that command can collide with a real one from peer 0 on
+    // `(source, sequence)`. The order `drain` sorts by would then not be total, and two peers
+    // could order the pair differently and diverge with nothing logged. Fatal, like the
+    // envelope, because it is the same act one level down.
+    Pair pair;
+    pair.settle();
+
+    Turn smuggled{.tick = 1,
+                  .source = SourceId{1},
+                  .commands = {poke(1, SourceId{1}, 0), poke(1, SourceId{0}, 7)}};
+    const auto bytes = encode(Message{std::move(smuggled)});
+    REQUIRE(bytes.has_value());
+    auto end = pair.hub->end(1);
+    REQUIRE(end.send_to(0, *bytes).has_value());
+
+    const auto refused = pair.a->poll(0, pair.queue_a, pair.gate_a);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message().contains("may speak only for itself"));
+    CHECK_FALSE(pair.a->running());
+
+    // Checked before anything was submitted, so the honest command in front of the forged one
+    // did not reach the queue either. A turn is one message and one event: half of an invalid
+    // turn must not be left behind for the next tick to apply.
+    CHECK(pair.queue_a.pending() == 0);
+}
+
 TEST_CASE("a turn for a tick already run ends the session", "[net][session]") {
     // Under lockstep a late command cannot be applied by anybody, so the session is no longer
     // sound. Checked before the queue sees it, so the kernel never counts it late — which is

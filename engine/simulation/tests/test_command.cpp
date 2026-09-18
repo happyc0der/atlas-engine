@@ -6,6 +6,7 @@
 
 #include <array>
 #include <memory>
+#include <ranges>
 #include <vector>
 
 using atlas::ErrorCode;
@@ -166,6 +167,55 @@ TEST_CASE("drained commands are ordered by source then sequence", "[sim][command
     CHECK(taken[2].sequence == 0);
     CHECK(taken[3].source == a);
     CHECK(taken[3].sequence == 1);
+}
+
+TEST_CASE("two commands sharing a source and sequence still drain in one fixed order",
+          "[sim][command]") {
+    // `submit` cannot produce this, but `submit_stamped` keeps whatever it is given, so an
+    // untrusted producer can. `net::Session` now refuses such a turn, and this is the second
+    // half of that fix: the order must be defined even if a collision reaches the queue,
+    // because `sort` is not stable and two machines would otherwise pick different answers and
+    // diverge silently.
+    //
+    // Fed to two queues in opposite orders, which is what a reordering link produces. Stability
+    // would give these two different answers; comparing the content gives the same one.
+    //
+    // Eight colliding commands rather than two, and deliberately so. With a pair, whether an
+    // unsorted comparator happens to swap them is up to the standard library's small-range
+    // path — so a two-element version of this case passes or fails by luck of the platform,
+    // which is a test that only looks like one. Eight is past every implementation's insertion
+    // -sort threshold, so removing the tie-break reorders them on any of the three.
+    constexpr std::uint8_t kColliding = 8;
+    Fixture forwards;
+    Fixture backwards;
+
+    const auto source = SourceId{4};
+    std::vector<Command> commands;
+    commands.reserve(kColliding);
+    for (std::uint8_t i = 0; i < kColliding; ++i) {
+        commands.push_back(Command{
+            .target = 1, .source = source, .sequence = 9, .type = kAdd, .payload = payload_of(i)});
+    }
+
+    for (const auto& command : commands) {
+        REQUIRE(forwards.queue.submit_stamped(command).has_value());
+    }
+    for (const auto& command : std::ranges::reverse_view(commands)) {
+        REQUIRE(backwards.queue.submit_stamped(command).has_value());
+    }
+
+    const auto one = forwards.queue.drain(1);
+    const auto other = backwards.queue.drain(1);
+    REQUIRE(one.size() == kColliding);
+    REQUIRE(other.size() == kColliding);
+
+    for (std::size_t i = 0; i < kColliding; ++i) {
+        INFO("position " << i);
+        // The same answer from opposite arrival orders, which is the property two peers need.
+        CHECK(one[i].payload == other[i].payload);
+        // And that answer is the content's own order, not either arrival order.
+        CHECK(one[i].payload == payload_of(static_cast<std::uint8_t>(i)));
+    }
 }
 
 TEST_CASE("sequence numbers are per source and assigned by the queue", "[sim][command]") {

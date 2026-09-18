@@ -145,11 +145,31 @@ std::vector<Command> CommandQueue::drain(Tick tick) {
 
     // The total order. By source first and sequence second, so it is the same on every
     // machine and independent of when anything arrived.
+    //
+    // The tie-break after that exists because `sort` is not stable and the two fields above are
+    // only unique if every producer keeps its promise. `submit` assigns the sequence and cannot
+    // repeat one; `submit_stamped` keeps whatever it is given, and until M15's opening sweep a
+    // peer could label a command with another peer's source and collide with it. That hole is
+    // closed where it was reachable — `net::Session` now refuses such a turn — but the order
+    // itself should not depend on that check being the only one, because the failure is silent:
+    // two peers would each sort the pair their own way and diverge with nothing logged.
+    //
+    // Stability is not the fix. `stable_sort` would preserve insertion order, and insertion
+    // order is exactly what differs between peers when a link reorders messages, so it would
+    // make the result depend on arrival — which is the one thing this order exists to avoid.
+    // Comparing the content instead gives the same answer on every machine, and costs nothing
+    // in the ordinary case because it is only reached when both keys are equal.
     std::ranges::sort(taken, [](const Command& a, const Command& b) {
         if (a.source != b.source) {
             return a.source < b.source;
         }
-        return a.sequence < b.sequence;
+        if (a.sequence != b.sequence) {
+            return a.sequence < b.sequence;
+        }
+        if (a.type != b.type) {
+            return a.type < b.type;
+        }
+        return std::ranges::lexicographical_compare(a.payload, b.payload);
     });
 
     return taken;

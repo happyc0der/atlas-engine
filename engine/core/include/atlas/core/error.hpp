@@ -19,8 +19,9 @@ namespace atlas {
 
 /// Error codes, blocked by module so that the domain can be derived from the code.
 ///
-/// Block 0 is generic, 100 is platform, 200 is GPU, 300 is assets, 400 is serialization.
-/// Codes are stable: they may be added, but an existing code never changes meaning.
+/// Block 0 is generic, 100 is platform, 200 is GPU, 300 is assets, 400 is serialization,
+/// 500 is audio. Codes are stable: they may be added, but an existing code never changes
+/// meaning.
 enum class ErrorCode : std::uint32_t {
     Unknown = 0,
     InvalidArgument = 1,
@@ -72,7 +73,10 @@ enum class ErrorDomain : std::uint8_t { Generic, Platform, Gpu, Asset, Serializa
 /// The ladder is open-ended at the top, so **a new block must add its rung above the previous
 /// one**. Before M12 the top rung was `>= 400`, which meant a 500 code reported itself as a
 /// serialization error: numerically free, semantically wrong, and silent. Adding a block is
-/// three edits — the codes, an enumerator here, a rung, and the two `to_string` cases.
+/// four edits — the codes, an enumerator here, a rung, and the two `to_string` cases.
+/// `engine/core/tests/test_error.cpp` asserts where the top rung currently is, so moving it is
+/// a deliberate edit; it cannot catch a block added without one, because a code with no rung
+/// reports as the block below and that is indistinguishable from a code that belongs there.
 [[nodiscard]] constexpr ErrorDomain error_domain(ErrorCode code) noexcept {
     const auto value = static_cast<std::uint32_t>(code);
     if (value >= 500) {

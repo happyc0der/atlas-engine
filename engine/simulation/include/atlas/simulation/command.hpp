@@ -57,8 +57,15 @@ struct Command {
     Tick target = 0;
     SourceId source = SourceId::Local;
 
-    /// Monotonic per source. Two commands from one source never share a sequence number, so
-    /// `(source, sequence)` is a total order.
+    /// Monotonic per source, and the second half of the order `drain` sorts by.
+    ///
+    /// `submit` assigns it and cannot repeat one. `submit_stamped` keeps what it is given,
+    /// because reproducing a recording means reproducing its numbers — so for that path this
+    /// is a promise made by the caller rather than a property of the queue, and an untrusted
+    /// caller can break it. `drain` therefore breaks a tie on the command's own content, and
+    /// `net::Session` refuses a turn whose commands are not all labelled with the peer that
+    /// sent it. Neither is redundant: the first keeps the order defined, the second keeps a
+    /// peer from reaching it.
     std::uint64_t sequence = 0;
 
     CommandType type = CommandType::Invalid;
