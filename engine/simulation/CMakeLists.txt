@@ -9,6 +9,8 @@ atlas_add_module(simulation
         src/tick_accumulator.cpp
         src/save_stream.cpp
         src/command.cpp
+        src/command_codec.cpp
+        src/divergence.cpp
         src/kernel.cpp
         src/replay.cpp
         src/save.cpp
@@ -19,6 +21,8 @@ atlas_add_module(simulation
         include/atlas/simulation/tick_accumulator.hpp
         include/atlas/simulation/save_stream.hpp
         include/atlas/simulation/command.hpp
+        include/atlas/simulation/command_codec.hpp
+        include/atlas/simulation/divergence.hpp
         include/atlas/simulation/golden.hpp
         include/atlas/simulation/kernel.hpp
         include/atlas/simulation/rng.hpp

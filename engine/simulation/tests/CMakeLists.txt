@@ -11,6 +11,8 @@ atlas_add_test(simulation
         test_save.cpp
         test_snapshot.cpp
         test_turn_gate.cpp
+        test_command_codec.cpp
+        test_divergence.cpp
     DEPENDS
         atlas::simulation
     LABELS

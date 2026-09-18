@@ -21,6 +21,7 @@
 
 #include <atlas/core/result.hpp>
 #include <atlas/simulation/command.hpp>
+#include <atlas/simulation/divergence.hpp>
 #include <atlas/simulation/kernel.hpp>
 
 #include <cstdint>
@@ -135,16 +136,11 @@ class ReplayRecorder {
     ReplayLimits m_limits;
 };
 
-/// Where and how two runs stopped agreeing.
-struct Divergence {
-    Tick tick = 0;
-    std::uint64_t expected_hash = 0;
-    std::uint64_t actual_hash = 0;
-
-    /// The first system whose writes differed, when both runs recorded per-system hashes.
-    std::optional<SystemId> first_system;
-    std::string description;
-};
+// Divergence moved to <atlas/simulation/divergence.hpp> in M14, together with the attribution
+// that used to be inline in play(). A lockstep peer compares its hashes against another peer's
+// rather than against a recording's, and it should not have to include the replay machinery to
+// find out which system disagreed. Included here, so every existing user of the name compiles
+// unchanged.
 
 /// The outcome of a playback.
 struct ReplayResult {

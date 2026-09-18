@@ -414,12 +414,11 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
     // follow has_value() through the expected's operator->, and it is clearer this way.
     const std::optional<atlas::sim::Divergence>& divergence = result->divergence;
     if (divergence.has_value()) {
-        const atlas::sim::Divergence& d = *divergence;
-        return std::unexpected(atlas::Error(
-            atlas::ErrorCode::IntegrityCheckFailed,
-            std::format("replay diverged at tick {}: expected {:#018x}, got {:#018x}{}", d.tick,
-                        d.expected_hash, d.actual_hash,
-                        d.description.empty() ? "" : " (" + d.description + ")")));
+        // The description already carries the tick, both hashes and the system to blame. It
+        // used to be appended to a sentence that repeated the first three, which meant a reader
+        // was told the tick twice and the hashes twice before reaching the part they needed.
+        return std::unexpected(atlas::Error(atlas::ErrorCode::IntegrityCheckFailed,
+                                            std::format("replay {}", divergence->description)));
     }
     ATLAS_LOG_INFO(kApp, "replay matched: {} ticks, {} checkpoints checked, final hash {:#018x}",
                    result->ticks_run, result->checkpoints_checked, sim.lab.world.hash());
@@ -977,7 +976,7 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
             ++ticks_run;
             last_hash = report->state_hash;
             last_applied = report->commands_applied;
-            last_rejected = report->commands_rejected;
+            last_rejected = report->commands_rejected();
             if (recorder.has_value()) {
                 // A recorder that has hit its limit stops the run rather than carrying on
                 // producing a recording it can no longer write. Carrying on would mean

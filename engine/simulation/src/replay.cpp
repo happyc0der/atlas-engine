@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <atlas/core/log.hpp>
 #include <atlas/core/profile.hpp>
+#include <atlas/simulation/command_codec.hpp>
+#include <atlas/simulation/divergence.hpp>
 #include <atlas/simulation/replay.hpp>
 #include <atlas/simulation/save_stream.hpp>
 
@@ -16,60 +18,12 @@ constexpr log::Category kSim{"sim"};
 // checks the same numbers the reader enforces. They used to live here, where only the reader
 // could see them, and a recording past them was written successfully and never read again.
 
-/// Smallest a command can encode to: tick, source, sequence, type, payload length.
-constexpr std::size_t kCommandOverhead = 8 + 4 + 8 + 4 + 8;
-
 /// Smallest a checkpoint can encode to: tick, hash, system count.
 constexpr std::size_t kCheckpointOverhead = 8 + 8 + 8;
 
-void write_command(SaveWriter& writer, const Command& command) {
-    writer.write_u64(command.target);
-    writer.write_u32(static_cast<std::uint32_t>(command.source));
-    writer.write_u64(command.sequence);
-    writer.write_u32(static_cast<std::uint32_t>(command.type));
-    writer.write_u64(static_cast<std::uint64_t>(command.payload.size()));
-    writer.write_bytes(command.payload);
-}
-
-[[nodiscard]] Result<Command> read_command(SaveReader& reader) {
-    Command command;
-
-    auto target = reader.read_u64();
-    if (!target) {
-        return std::unexpected(std::move(target).error());
-    }
-    command.target = *target;
-
-    auto source = reader.read_u32();
-    if (!source) {
-        return std::unexpected(std::move(source).error());
-    }
-    command.source = SourceId{*source};
-
-    auto sequence = reader.read_u64();
-    if (!sequence) {
-        return std::unexpected(std::move(sequence).error());
-    }
-    command.sequence = *sequence;
-
-    auto type = reader.read_u32();
-    if (!type) {
-        return std::unexpected(std::move(type).error());
-    }
-    command.type = CommandType{*type};
-
-    auto length = reader.read_count(CommandQueue::kMaxPayload, 1);
-    if (!length) {
-        return std::unexpected(std::move(length).error().context("a command payload length"));
-    }
-    auto payload = reader.read_bytes(*length);
-    if (!payload) {
-        return std::unexpected(std::move(payload).error().context("a command payload"));
-    }
-    command.payload.assign(payload->begin(), payload->end());
-
-    return command;
-}
+// write_command and read_command used to live here. They are in command_codec.hpp now, because
+// a lockstep turn writes commands down too and a second encoder would be a second opinion about
+// what a command is.
 
 }  // namespace
 
@@ -371,33 +325,13 @@ Result<ReplayResult> play(const Replay& replay, World& world, Schedule& schedule
         }
 
         // Diverged. Attribute it before returning, because the tick alone is not a starting
-        // point for anybody.
-        Divergence divergence;
-        divergence.tick = report->tick;
-        divergence.expected_hash = expected.state_hash;
-        divergence.actual_hash = report->state_hash;
+        // point for anybody. The arithmetic lives in divergence.hpp because a lockstep peer
+        // does the same comparison against another peer's hashes rather than a recording's.
+        Divergence divergence =
+            attribute_divergence(report->tick, expected.state_hash, report->state_hash,
+                                 expected.system_hashes, report->system_hashes, schedule);
 
-        for (const SystemHash& recorded : expected.system_hashes) {
-            const auto at =
-                std::ranges::find(report->system_hashes, recorded.system, &SystemHash::system);
-            if (at == report->system_hashes.end() || at->hash != recorded.hash) {
-                divergence.first_system = recorded.system;
-                break;
-            }
-        }
-
-        const System* system =
-            divergence.first_system.has_value() ? schedule.find(*divergence.first_system) : nullptr;
-
-        divergence.description = std::format(
-            "the replay diverged at tick {}: expected state {:#018x}, got {:#018x}{}",
-            divergence.tick, divergence.expected_hash, divergence.actual_hash,
-            system != nullptr
-                ? std::format("; the first system whose writes differ is '{}'", system->name)
-                : "; no per-system hashes were recorded, so it cannot be "
-                  "attributed to a system");
-
-        ATLAS_LOG_ERROR(kSim, "{}", divergence.description);
+        ATLAS_LOG_ERROR(kSim, "the replay {}", divergence.description);
         result.divergence = std::move(divergence);
         return result;
     }

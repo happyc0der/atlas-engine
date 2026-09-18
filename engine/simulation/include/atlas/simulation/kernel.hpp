@@ -51,7 +51,30 @@ struct TickReport {
     Tick tick = 0;
     std::uint64_t state_hash = 0;
     std::size_t commands_applied = 0;
-    std::size_t commands_rejected = 0;
+
+    /// Commands stamped for a tick that had already run when this tick drained them.
+    ///
+    /// Split from the invalid ones in M14, because under lockstep the two mean opposite things.
+    /// A late command is a protocol violation: a peer has fallen further behind than the turn
+    /// delay allows, or is claiming a tick it cannot have, and either way the session is no
+    /// longer sound. An invalid command is one source sending bad bytes, which is ordinary and
+    /// local and which every peer rejects identically. Counted together, a monitor cannot tell
+    /// a broken network from a broken mod — and before M14 only the cumulative
+    /// `Kernel::late_commands()` could tell them apart at all.
+    std::size_t commands_late = 0;
+
+    /// Commands whose payload no longer validated, or whose type has lost its handler.
+    std::size_t commands_invalid = 0;
+
+    /// Late plus invalid: what `commands_rejected` meant before M14, unchanged.
+    ///
+    /// A function rather than a third field so the three cannot drift. A field would have to be
+    /// incremented in both branches, and forgetting one is a mistake no test that checks the
+    /// split would notice.
+    [[nodiscard]] std::size_t commands_rejected() const noexcept {
+        return commands_late + commands_invalid;
+    }
+
     /// One per system that writes anything, in schedule order.
     std::vector<SystemHash> system_hashes;
 
@@ -122,8 +145,16 @@ class Kernel {
     /// Commands that arrived stamped for a tick already run.
     ///
     /// Counted rather than silently dropped: a rising number means something upstream is
-    /// late, which is worth knowing before results start depending on it.
+    /// late, which is worth knowing before results start depending on it. Under lockstep it is
+    /// worse than that — a late turn is a protocol violation and the session ends — which is
+    /// why the per-tick report separates this from an invalid command as well.
     [[nodiscard]] std::uint64_t late_commands() const noexcept { return m_late_commands; }
+
+    /// Commands refused by their own validator at the tick they named.
+    ///
+    /// The other half of what a rejection can mean. One source sending bad bytes is ordinary;
+    /// every peer refuses it identically, and the run is unaffected.
+    [[nodiscard]] std::uint64_t invalid_commands() const noexcept { return m_invalid_commands; }
 
   private:
     World* m_world;
@@ -132,6 +163,7 @@ class Kernel {
     KernelConfig m_config;
     Tick m_tick = 0;
     std::uint64_t m_late_commands = 0;
+    std::uint64_t m_invalid_commands = 0;
 };
 
 }  // namespace atlas::sim

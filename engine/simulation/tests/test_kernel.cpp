@@ -5,6 +5,7 @@
 #include "synthetic_systems.hpp"
 #include <catch2/catch_test_macros.hpp>
 
+#include <memory>
 #include <vector>
 
 using atlas::ErrorCode;
@@ -259,9 +260,61 @@ TEST_CASE("a command stamped for a tick already past is dropped and counted", "[
     REQUIRE(report.has_value());
 
     CHECK(report->commands_applied == 0);
-    CHECK(report->commands_rejected == 1);
+    CHECK(report->commands_rejected() == 1);
+    // Late, not invalid. The payload was perfectly good; it named a tick that had gone. Under
+    // lockstep that distinction ends a session, so it is counted apart rather than summed.
+    CHECK(report->commands_late == 1);
+    CHECK(report->commands_invalid == 0);
     CHECK(kernel.late_commands() == 1);
+    CHECK(kernel.invalid_commands() == 0);
     CHECK(h.value_table().value[0] == 0);
+}
+
+TEST_CASE("a late command and an invalid one are counted apart", "[sim][kernel]") {
+    // The header already says a command is validated again at apply time rather than trusted,
+    // because it may have been submitted before a load replaced the state it referred to. This
+    // uses that: the handler's answer changes between the submit and the tick, which is the
+    // honest shape of a command that was good when it was sent and is not when it arrives.
+    //
+    // Under lockstep the two rejections mean opposite things. A late command is a protocol
+    // violation and ends a session; an invalid one is ordinary and every peer refuses it
+    // identically. Summing them, as the report did before M14, loses exactly that.
+    Harness h;
+    const auto accept = std::make_shared<bool>(true);
+    CommandHandler handler;
+    handler.validate = [accept](std::span<const std::byte> payload) -> atlas::Status {
+        if (payload.size() != 4) {
+            return std::unexpected(
+                atlas::Error(ErrorCode::MalformedData, "expected a four-byte value"));
+        }
+        if (!*accept) {
+            return std::unexpected(
+                atlas::Error(ErrorCode::OutOfRange, "the state this referred to is gone"));
+        }
+        return atlas::ok();
+    };
+    handler.apply = [](World&, std::span<const std::byte>) {};
+    REQUIRE(h.commands.register_handler(kSetFirst, std::move(handler)).has_value());
+    REQUIRE(h.schedule.finalise(h.world).has_value());
+
+    Kernel kernel(h.world, h.schedule, h.commands, KernelConfig{});
+    REQUIRE(kernel.run(5).has_value());
+
+    // One stamped for a tick that has gone, and one that will refuse itself on the way in.
+    REQUIRE(h.commands.submit(2, SourceId{1}, kSetFirst, int_payload(9)).has_value());
+    REQUIRE(h.commands.submit(5, SourceId{2}, kSetFirst, int_payload(9)).has_value());
+    *accept = false;
+
+    const auto report = kernel.step();
+    REQUIRE(report.has_value());
+
+    CHECK(report->commands_applied == 0);
+    CHECK(report->commands_late == 1);
+    CHECK(report->commands_invalid == 1);
+    // And the total is still the total, so nothing that read the old field reads it wrongly.
+    CHECK(report->commands_rejected() == 2);
+    CHECK(kernel.late_commands() == 1);
+    CHECK(kernel.invalid_commands() == 1);
 }
 
 TEST_CASE("the tick can be moved, as a load does", "[sim][kernel]") {

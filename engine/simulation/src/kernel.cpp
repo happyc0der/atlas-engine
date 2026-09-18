@@ -41,7 +41,7 @@ Result<TickReport> Kernel::step() {
                 // Too late to be applied at the tick it named. Applying it now would make
                 // the result depend on when it arrived, which is the thing being avoided.
                 ++m_late_commands;
-                ++report.commands_rejected;
+                ++report.commands_late;
                 ATLAS_LOG_WARN(kSim,
                                "dropping a command from source {} stamped for tick {}, which "
                                "is already past at tick {}",
@@ -52,7 +52,8 @@ Result<TickReport> Kernel::step() {
             if (auto status = m_commands->apply(*m_world, command); !status) {
                 // One bad command from one source must not halt a simulation that others are
                 // also driving, so this is counted and skipped rather than returned.
-                ++report.commands_rejected;
+                ++m_invalid_commands;
+                ++report.commands_invalid;
                 ATLAS_LOG_WARN(kSim, "dropping a command at tick {}: {}", m_tick, status.error());
                 continue;
             }
