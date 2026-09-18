@@ -19,10 +19,10 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0006](0006-shader-toolchain.md) | Shader toolchain | Accepted |
 | [0007](0007-scene-file-format.md) | Scene file format | Accepted |
 | [0008](0008-numeric-and-save-policy.md) | Numeric policy and the simulation save format | Accepted |
-| [0009](0009-scripting-decision.md) | Scripting: deferred, with the boundary decided now | Accepted; trigger fired by 0010; decision 6 superseded by 0015 when M15 lands |
+| [0009](0009-scripting-decision.md) | Scripting: deferred, with the boundary decided now | Accepted; trigger fired by 0010; 0015 proposes superseding decision 6 and amending 3 to 5 |
 | [0010](0010-charter-amendment.md) | Charter amendment: seven subsystems by owner decision, physics kept out | Accepted |
 | [0011](0011-audio.md) | Audio: SDL output, main-thread push mixing, decoders in assets | Accepted |
 | [0012](0012-scene-format-v2.md) | Scene format version 2, the append rule, and two writers on one entity | Accepted |
 | [0013](0013-animation-clip-format.md) | Animation clip file format | Accepted |
 | [0014](0014-deterministic-lockstep.md) | Deterministic lockstep over the command queue | Accepted |
-| 0015 | Sandboxed mods | Planned, M15 |
+| [0015](0015-sandboxed-mods.md) | Sandboxed mods: WebAssembly, behind the command queue | Proposed, M15 |

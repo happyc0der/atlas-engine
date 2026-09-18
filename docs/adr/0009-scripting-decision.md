@@ -20,6 +20,18 @@ an owner decision; decision 6 is superseded by ADR-0015 when M15 lands. **Decisi
 stand**, and decision 2 — the command-queue boundary — is inherited unchanged by every record
 in the M10 to M16 series.
 
+**2026-09-18:** [ADR-0015](0015-sandboxed-mods.md) is written and proposes superseding decision
+6; it takes effect when M15 closes, not now. It chooses WebAssembly over Lua, which is the
+comparison this record asked for and on the grounds this record named. Decision 2 is inherited
+unchanged. **Decisions 3, 4 and 5 are amended in part**,
+and the amendments are worth following the pointer for rather than assuming: decision 3's
+once-per-frame call becomes once per kernel tick and its snapshot view becomes a tick-boundary
+view of the world, both because lockstep makes frame rate an input; decision 4's "text chunks
+only, never precompiled bytecode" is reversed for WebAssembly, whose binary format is validated
+before instantiation where Lua's is not; and decision 5's overlay-port objection has expired,
+because Lua 5.5 takes the string-hash seed as an argument to `lua_newstate`. Decision 5's
+remaining analysis stands and is part of why Lua was not chosen.
+
 ## Context
 
 The charter and the originating specification both say the same thing in different words.
