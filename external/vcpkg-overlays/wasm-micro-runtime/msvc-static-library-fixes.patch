@@ -1,14 +1,19 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 4b28fa8..ba6bebc 100644
+index 4b28fa8..e0d8cd4 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -159,7 +159,11 @@ target_include_directories(vmlib INTERFACE
+@@ -159,7 +159,16 @@ target_include_directories(vmlib INTERFACE
    $<INSTALL_INTERFACE:include>
  )
  
 -target_link_libraries (vmlib PUBLIC ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} -lm -ldl ${CMAKE_THREAD_LIBS_INIT})
 +if (MSVC)
 +  target_link_libraries (vmlib PUBLIC ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} ${CMAKE_THREAD_LIBS_INIT})
++  # This is a static library, so its API is neither imported nor exported: the header
++  # defaults consumers to __declspec(dllimport), which asks the linker for __imp_ symbols
++  # that a static build does not have. The header guards the macro with #ifndef for
++  # exactly this.
++  target_compile_definitions (vmlib INTERFACE WASM_RUNTIME_API_EXTERN=)
 +else ()
 +  target_link_libraries (vmlib PUBLIC ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} -lm -ldl ${CMAKE_THREAD_LIBS_INIT})
 +endif ()

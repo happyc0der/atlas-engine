@@ -27,13 +27,22 @@ vcpkg_from_github(
     SHA512 3aadee3befdd9a8f4fb45c13800e98145ef5492843b08715d9d6787dc9261fb345cc9005d9544efb184f53c83dfe495c176d97b0f05c729db76069f3e3aea60e
     HEAD_REF main
     PATCHES
-        # WAMR links `-lm -ldl` unconditionally and PUBLIC, so both reach every consumer through
-        # the exported `iwasm::vmlib` target. MSVC's linker understands neither. Upstream does
-        # not meet this because its Windows builds go through product-mini/platforms/windows
-        # rather than the top-level CMakeLists this port uses. Guarded rather than deleted: on
-        # every other platform the flags are correct and needed. Drop this patch if upstream
-        # fixes it rather than carrying it for ever.
-        no-gnu-link-flags-on-msvc.patch
+        # Two MSVC problems with the same cause: upstream builds Windows through
+        # product-mini/platforms/windows and as a DLL, so the top-level CMakeLists this port
+        # uses has never been asked to produce a static library for MSVC.
+        #
+        #   1. `-lm -ldl` are linked unconditionally and PUBLIC, so both reach every consumer
+        #      through the exported `iwasm::vmlib` target. MSVC's linker understands neither.
+        #      Guarded rather than deleted: everywhere else they are correct and needed.
+        #   2. The public header defaults MSVC consumers to `__declspec(dllimport)`, which asks
+        #      the linker for `__imp_` symbols a static library does not have — sixteen
+        #      unresolved externals, and only on Windows. The header guards the macro with
+        #      `#ifndef` precisely so a static build can say otherwise, which is what the
+        #      INTERFACE definition does.
+        #
+        # Drop this patch if upstream ever supports a static MSVC build from here, rather than
+        # carrying it for ever.
+        msvc-static-library-fixes.patch
 )
 
 # Debug and release are configured one after the other rather than together.
