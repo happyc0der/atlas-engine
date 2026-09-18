@@ -44,6 +44,12 @@ std::string_view to_string(ErrorCode code) noexcept {
     case ErrorCode::AudioInitFailed: return "AudioInitFailed";
     case ErrorCode::AudioDeviceUnavailable: return "AudioDeviceUnavailable";
     case ErrorCode::AudioFormatUnsupported: return "AudioFormatUnsupported";
+    case ErrorCode::ScriptRuntimeInitFailed: return "ScriptRuntimeInitFailed";
+    case ErrorCode::ModInvalid: return "ModInvalid";
+    case ErrorCode::ModImportRefused: return "ModImportRefused";
+    case ErrorCode::ModExportMissing: return "ModExportMissing";
+    case ErrorCode::ModTrapped: return "ModTrapped";
+    case ErrorCode::ModBudgetExhausted: return "ModBudgetExhausted";
     }
     // No default case above, so that adding a code without a name is a compiler warning
     // (and therefore an error). This is reached only for a value cast from an integer.
@@ -58,6 +64,7 @@ std::string_view to_string(ErrorDomain domain) noexcept {
     case ErrorDomain::Asset: return "asset";
     case ErrorDomain::Serialization: return "serialization";
     case ErrorDomain::Audio: return "audio";
+    case ErrorDomain::Script: return "script";
     }
     return "unrecognised";
 }

@@ -26,7 +26,9 @@ TEST_CASE("error domain is derived from the code block", "[core][error]") {
     // The boundaries either side of each rung are what a new block gets wrong.
     CHECK(atlas::error_domain(static_cast<ErrorCode>(499)) == ErrorDomain::Serialization);
     CHECK(atlas::error_domain(static_cast<ErrorCode>(500)) == ErrorDomain::Audio);
-    CHECK(atlas::error_domain(static_cast<ErrorCode>(9999)) == ErrorDomain::Audio);
+    CHECK(atlas::error_domain(static_cast<ErrorCode>(599)) == ErrorDomain::Audio);
+    CHECK(atlas::error_domain(static_cast<ErrorCode>(600)) == ErrorDomain::Script);
+    CHECK(atlas::error_domain(static_cast<ErrorCode>(9999)) == ErrorDomain::Script);
 }
 
 TEST_CASE("every error code has a name", "[core][error]") {
@@ -39,6 +41,8 @@ TEST_CASE("every error code has a name", "[core][error]") {
     CHECK(atlas::to_string(ErrorCode::AssetDecodeFailed) == "AssetDecodeFailed");
     CHECK(atlas::to_string(ErrorCode::MalformedData) == "MalformedData");
     CHECK(atlas::to_string(ErrorCode::AudioFormatUnsupported) == "AudioFormatUnsupported");
+    CHECK(atlas::to_string(ErrorCode::ScriptRuntimeInitFailed) == "ScriptRuntimeInitFailed");
+    CHECK(atlas::to_string(ErrorCode::ModBudgetExhausted) == "ModBudgetExhausted");
 }
 
 TEST_CASE("every error domain has a name", "[core][error]") {
@@ -50,6 +54,7 @@ TEST_CASE("every error domain has a name", "[core][error]") {
     CHECK(atlas::to_string(ErrorDomain::Asset) == "asset");
     CHECK(atlas::to_string(ErrorDomain::Serialization) == "serialization");
     CHECK(atlas::to_string(ErrorDomain::Audio) == "audio");
+    CHECK(atlas::to_string(ErrorDomain::Script) == "script");
 }
 
 TEST_CASE("an error carries code, message, and source location", "[core][error]") {

@@ -20,8 +20,8 @@ namespace atlas {
 /// Error codes, blocked by module so that the domain can be derived from the code.
 ///
 /// Block 0 is generic, 100 is platform, 200 is GPU, 300 is assets, 400 is serialization,
-/// 500 is audio. Codes are stable: they may be added, but an existing code never changes
-/// meaning.
+/// 500 is audio, 600 is scripting. Codes are stable: they may be added, but an existing code
+/// never changes meaning.
 enum class ErrorCode : std::uint32_t {
     Unknown = 0,
     InvalidArgument = 1,
@@ -65,10 +65,34 @@ enum class ErrorCode : std::uint32_t {
     /// Audio data the engine cannot represent: too many channels, an impossible rate, a
     /// sample format with no conversion.
     AudioFormatUnsupported = 502,
+
+    /// The scripting runtime could not be brought up at all.
+    ScriptRuntimeInitFailed = 600,
+    /// The bytes are not a module this runtime will accept: wrong magic, a version it does not
+    /// know, truncated, or refused by validation. A mod is untrusted input, so this is an
+    /// ordinary outcome rather than a surprise.
+    ModInvalid = 601,
+    /// The module asks for an import the host does not offer. Refused before instantiation,
+    /// because the import list is the whole of a guest's authority.
+    ModImportRefused = 602,
+    /// The module does not export what the host must be able to call.
+    ModExportMissing = 603,
+    /// The guest trapped: an out-of-bounds access, an unreachable, a bad indirect call.
+    ModTrapped = 604,
+    /// The guest reached a limit rather than finishing: instructions in one tick, or memory.
+    ModBudgetExhausted = 605,
 };
 
 /// Coarse domain of an error, derived from its code rather than stored separately.
-enum class ErrorDomain : std::uint8_t { Generic, Platform, Gpu, Asset, Serialization, Audio };
+enum class ErrorDomain : std::uint8_t {
+    Generic,
+    Platform,
+    Gpu,
+    Asset,
+    Serialization,
+    Audio,
+    Script
+};
 
 /// The ladder is open-ended at the top, so **a new block must add its rung above the previous
 /// one**. Before M12 the top rung was `>= 400`, which meant a 500 code reported itself as a
@@ -79,6 +103,9 @@ enum class ErrorDomain : std::uint8_t { Generic, Platform, Gpu, Asset, Serializa
 /// reports as the block below and that is indistinguishable from a code that belongs there.
 [[nodiscard]] constexpr ErrorDomain error_domain(ErrorCode code) noexcept {
     const auto value = static_cast<std::uint32_t>(code);
+    if (value >= 600) {
+        return ErrorDomain::Script;
+    }
     if (value >= 500) {
         return ErrorDomain::Audio;
     }

@@ -31,7 +31,8 @@
     },
     "stb",
     "entt",
-    "nlohmann-json"
+    "nlohmann-json",
+    "wasm-micro-runtime"
   ],
   "features": {
     "profile": {

@@ -25,6 +25,7 @@ graph TD
   animation[atlas::animation<br/>clips, evaluation, derived pose]
   simulation[atlas::simulation<br/>ticks, commands, systems, hashing]
   net[atlas::net<br/>lockstep session, turns, loopback link]
+  script[atlas::script<br/>WebAssembly sandbox, mod host, budgets]
   runtime[atlas::runtime<br/>deferred: composition, main loop]
   tools[atlas::tools<br/>editor shell, panels]
   apps[apps: sandbox, lab, common<br/>composition roots, not modules]
@@ -63,6 +64,9 @@ graph TD
   simulation --> tasks
   net --> core
   net --> simulation
+  script --> assets
+  script --> core
+  script --> simulation
   runtime --> assets
   runtime --> core
   runtime --> math
@@ -134,6 +138,7 @@ declaration. Its only permitted consumer is `atlas::rhi`.
 | animation | Clip evaluation, the clip cache, and the derived pose it writes | Writes an authored component, or produces anything that is hashed |
 | simulation | Ticks, commands, system contracts, RNG, hashing, replay, snapshots | Contains game rules |
 | net | Lockstep sessions, turns, the message codec, a bounded inbox, an in-memory link | Owns a transport, or reaches the world, the scene or anything that draws |
+| script | The WebAssembly sandbox, the mod loader, the instruction and memory budgets, the mod host | Gives a guest any authority it was not handed, or lets one reach state except through a command |
 | runtime | Composition, main loop, subsystem lifetimes | Depends on tools or editor code |
 | edit | Undoable scene commands, the history that applies them | Holds a UI type; is the simulation's command queue; is depended on by anything that draws |
 | tools | Editor shell, panels: statistics, scene, log console, simulation controls, asset status | Is depended on by runtime modules |

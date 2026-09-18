@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json', '.gitmodules') }}
+          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json', '.gitmodules', 'external/vcpkg-overlays/**') }}
           restore-keys: vcpkg-x64-linux-
 
       - name: Bootstrap vcpkg

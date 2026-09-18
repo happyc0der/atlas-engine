@@ -58,6 +58,7 @@ THIRD_PARTY_PREFIXES = (
     "catch2/",
     "stb_",
     "nlohmann/",
+    "wasm_",
 )
 
 ATLAS_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*[<"]atlas/([A-Za-z0-9_]+)/')

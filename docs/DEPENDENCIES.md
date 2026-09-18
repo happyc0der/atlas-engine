@@ -30,6 +30,7 @@ distribution. All current dependencies are permissive and therefore compatible.
 | Dear ImGui | Debug overlay | 1.92.8, features `docking-experimental`, `sdl3-binding`, `sdlgpu3-binding` | MIT | Yes | Private to `tools` | M3 |
 | EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004; in practice private to `scene/src` | M5 |
 | nlohmann-json | Reading and writing the scene file, and reading animation clips | 3.12.0, port-version 2 | MIT | Yes | Private to `scene/src` and `assets/src`; no JSON type appears in any Atlas header | M5, second consumer M13 |
+| WAMR | The WebAssembly interpreter sandboxed mods run in | WAMR-2.4.5, pinned by REF and SHA512 in `external/vcpkg-overlays/wasm-micro-runtime/portfile.cmake`. **The only overlay port in this project**, because no WebAssembly runtime exists in vcpkg — not at our baseline and not upstream, checked 2026-09-18 | Apache-2.0 WITH LLVM-exception | Yes, one way, the same footing as SPIRV-Cross | Private to `script/src`; no WebAssembly type appears in any Atlas header, which is what keeps ADR-0015's Luau fallback real | M15 |
 
 Dependencies are added in the milestone that first needs them, never in advance.
 
@@ -129,13 +130,20 @@ with `assets` falls — and what remained after those decisions was a mixer of a
 lines of arithmetic. SDL3_mixer would also have meant a second library owning audio device
 lifetime alongside the platform, which [ADR-0011](adr/0011-audio.md) rejected on its own terms.
 
-**lua** and **sol2**, considered in M9 and not adopted
-([ADR-0009](adr/0009-scripting-decision.md)). Both are GPL-compatible and neither is the
-problem: there is no caller. The engine has no game rules, so most of what a script API would
-expose is the application's API rather than the engine's, and the one scripting-shaped need
-that has arisen — a deterministic synthetic command source for headless runs — is sixteen lines
-of C++. The ADR records the trigger for revisiting, and that WebAssembly is evaluated against
-Lua when it fires.
+**lua**, **luau** and **sol2**, considered twice and not adopted
+([ADR-0009](adr/0009-scripting-decision.md) in M9, [ADR-0015](adr/0015-sandboxed-mods.md) in
+M15). In M9 the objection was that there was no caller. In M15 there is one, and the objection
+is determinism: `docs/DETERMINISM.md` forbids libm transcendentals in authoritative code, and a
+mod's decisions are authoritative input under lockstep, so `math.sin` and `^` are one call away
+from a divergence in both languages. The only defence is removing library functions, which is
+exactly the part a demonstration script never exercises.
+
+Both are cheaper than what was chosen and the record says so: stock ports, MIT, all platforms,
+no transitive dependencies, nothing to maintain. **Luau is ADR-0015's named fallback with a
+written trigger** — if the WAMR overlay port cannot be built on all three platforms — rather
+than a rejected alternative, and it is the strongest of the three on sandboxing. Lua 5.5 also
+retired ADR-0009's specific objection to it: `lua_newstate` now takes the string-hash seed as an
+argument, so the overlay port that objection required is no longer needed.
 
 nlohmann-json was on this list until M5. The recorded need is the scene file format
 ([ADR-0007](adr/0007-scene-file-format.md)): the file is untrusted input, and a hand-written

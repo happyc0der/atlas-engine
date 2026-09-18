@@ -29,6 +29,7 @@ set(ATLAS_MODULES
     animation
     simulation
     net
+    script
     runtime
     tools
     CACHE INTERNAL "All known Atlas module names")
@@ -71,6 +72,15 @@ set(ATLAS_MODULE_DEPS_simulation        "core;tasks" CACHE INTERNAL "")
 # adding one is a separate change with its own ADR. It must never depend on renderer, scene or
 # platform: a peer exchanges commands and hashes, and nothing it does is presentation.
 set(ATLAS_MODULE_DEPS_net               "core;simulation" CACHE INTERNAL "")
+
+# script: the sandbox untrusted mods run in (ADR-0015), and nothing else. It depends on
+# simulation for `CommandSource` and the command queue a mod reaches state through, and on
+# assets for `VirtualPath`, because a mod is untrusted input loaded from a mounted root exactly
+# as a save file is. No `net` edge, deliberately: a mod is a command source and the interface
+# for that lives in simulation, so a sandbox must not depend on networking to produce a
+# command. It must never depend on scene, renderer or platform — a mod submits commands and
+# reads bytes, and none of what it does is presentation.
+set(ATLAS_MODULE_DEPS_script            "core;simulation;assets" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_runtime           "core;math;platform;rhi;renderer;assets;scene;simulation" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_rhi_internal      "core;platform;rhi" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_tools             "core;math;platform;platform_internal;rhi;rhi_internal;renderer;assets;scene;edit;simulation" CACHE INTERNAL "")
