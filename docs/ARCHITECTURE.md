@@ -433,9 +433,62 @@ reasoning behind it are in [ADR-0007](adr/0007-scene-file-format.md).
 The scene is edited only through `edit::History`. The overlay's panel takes the history, which
 exposes its scene as const and changes it only through commands it can undo, so the compiler
 still enforces that no widget becomes a second way in — the same guarantee the const reference
-gave from M5, now with editing behind it rather than instead of it. M9's first widget is the
-local position; the other commands exist and are tested, and their widgets follow one at a
-time.
+gave from M5, now with editing behind it rather than instead of it. M9's first widget was the
+local position; M11 added the name, M13 the animator's playing, speed, start and loop mode. The
+remaining commands exist and are tested, and their widgets follow one at a time.
+
+## Animation
+
+Animation is presentation, on the same footing as audio and by the same structural argument:
+`animation` depends on `core`, `math`, `assets` and `scene`, and cannot reach `simulation` or
+`renderer` without the boundary check failing. Nothing it produces is hashed, enters authoritative
+state, or reaches a saved file.
+
+**What it is not** is stated as plainly as what it is. It is **not deterministic across
+machines**, because the frame time that drives it is not: two machines run different numbers of
+frames per second and hand it different steps. What it *is*, and what every test rests on, is
+bit-exact given the same sequence of steps on one build — it reads no clock of its own, so a
+test can drive a thousand frames in no time and get the same answer twice.
+
+**Two writers, and they never touch the same field.** `LocalTransform` is what the author typed,
+what `edit::History` changes, and what the file saves. `AnimationPose` is what the animator
+computed this frame, and is derived exactly as `WorldTransform` is: recomputed, never authored,
+never serialised. `update_transforms` composes the two — position adds, rotation adds, **scale
+multiplies**, so an untouched pose is the identity. An entity can therefore be dragged in the
+inspector while a clip is moving it: the drag moves the orbit, and undo takes back the drag and
+never the animation. [ADR-0012](adr/0012-scene-format-v2.md) records the decision, including
+that it *replaced* an earlier rule forbidding an application to animate what the user can edit.
+That rule made the editor unusable on the one scene it existed to edit.
+
+**The clock is integer end to end.** Milliseconds in the file, because that is what a person
+tunes and what every sprite tool exports; nanoseconds in memory, because a frame is sixteen and
+two-thirds milliseconds and truncating it loses two-thirds every frame. There is no float
+accumulation anywhere in it, which is what makes a clip exact after an hour of looping and what
+turns "wrap or accumulate?" into a question with no consequences. The one place the step meets
+floating point is the playback-speed multiply, and it is rounded back to whole nanoseconds
+immediately.
+
+**Every easing is exact at both endpoints.** `ease(0)` is zero and `ease(1)` is one, to the bit,
+and the blend is written `(1 - t) * a + t * b` for the same reason. That is what lets a test
+assert a key's own value with `==` rather than with a tolerance, and what stops a clip drifting
+away from the pose its author typed.
+
+**Frames address cells of a uniform grid** — columns, rows, and an index counted left to right
+then top to bottom. Normalised rectangles are hostile to write by hand and change meaning when a
+sheet is re-exported at another size; pixel rectangles need a texture size, which this module
+never sees because it does not know what a texture is. Frame animation costs the renderer
+nothing at all: a sprite already carries a rectangle, so the draw path prefers the pose's when a
+clip has set one.
+
+**`advance` is a free function**, not a system or an object: the per-entity clock lives in the
+component and the clip data in the cache, so there is nothing for an object to hold. A clip the
+cache does not have leaves the entity at the identity pose and is counted rather than logged,
+because a clip still loading is the ordinary case for the first few frames — and identity rather
+than the last pose, so a clip that failed to load looks like no animation instead of like one
+that has frozen.
+
+The clip file format, and why a document parser's hostile-input discipline is not the WAV
+reader's, are in [ADR-0013](adr/0013-animation-clip-format.md).
 
 ## Simulation contract
 

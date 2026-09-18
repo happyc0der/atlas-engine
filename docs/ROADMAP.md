@@ -21,8 +21,8 @@ Status legend: **done**, *in progress*, planned.
 | M10 | Charter amendment (ADR-0010) | S | **done** |
 | M11 | Input: text, IME, gamepad | M | **done** |
 | M12 | Audio | M | **done** |
-| M13 | Animation | M–L | next |
-| M14 | Networking: lockstep design and loopback proof | M | planned |
+| M13 | Animation | M–L | **done** |
+| M14 | Networking: lockstep design and loopback proof | M | next |
 | M15 | Sandboxed mods | L | planned |
 | M16 | Localisation: string tables, English | S | planned |
 
@@ -902,6 +902,130 @@ was open-ended at the top. The rule naming where SDL types may live named three 
 were four. The module diagram called the handle pool a slot map. And no committed binary asset
 had any recorded provenance, which is now a file that records, among other things, that nobody
 knows where `tile.png` came from.
+
+## M13 — Animation
+
+Full report: [reports/M13.md](reports/M13.md).
+
+Slices: a sweep and the demonstration's first test; the pose in isolation; the module;
+[ADR-0012](adr/0012-scene-format-v2.md) and scene format v2; [ADR-0013](adr/0013-animation-clip-format.md)
+and the clip file; rotation in the renderer; the consumer; the documents.
+
+**Exit criteria**
+- A clip read from a file moves and turns an entity, and cycles another through a sheet.
+- An entity can be edited while it plays, and undo takes back the edit and not the playback.
+- The scene format reaches version 2, and the migration rule is asserted rather than assumed.
+- The rotated-sprites deferral fires, measured against a prediction written first.
+- The hand-written animation in the sandbox is deleted, not merely bypassed.
+
+### The milestone existed because its consumer was broken
+
+Most milestones here are built against a consumer that works and would be better. This one was
+built against a consumer that had a dilemma with no good half, and had had it since M5.
+
+`SceneDemo::tick` wrote the sprite-bearing roots straight through the scene pointer every tick.
+Its own comment admitted the cost: editing one of those while the animation ran was pointless,
+because the next tick overwrote it. **Pausing did not rescue the editor either, and that part was
+written down nowhere.** `tick` returned before it reached `update_transforms`, and the edit
+history deliberately does not recompose — it bumps a revision and leaves that to whoever is
+watching, and nobody was. So while paused, dragging an entity changed the authored number,
+changed what the inspector displayed, and never moved the picture. The Space key existed to make
+the editor usable on this scene and did not.
+
+**The inspector had been displaying the contradiction the whole time.** It shows a local position
+beside a world translation, and the comment beside that row says it exists so a reader can see
+which of the two disagrees. It was doing its job; nobody had followed it back to the cause.
+
+### The decision that dissolved it rather than picking a side
+
+`CLAUDE.md` said an application must not animate what the user can edit. That rule was honest
+about a real hazard and it made the editor useless on the one scene it exists to edit.
+
+[ADR-0012](adr/0012-scene-format-v2.md) replaces it. Authored components belong to the history;
+derived ones belong to whoever computes them; **neither writes the other's fields.** The animator
+writes `AnimationPose`, which is derived exactly as `WorldTransform` is — recomputed, never
+authored, never saved — and composition adds position, adds rotation and **multiplies** scale, so
+an untouched pose is the identity in all three channels. An additive scale would shrink
+everything to nothing, silently and totally, which is why that one is not a preference.
+
+The change of mind is recorded in an ADR rather than made quietly in the rules file, which is the
+project's standing rule about changes of mind and the largest application of it since ADR-0010.
+
+### A format version that owed no migration, and the rule that says so
+
+The scene format reached version 2 when it gained an animator. ADR-0007 had anticipated exactly
+this and declined to write a migration, on the grounds that a migration with nothing to migrate is
+untested by construction.
+
+The answer turned out to be that there is still nothing to write, and that this is a rule rather
+than a reprieve: **a version that only appends components is read by accepting a range of versions
+and branching on none of them.** A component is read when its key is present and absent when it is
+not, and a version 1 writer never produced the key, so an older file is already a valid newer one
+with some components missing.
+
+The rule is asserted literally: a version 1 document loads, re-saves, and equals itself with only
+the version number changed. A change that is *not* a pure append fails that test, which is the
+test telling whoever made it that they now owe a migration.
+
+### Continuous integration caught something nobody introduced
+
+The rotation slice failed CI reporting the committed sprite shader as stale when it was current.
+
+The shader currency check compares every cooked output byte for byte against a fresh build. That
+is only meaningful when the same compiler produced both, and **it never was**: this machine cooks
+with Homebrew's glslang and CI with the distribution's package, and `DEPENDENCIES.md` has recorded
+two different versions since M2. Every shader until M13 was simple enough that both compilers
+produced identical bytes, so the check had been passing by coincidence for six milestones. The
+first shader with real arithmetic in it turned that coincidence into a false failure.
+
+The comparison now happens where it means something and is skipped, loudly and with both toolchain
+strings printed, where it does not. The lesson generalised into a rule: **a `--check` that compares
+bytes must compare bytes only this repository decides.** The sprite sheet committed a slice later
+stores its pixel data as uncompressed deflate blocks for exactly that reason — a PNG's pixels are a
+zlib stream, and zlib's compressor is free to change its output between versions.
+
+### A measurement that was measuring luck
+
+The rotated-sprites deferral fired on its own stated trigger, the first consumer needing a rotated
+instance. The quad instance grew from 48 bytes to 64, carrying a rotation and a normalised pivot,
+with the trigonometry left on the graphics device.
+
+The first measurement said 2.9× at a hundred thousand quads against a prediction of 1.15× to
+1.35×. **The measurement was wrong, not the change.** The two sets were taken twenty minutes apart
+on a machine that was not idle; the "before" minimum was a lucky run and the "after" set never got
+one, so comparing minima compared the best luck each set happened to have. Choosing the minimum had
+seemed like the careful option and it made the error larger.
+
+Measured properly — both binaries built, a cooked shader directory kept for each, the two
+alternated in blocks within the same few minutes — it is **1.20× at a hundred thousand and 1.30× at
+ten thousand**, with allocations per frame unmoved. The larger prediction was right and the smaller
+slightly low.
+
+**What caught it was the prediction's own threshold**, written down in advance: anything past 1.35×
+meant finding out why before reporting. Without that line, 2.9× would have been reported as a cost
+rather than investigated as an anomaly.
+
+### Exit criteria, against what was done
+
+| Criterion | Status |
+|---|---|
+| Clips that move, turn and cycle | **Met.** The parent root plays an ellipse and one full revolution from `orbit.clip.json`; because every other sprite hangs off it, one revolution turns nine quads, so the renderer's new path runs on an ordinary frame rather than only in a test. A grandchild cycles four cells of a generated sheet from `cycle.clip.json`. |
+| Editing while playing | **Met**, and asserted end to end. `--anim-check` drags the animated root after 240 frames of playback, advances another frame on top of the edit, and checks the root is drawn where its authored position and its pose add up to; then undoes, and checks the authored value is restored exactly and the animation untouched. |
+| Scene format v2 and the migration rule | **Met, with no migration code**, which ADR-0012 establishes as the rule for a pure append. The property is asserted rather than described. |
+| Rotation, measured | **Met.** 1.20× and 1.30× against a prediction committed before the change. The first measurement was thrown away for comparing minima taken twenty minutes apart, and the report says so rather than quietly reporting the second. |
+| The hand-written animation deleted | **Met.** `tick`, `m_animating`, the Space key and the rotation warning are gone. Two behaviour changes come with that and are named in the report rather than left to be found: pausing no longer makes the sprite jump, and an animated entity can now keep an authored rotation. |
+| Determinism untouched | **Met.** Every golden hash and every headless integration case byte-identical, structurally rather than by promise: `animation` cannot link `simulation`, the pose is not serialised, and the lab's simulation library is fenced at configure time. |
+| Whole-program proof | **Met.** `--anim-check` runs the committed clip files through the real asset pipeline — requested by virtual path, parsed on a worker, finalised on the main thread, played — and compares poses against a table recorded from the files by working their arithmetic out separately. To a tolerance, because float easing contracts differently between compilers; the clock is integer and is compared exactly. |
+| Per-sprite texture binding | **Met in the application, not in a test.** The draw path binds per sprite so the grandchild can use the sheet. No headless check has a device and there is no golden-image harness here, so it was confirmed by rendering the scene and examining the image. Recorded as a risk. |
+
+**Corrections this milestone made to earlier work.** The shader currency check had been comparing
+two compilers' output since M2. The vertex attribute offsets were hand-written literals. The shader
+cooker collected reflection it never compared against anything. The demonstration scene had no
+automated coverage of any kind. The boundary checker could not see the JSON reader, in the
+milestone that gave it a second consumer. `alpha` was documented as driving interpolation and drives
+a headless sleep. The rotation warning misreported its own scope. `m_orbiting` was dead. Two
+serialization tests were testing indentation. And `tile.png`, committed in M4 with no recorded
+origin, is generated now — `PROVENANCE.md` has no unexplained files left in it.
 
 ## First continuous integration
 
