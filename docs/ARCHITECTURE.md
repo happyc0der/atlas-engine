@@ -133,6 +133,7 @@ declaration. Its only permitted consumer is `atlas::rhi`.
 | scene | Presentation entities, transforms, hierarchy, serialization | Is the grand-strategy database |
 | animation | Clip evaluation, the clip cache, and the derived pose it writes | Writes an authored component, or produces anything that is hashed |
 | simulation | Ticks, commands, system contracts, RNG, hashing, replay, snapshots | Contains game rules |
+| net | Lockstep sessions, turns, the message codec, a bounded inbox, an in-memory link | Owns a transport, or reaches the world, the scene or anything that draws |
 | runtime | Composition, main loop, subsystem lifetimes | Depends on tools or editor code |
 | edit | Undoable scene commands, the history that applies them | Holds a UI type; is the simulation's command queue; is depended on by anything that draws |
 | tools | Editor shell, panels: statistics, scene, log console, simulation controls, asset status | Is depended on by runtime modules |
@@ -493,6 +494,45 @@ that has frozen.
 
 The clip file format, and why a document parser's hostile-input discipline is not the WAV
 reader's, are in [ADR-0013](adr/0013-animation-clip-format.md).
+
+## Networking
+
+Deterministic lockstep over the command queue, and nothing else — the meaning ADR-0010 fixed and
+[ADR-0014](adr/0014-deterministic-lockstep.md) designs. **There is no transport**, by decision,
+and nothing was added to `vcpkg.json`. What exists is the shape a transport would plug into, and
+an in-memory link that exercises it hard enough to be worth something.
+
+**A tick runs only when every participant has said what it is doing on that tick.** Every peer
+then applies the same commands in the same order, in the total order `(source, sequence)` fixes,
+and reaches the same state **without exchanging any state at all**. That is the whole idea, and
+it is affordable only because the simulation was already deterministic: kilobytes a second of
+turns rather than megabytes of world.
+
+**Readiness depends only on which sources have reported, never on time.** `sim::TurnGate` reads
+no clock, holds no deadline and has no timeout. The moment readiness could turn on elapsed time,
+two machines at different frame rates would run different ticks with different commands — the
+exact failure that stamping a command with its target tick was introduced to prevent. Deciding
+what to do about a peer that has gone quiet is a transport policy, and it reaches the simulation
+only as a change to the expectation set.
+
+**The kernel refuses a tick the gate has not cleared**, rather than trusting its caller to ask.
+That widened `Kernel::step`'s contract, which is recorded in the ADR rather than left to be
+discovered. The refusal is placed before the command drain, because `drain` removes what it
+returns: refusing after it would discard the tick's commands and the retry would reach a
+different state from every peer.
+
+**The cost is the stall, not the bandwidth.** A peer late by more than the agreed input delay
+freezes everyone, and no amount of bandwidth fixes that. Lockstep does not degrade gracefully;
+it waits.
+
+**A divergence is detected, attributed to the first system whose writes differ, and stops the
+session.** Atlas does not resync — the same treatment device loss gets. The recordings on each
+side are the debugging artefact.
+
+**No new thread.** The loopback link and every session run on the main thread, so the threading
+table above is unchanged. `net::CommandInbox` is nevertheless safe to push into from any thread,
+because that is where a transport's receive thread would hand work across, and it is bounded
+because its producer would then be a peer rather than something this process controls.
 
 ## Simulation contract
 

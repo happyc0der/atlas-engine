@@ -22,8 +22,8 @@ Status legend: **done**, *in progress*, planned.
 | M11 | Input: text, IME, gamepad | M | **done** |
 | M12 | Audio | M | **done** |
 | M13 | Animation | M–L | **done** |
-| M14 | Networking: lockstep design and loopback proof | M | next |
-| M15 | Sandboxed mods | L | planned |
+| M14 | Networking: lockstep design and loopback proof | M | **done** |
+| M15 | Sandboxed mods | L | next |
 | M16 | Localisation: string tables, English | S | planned |
 
 ## M0 — Architecture and reproducible skeleton
@@ -1026,6 +1026,104 @@ milestone that gave it a second consumer. `alpha` was documented as driving inte
 a headless sleep. The rotation warning misreported its own scope. `m_orbiting` was dead. Two
 serialization tests were testing indentation. And `tile.png`, committed in M4 with no recorded
 origin, is generated now — `PROVENANCE.md` has no unexplained files left in it.
+
+## M14 — Networking: lockstep design and a loopback proof
+
+Full report: [reports/M14.md](reports/M14.md).
+
+Slices: a sweep; [ADR-0014](adr/0014-deterministic-lockstep.md) and the module's shape; the turn
+gate; three extractions; the gate reaching the kernel; the wire protocol; the inbox and the link;
+the session; the two-kernel proof; the lab and its integration cases; the benchmark and the
+documents.
+
+**Exit criteria**
+- A design record accepted before anything is built on it.
+- A tick that cannot run until every participant has said what it is doing, with readiness
+  depending on who has reported and never on elapsed time.
+- Several simulations in one process agreeing hash for hash through the real peer interface,
+  under latency, reordering and injected faults.
+- No transport, nothing added to `vcpkg.json`, and every golden hash unchanged.
+
+### The groundwork was already there, which is why this was affordable
+
+The command queue's own file comment has named a network peer as one of its four callers since
+M6. Its ordering rule — sort by `(source, sequence)`, never by arrival — was documented as *"a
+total order that two machines can agree on without agreeing on timing"*. `SourceId` was described
+as *"an index, not an address: it is written to replays and compared across machines"*.
+`submit_stamped` already existed as the receive path. Saves already persisted per-source sequence
+counters. None of that was built for networking; all of it was built because determinism demanded
+it, which is why lockstep is the shape that fits and why it costs kilobytes a second rather than
+megabytes.
+
+**What was missing was one thing: nothing waited for anybody.** `Kernel::step` ran whenever its
+schedule was finalised, and there was no concept anywhere in the engine of a tick that was not
+yet allowed to happen.
+
+### The decision that carries the milestone
+
+**Readiness depends only on which sources have reported. Never on time.** The gate reads no
+clock, holds no deadline and has no timeout — and a timeout is the obvious thing to reach for,
+which is why its absence is written down rather than left to be noticed. The moment readiness
+could turn on elapsed time, two machines at different frame rates would run different ticks with
+different commands, which is exactly the failure that stamping a command with its target tick was
+introduced to prevent.
+
+**The kernel refuses a tick the gate has not cleared**, rather than trusting its caller to ask.
+That widened a documented contract — `step` used to fail only when the setup was wrong — and the
+change is recorded in the ADR rather than quietly outgrown. The alternative keeps the contract
+and lets a composition root that forgets the check diverge silently; M11 shipped a gamepad no
+composition root ever enabled, and the lesson taken from that is to make the omission loud.
+
+**The refusal sits before the command drain**, and that is the single most consequential line.
+`drain` *removes* what it returns, so a tick refused after it has already discarded its commands;
+the retry would run with fewer and reach a different state from every peer, silently. The test
+that pins it submits a command, refuses the tick, and checks the command is still there when the
+turn arrives.
+
+### What the proof actually proves
+
+Two kernels over a link with latency and reordering, compared **at every tick** rather than at
+the end — a run that diverged and reconverged diverged. Both peers claim the same cell every tick
+with different claimants, so the total order decides the winner, and the refusal is itself
+recorded in the state: a rejection that were a silent no-op would be indistinguishable from the
+command never arriving.
+
+That last point was learned the hard way. Breaking the total order — sorting by sequence and
+ignoring the source — survived the entire proof at first, because each peer picked its own cell
+and the two commands commuted. Only a tick where the order decides the outcome can show that the
+order is agreed.
+
+And the whole-program proof: `atlas_lab --loopback-peers 3` runs three simulations, and the
+binary itself refuses to exit zero unless they agree. A script comparing two printed numbers is a
+fine second opinion; the binary refusing is what makes the property hold for every run anybody
+ever does.
+
+### Exit criteria, against what was done
+
+| Criterion | Status |
+|---|---|
+| A record accepted before the work | **Met.** ADR-0014, accepted at the milestone's one gate, carrying the amendment to the kernel's failure contract. |
+| A gate with no clock | **Met.** No timeout, no deadline, and a test that asks ten thousand times and gets the same answer. A silent peer costs one small record for ever, checked rather than claimed. |
+| Agreement under an unkind link | **Met.** Two kernels at every tick over latency and reordering; three peers in the lab under the same, plus injected drops, holds and corruption. |
+| A solo run unchanged | **Met.** Every golden hash byte-identical, and the fixed scenario now runs with a gate that expects nobody — the only case that proves none of this changed the simulation, because every other compares two runs that move together. |
+| No transport | **Met.** Nothing in `vcpkg.json`, no socket, and the criteria for choosing one recorded rather than resolved. |
+| Measured against a prediction written first | **Met, and the prediction was high.** 1.4 µs per peer per tick against a predicted 2–6. Recorded as high rather than widened. |
+
+**Corrections this milestone made to earlier work.** The replay writer could produce a recording
+its own reader refused — written successfully, permanently unloadable — found while surveying the
+file the command codec was lifted out of. `read_header` did not validate the hash algorithm
+version, which mattered because the handshake is exactly that kind of cheap peek. The replay
+refused an older recording with the same terse message as a newer one. Divergence attribution
+reported "no per-system hashes were recorded" even when hashes were recorded and all matched.
+`TickReport` counted a late command and an invalid one as one number. And `SourceId::Local` was
+hard-coded at two lab call sites, where it would have meant one peer signing another's name to
+its own commands.
+
+**A design this milestone built and then removed.** Slice 4 gave a command source a handle bound
+to one identifier, so that "mark only your own turn" was unrepresentable rather than documented.
+The first real implementation wanted the opposite: a session speaks for every peer it is
+connected to. It was built for a consumer that did not exist, removed three slices later, and
+recorded in `DEFERRED.md` with M15's mod host as the trigger.
 
 ## First continuous integration
 

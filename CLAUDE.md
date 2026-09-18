@@ -79,6 +79,19 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   picture.
 - `simulation` contains tick scheduling, commands, hashing, and system contracts.
   It contains no game rules.
+- Under lockstep a tick runs only when every expected source has reported, and **readiness
+  depends on who has reported and never on elapsed time** (ADR-0014). No timeout lives in the
+  gate: what to do about a silent peer is a transport policy and arrives as a change to the
+  expectation set.
+- A gate check goes **before** the command drain. `drain` removes what it returns, so refusing a
+  tick after it discards that tick's commands and the retry reaches a different state from every
+  peer.
+- A late turn is a protocol violation and ends the session, never a warning. A command stamped
+  for a tick that has already run cannot be applied by anybody.
+- A divergence is detected, attributed to a system, and stops. Atlas does not resync, exactly as
+  it does not recover from device loss.
+- `SourceId::Local` is a **role** — peer zero — not "whoever is running this". Anything stamping
+  its own commands asks the session what it is.
 - A tick is always: drain and apply commands, compute, commit, hash. Nothing reaches
   simulation state except through a command.
 - Compute takes a `const World` and commit a mutable one. A system writes only storage it

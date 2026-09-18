@@ -32,6 +32,13 @@ has reported. So a slow peer changes *when* a tick runs and never *which command
 a stall is counted separately from a dropped tick precisely because the two are opposite things.
 See [ADR-0014](adr/0014-deterministic-lockstep.md).
 
+**A session between different builds is permitted only when both peers produce the same golden
+hashes**, exchanged at the handshake and refused on a mismatch. That is a probe rather than a
+proof: two builds agreeing about the fixed scenario agree about the simulation as far as anything
+here can tell, which is the same standard the cross-platform table below is held to. A differing
+build identifier is logged and not refused, so a debug peer and a release peer whose goldens
+agree can still play.
+
 ## Command ordering
 
 Commands are stamped with a target tick, a source identifier, and a monotonic per-source

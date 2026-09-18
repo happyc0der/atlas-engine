@@ -845,6 +845,54 @@ Since M8's instance compaction the cell field does not go through quad instances
 cost argument that justified deferring in M7 no longer applied to the path it was about. That is
 recorded here rather than quietly dropped.
 
+## Lockstep, M14: what the bookkeeping costs, and why it does not matter
+
+Three scenarios, measured on this machine at a load average of about five with the build system
+and three continuous-integration workflows running. The numbers were stable to within five per
+cent across three consecutive runs, which is enough for a claim this coarse; where a claim is
+about a floor rather than a ratio, the rule at the top of this file applies instead.
+
+**`net/gate_and_poll` deliberately does not step the kernel.** Stepping inside the timed section
+would measure the simulation — 11.8 ms of a 13.4 ms tick at a million cells, by the M8
+measurement above — and report the network as free.
+
+### The prediction, written before the first run
+
+Committed in `86cdaec`, before any number existed. Two to six microseconds **per peer per tick**
+at two peers with eight commands, dominated by allocation rather than arithmetic; and decoding
+one and a half to three times encoding, because decoding allocates a vector per payload while
+encoding writes into one buffer.
+
+### The result
+
+| Scenario | Median | Per peer | Predicted |
+|---|---|---|---|
+| `net/gate_and_poll` peers=2 commands=0 | 0.34–0.38 µs | 0.18 µs | — |
+| `net/gate_and_poll` peers=2 commands=8 | 2.67–2.79 µs | **1.4 µs** | 2–6 µs |
+| `net/gate_and_poll` peers=4 commands=0 | 1.71–1.79 µs | 0.44 µs | — |
+| `net/gate_and_poll` peers=4 commands=8 | 10.6–11.5 µs | **2.7 µs** | 2–6 µs |
+| `net/encode_turn` commands=8 | 0.29 µs | — | — |
+| `net/decode_turn` commands=8 | 0.38–0.42 µs | — | 1.5–3× encode |
+| `net/encode_turn` commands=64 | 1.42 µs | — | — |
+| `net/decode_turn` commands=64 | 2.58–2.67 µs | — | 1.5–3× encode |
+
+**The first prediction was high, and is recorded as high** rather than widened after the fact.
+At two peers the real figure is 1.4 µs per peer, about a third below the bottom of the predicted
+range. At four peers it is 2.7 µs, inside it — and the difference between the two is the thing
+worth knowing: **the cost per peer grows with the peer count**, because each peer broadcasts to
+every other, so a session of N peers does work proportional to N² in total. That was not
+predicted and is obvious in hindsight.
+
+**The decode ratio was partly outside its range too.** At eight commands decoding is 1.28 times
+encoding, below the predicted 1.5; at sixty-four it is 1.88, inside. The fixed cost of a message
+dominates at small command counts and the per-payload allocation only shows at larger ones.
+
+**The conclusion the prediction was written to test stands.** At sixty ticks a second with four
+peers, the whole of lockstep bookkeeping is 10.9 µs against a 16.6 ms frame — **0.066%**. It
+does not need optimising, and now that is measured rather than assumed. The trigger for
+revisiting it is a session above sixteen peers, where the N² broadcast would begin to matter, or
+a per-command payload large enough that its allocation shows.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.
