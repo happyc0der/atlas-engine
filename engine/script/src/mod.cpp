@@ -261,6 +261,7 @@ Result<Mod> Mod::load(Runtime& runtime, std::span<const std::byte> bytes,
     // instantiated with that one import missing — "missing" is a state a guest can probe and
     // work around, "refused" is not.
     const std::int32_t imports = wasm_runtime_get_import_count(impl.module);
+    std::string first_atlas_import;
     for (std::int32_t i = 0; i < imports; ++i) {
         wasm_import_t import{};
         wasm_runtime_get_import_type(impl.module, i, &import);
@@ -274,13 +275,21 @@ Result<Mod> Mod::load(Runtime& runtime, std::span<const std::byte> bytes,
                             "'{}', and everything else is authority it was not given",
                             debug_name, module_name, field, kImportModule)));
         }
-        // Every `atlas.*` import is refused too, for now. The host provides none yet, and a
-        // module importing one would otherwise instantiate with an unresolved function it could
-        // call. This becomes a lookup against the host's table when that table exists.
+        if (first_atlas_import.empty()) {
+            first_atlas_import = std::format("{}.{}", module_name, field);
+        }
+    }
+    // Every `atlas.*` import is refused too, for now: the host provides none yet, and a module
+    // importing one would otherwise instantiate holding an unresolved function it could call.
+    // This becomes a lookup against the host's table when that table exists — which is also why
+    // the loop above records the first one rather than refusing inside it. Refusing there would
+    // make the loop unable to reach its own second iteration, which MSVC noticed and was right
+    // about: a loop that cannot loop is a loop written to be rewritten.
+    if (!first_atlas_import.empty()) {
         return std::unexpected(
             Error(ErrorCode::ModImportRefused,
-                  std::format("mod '{}' imports '{}.{}', which this host does not provide",
-                              debug_name, module_name, field)));
+                  std::format("mod '{}' imports '{}', which this host does not provide", debug_name,
+                              first_atlas_import)));
     }
 
     // Exports. Collected as a set so the message names everything missing at once: somebody

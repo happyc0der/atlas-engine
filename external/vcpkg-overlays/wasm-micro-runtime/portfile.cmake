@@ -36,8 +36,21 @@ vcpkg_from_github(
         no-gnu-link-flags-on-msvc.patch
 )
 
+# Debug and release are configured one after the other rather than together.
+#
+# WAMR's `build-scripts/version.cmake` calls `configure_file` to write `core/version.h` into the
+# **source** tree rather than the build tree, and vcpkg configures both variants in parallel out
+# of one extracted source. The two writes race for the same path, and the loser fails with
+# "No such file or directory" from `configure_file`. It is timing-dependent, which is why it
+# passed on this machine and on Linux and failed on the macOS runner — the worst kind of
+# problem to leave in a port that every lane of continuous integration has to build.
+#
+# This is the documented escape hatch for exactly this shape, and around 135 ports in the vcpkg
+# registry use it for the same reason. It costs a little configure time and buys a port that
+# builds the same way every time.
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
+    DISABLE_PARALLEL_CONFIGURE
     OPTIONS
         # The interpreter, and nothing that generates code. An ahead-of-time or just-in-time
         # compiler would make what a guest computes depend on which compiler ran, which is the
