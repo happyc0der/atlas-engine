@@ -30,41 +30,12 @@ using Json = nlohmann::ordered_json;
 constexpr std::size_t kMaxEntities = 1'000'000;
 constexpr std::size_t kMaxNameLength = 1024;
 
-/// An animator cannot start more than a day into a clip. Not a meaningful limit on authoring —
-/// no clip is a day long — but a bound on a number that arrives from a file and is narrowed
-/// into a smaller field, which is where a silent truncation would otherwise live.
-constexpr std::uint64_t kMaxAnimatorStartMs = 86'400'000;
+// The animator's own bounds are declared beside the component, because the inspector has to
+// offer the same ones this refuses outside of.
 
-/// And cannot run more than a hundred times normal speed, which is the same bound the animator
-/// itself clamps to. The two must agree, or a file would round-trip into something that plays
-/// at a different speed from the one it records.
-constexpr float kMaxAnimatorSpeed = 100.0F;
-
-/// A loop mode's name, for the file. Unknown values are written as "once", which is what the
-/// animator does with them too: the two must agree, or a hand-edited file would round-trip into
-/// something that plays differently from what it says.
-[[nodiscard]] std::string_view animation_loop_name(std::uint8_t loop) {
-    switch (loop) {
-    case 0: return "once";
-    case 1: return "loop";
-    case 2: return "ping-pong";
-    default: return "once";
-    }
-}
-
-/// The stored value for a loop mode's name, or nothing when the name is not one.
-[[nodiscard]] std::optional<std::uint8_t> animation_loop_value(std::string_view name) {
-    if (name == "once") {
-        return 0;
-    }
-    if (name == "loop") {
-        return 1;
-    }
-    if (name == "ping-pong") {
-        return 2;
-    }
-    return std::nullopt;
-}
+// The loop-mode names used to live here. They are declared beside the component now, because
+// the inspector needs the same list to offer the same choice, and a file that says "ping-pong"
+// where a panel says "once" is exactly the drift a second copy produces.
 
 [[nodiscard]] Json write_vec2(const math::Vec2& v) {
     return Json::array({v.x, v.y});

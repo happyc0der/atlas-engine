@@ -5,6 +5,7 @@
 #include <atlas/core/profile.hpp>
 #include <atlas/scene/serialization.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <fstream>
@@ -17,20 +18,24 @@ namespace {
 
 constexpr log::Category kApp = log::category::kApp;
 
-// A composed matrix's off-diagonal terms are exactly zero for pure scale, but arrive through
-// float multiplication; anything under this fraction of the axis length is arithmetic noise.
-constexpr float kRotationTolerance = 1e-4F;
-
 constexpr float kParentSize = 24.0F;
 constexpr float kChildSize = 10.0F;
 constexpr float kOrbitRadius = 40.0F;
 constexpr std::size_t kChildCount = 6;
 
+/// The most one frame may advance a clip.
+///
+/// A frame that took a second — a debugger stopped at a breakpoint, a lid closed and opened —
+/// would otherwise move every clip on by a second the moment the process is running again,
+/// which looks like a glitch and is one. A quarter of a second is far longer than any frame
+/// this application draws and far shorter than any pause worth noticing.
+constexpr std::uint64_t kMaxFrameStepNs = 250'000'000;
+
 /// Build the hierarchy that gets saved.
 ///
 /// Built once, in code, and then never drawn from: the copy that is drawn comes back from the
 /// file. That is what makes the demonstration worth anything.
-[[nodiscard]] Result<scene::Scene> build_scene(assets::AssetId texture) {
+[[nodiscard]] Result<scene::Scene> build_scene(const DemoAssets& ids) {
     scene::Scene built;
 
     const scene::StableId camera = built.create("camera");
@@ -39,11 +44,20 @@ constexpr std::size_t kChildCount = 6;
     const scene::StableId parent = built.create("parent");
     built.set_local_transform(parent, scene::LocalTransform{.position = {.x = 0.0F, .y = 0.0F}});
     built.set_sprite(parent, scene::SpriteRenderData{
-                                 .texture = texture,
+                                 .texture = ids.texture,
                                  .size = {.x = kParentSize, .y = kParentSize},
                                  .tint = {.r = 1.0F, .g = 0.85F, .b = 0.35F, .a = 1.0F},
                                  .layer = 1,
                              });
+    // The whole of what used to be a hand-written orbit in `tick`. The clip moves and turns,
+    // and because every other sprite hangs off this entity, one revolution here turns nine
+    // quads — which is what puts the renderer's rotated path on an ordinary frame rather than
+    // only in a test.
+    //
+    // The authored transform is left at the origin and the clip's keys are offsets from it, so
+    // dragging this entity through the inspector moves the whole orbit and the file keeps
+    // working. That is the two-writer split of ADR-0012, visible.
+    built.set_animator(parent, scene::Animator{.clip = ids.orbit_clip, .loop = 1});
 
     for (std::size_t i = 0; i < kChildCount; ++i) {
         const float turn = (static_cast<float>(i) / static_cast<float>(kChildCount)) * 2.0F *
@@ -56,7 +70,7 @@ constexpr std::size_t kChildCount = 6;
             child, scene::LocalTransform{.position = {.x = std::cos(turn) * kOrbitRadius,
                                                       .y = std::sin(turn) * kOrbitRadius}});
         built.set_sprite(child, scene::SpriteRenderData{
-                                    .texture = texture,
+                                    .texture = ids.texture,
                                     .size = {.x = kChildSize, .y = kChildSize},
                                     .tint = {.r = 0.35F,
                                              .g = 0.55F + (0.4F * static_cast<float>(i) /
@@ -76,12 +90,19 @@ constexpr std::size_t kChildCount = 6;
             built.set_local_transform(descendant,
                                       scene::LocalTransform{.position = {.x = 14.0F, .y = 0.0F},
                                                             .scale = {.x = 0.6F, .y = 0.6F}});
+            // A different texture from every other sprite here, which is why the draw path
+            // sets one per sprite instead of once per frame. Its tint is white: a sheet whose
+            // cells are told apart by colour would be told apart by the tint instead.
             built.set_sprite(descendant, scene::SpriteRenderData{
-                                             .texture = texture,
+                                             .texture = ids.sheet,
                                              .size = {.x = kChildSize, .y = kChildSize},
-                                             .tint = {.r = 1.0F, .g = 0.45F, .b = 0.45F, .a = 1.0F},
+                                             .tint = {.r = 1.0F, .g = 1.0F, .b = 1.0F, .a = 1.0F},
                                              .layer = 2,
                                          });
+            // Frames only. This clip changes which cell of the sheet is shown and moves the
+            // entity not at all, which is the half of animation that costs the renderer
+            // nothing: a sprite already carries a rectangle.
+            built.set_animator(descendant, scene::Animator{.clip = ids.cycle_clip, .loop = 1});
             // Not swapped: the parameters are (child, parent), and a grandchild's parent is
             // a child, so the names genuinely line up that way.
             // NOLINTNEXTLINE(readability-suspicious-call-argument)
@@ -136,10 +157,46 @@ constexpr std::size_t kChildCount = 6;
     return text;
 }
 
+/// Request one asset by path, so a failure names which one rather than "an asset".
+[[nodiscard]] Status request_asset(assets::Registry& registry, std::string_view path,
+                                   assets::AssetType type, assets::AssetId expected) {
+    auto parsed = assets::VirtualPath::parse(path);
+    if (!parsed) {
+        return std::unexpected(
+            std::move(parsed).error().context(std::format("the path '{}'", path)));
+    }
+    auto id = registry.request(*parsed, type);
+    if (!id) {
+        return std::unexpected(std::move(id).error().context(std::format("requesting '{}'", path)));
+    }
+    // The scene's components were built from `AssetId::from` on the same path and type. If the
+    // registry derived a different identifier the components would name assets nothing loads,
+    // and the symptom would be a magenta sprite that never animates rather than an error.
+    if (*id != expected) {
+        return std::unexpected(Error(
+            ErrorCode::Internal,
+            std::format("'{}' resolved to a different identifier than the scene records", path)));
+    }
+    return {};
+}
+
 }  // namespace
 
-Result<scene::Scene> SceneDemo::build_demo_scene(assets::AssetId texture) {
-    return build_scene(texture);
+Placement decompose(const math::Mat4& matrix) noexcept {
+    // Column-major, because that is what `uniform_elements` produces and what a shader reads.
+    // For a rotation composed with a scale, the first column is (cos * sx, sin * sx) and the
+    // second is (-sin * sy, cos * sy), so the axis lengths give the scales and the first
+    // column's angle gives the rotation.
+    const auto m = matrix.uniform_elements();
+    return Placement{
+        .position = {.x = m[12], .y = m[13]},
+        .scale = {.x = std::hypot(m[0], m[1]), .y = std::hypot(m[4], m[5])},
+        .rotation = std::atan2(m[1], m[0]),
+    };
+}
+
+Result<scene::Scene> SceneDemo::build_demo_scene(const DemoAssets& ids) {
+    return build_scene(ids);
 }
 
 Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& registry,
@@ -153,16 +210,29 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
     }
     demo.m_textures = std::move(*textures);
 
-    auto path = assets::VirtualPath::parse(config.texture_path);
-    if (!path) {
-        return std::unexpected(std::move(path).error().context("the scene texture path"));
+    // Both textures and both clips, so that what the scene names is what the registry is
+    // loading. A clip that is still decoding leaves its entity at the identity pose for a few
+    // frames, which looks like a still picture rather than like a failure.
+    if (auto status = request_asset(registry, kDemoTexturePath, assets::AssetType::Texture,
+                                    demo.m_assets.texture);
+        !status) {
+        return std::unexpected(std::move(status).error());
     }
-    auto texture_id = registry.request(*path, assets::AssetType::Texture);
-    if (!texture_id) {
-        return std::unexpected(
-            std::move(texture_id).error().context("requesting the scene texture"));
+    if (auto status = request_asset(registry, kDemoSheetPath, assets::AssetType::Texture,
+                                    demo.m_assets.sheet);
+        !status) {
+        return std::unexpected(std::move(status).error());
     }
-    demo.m_texture_id = *texture_id;
+    if (auto status = request_asset(registry, kDemoOrbitClipPath, assets::AssetType::AnimationClip,
+                                    demo.m_assets.orbit_clip);
+        !status) {
+        return std::unexpected(std::move(status).error());
+    }
+    if (auto status = request_asset(registry, kDemoCycleClipPath, assets::AssetType::AnimationClip,
+                                    demo.m_assets.cycle_clip);
+        !status) {
+        return std::unexpected(std::move(status).error());
+    }
 
     auto batch =
         renderer::QuadBatch::create(device, {.capacity = renderer::QuadBatch::kDefaultCapacity,
@@ -173,7 +243,7 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
     demo.m_batch = std::move(*batch);
 
     demo.m_scene = std::make_unique<scene::Scene>();
-    auto built = build_scene(demo.m_texture_id);
+    auto built = build_scene(demo.m_assets);
     if (!built) {
         return std::unexpected(std::move(built).error());
     }
@@ -199,9 +269,10 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
         return std::unexpected(std::move(status).error().context("loading the scene back"));
     }
 
-    // The history takes the scene by reference and is the only thing permitted to write to
-    // it from here on, the demonstration animation aside. Constructed after the load, so an
-    // undo can never reach behind the state the application started from.
+    // The history takes the scene by reference and is the only thing permitted to write an
+    // authored component from here on. `animation::advance` writes the derived pose and
+    // nothing else, so the two never contend. Constructed after the load, so an undo can never
+    // reach behind the state the application started from.
     demo.m_history.emplace(*demo.m_scene);
 
     auto resaved = scene::to_text((*demo.m_scene));
@@ -229,8 +300,7 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
             demo.m_camera.set_zoom(component->zoom);
         }
         if (placement != nullptr) {
-            const auto m = placement->matrix.uniform_elements();
-            demo.m_camera.set_centre({m[12], m[13]});
+            demo.m_camera.set_centre(decompose(placement->matrix).position);
         }
     } else {
         ATLAS_LOG_WARN(kApp, "the loaded scene has no active camera; using a default view");
@@ -239,9 +309,10 @@ Result<SceneDemo> SceneDemo::create(rhi::Device& device, assets::Registry& regis
     }
 
     ATLAS_LOG_INFO(kApp,
-                   "scene demo ready: {} entities, saved to '{}' ({} bytes), reloaded and "
-                   "re-saved identically",
-                   (*demo.m_scene).size(), demo.m_save_path.string(), demo.m_saved_bytes);
+                   "scene demo ready: {} entities, {} animated, saved to '{}' ({} bytes), "
+                   "reloaded and re-saved identically",
+                   (*demo.m_scene).size(), (*demo.m_scene).animated().size(),
+                   demo.m_save_path.string(), demo.m_saved_bytes);
     return demo;
 }
 
@@ -260,11 +331,12 @@ SceneDemo::~SceneDemo() {
 
 SceneDemo::SceneDemo(SceneDemo&& other) noexcept
     : m_device(std::exchange(other.m_device, nullptr)), m_textures(std::move(other.m_textures)),
-      m_batch(std::move(other.m_batch)), m_texture_id(std::exchange(other.m_texture_id, {})),
+      m_batch(std::move(other.m_batch)), m_assets(other.m_assets),
       m_scene(std::move(other.m_scene)), m_history(std::move(other.m_history)),
-      m_animating(other.m_animating), m_save_path(std::move(other.m_save_path)),
-      m_saved_bytes(other.m_saved_bytes), m_camera(other.m_camera),
-      m_camera_controls(other.m_camera_controls), m_camera_controller(other.m_camera_controller) {}
+      m_clips(std::move(other.m_clips)), m_advance(other.m_advance),
+      m_save_path(std::move(other.m_save_path)), m_saved_bytes(other.m_saved_bytes),
+      m_camera(other.m_camera), m_camera_controls(other.m_camera_controls),
+      m_camera_controller(other.m_camera_controller) {}
 
 SceneDemo& SceneDemo::operator=(SceneDemo&& other) noexcept {
     if (this != &other) {
@@ -272,10 +344,11 @@ SceneDemo& SceneDemo::operator=(SceneDemo&& other) noexcept {
         m_device = std::exchange(other.m_device, nullptr);
         m_textures = std::move(other.m_textures);
         m_batch = std::move(other.m_batch);
-        m_texture_id = std::exchange(other.m_texture_id, {});
+        m_assets = other.m_assets;
         m_scene = std::move(other.m_scene);
         m_history = std::move(other.m_history);
-        m_animating = other.m_animating;
+        m_clips = std::move(other.m_clips);
+        m_advance = other.m_advance;
         m_save_path = std::move(other.m_save_path);
         m_saved_bytes = other.m_saved_bytes;
         m_camera = other.m_camera;
@@ -286,43 +359,20 @@ SceneDemo& SceneDemo::operator=(SceneDemo&& other) noexcept {
 }
 
 std::size_t SceneDemo::finalise_assets(assets::Registry& registry) {
-    return m_textures.finalise_pending(registry);
+    // Two finalisers over one registry, each filtering by type, exactly as the audio device's
+    // sits beside the texture cache's. A reload replaces a clip and leaves every playing
+    // entity's clock alone, so editing a clip file while watching continues from where
+    // playback had reached rather than restarting.
+    return m_textures.finalise_pending(registry) + m_clips.finalise_pending(registry);
 }
 
 void SceneDemo::resize(std::uint32_t pixel_width, std::uint32_t pixel_height) {
     m_camera.set_viewport(static_cast<float>(pixel_width), static_cast<float>(pixel_height));
 }
 
-void SceneDemo::tick(std::uint64_t tick_index, std::uint64_t ticks_per_second) {
-    ATLAS_ZONE_NAMED("scene demo tick");
-
-    if (ticks_per_second == 0 || !m_animating) {
-        return;
-    }
-
-    const float seconds = static_cast<float>(tick_index) / static_cast<float>(ticks_per_second);
-
-    // Only the roots move. Everything below them follows because their transforms are
-    // relative, which is the property being demonstrated; nothing here touches a child.
-    //
-    // This is the one writer to the scene that is not the edit history, and it writes straight
-    // through the pointer rather than through a command: an animation frame is not an
-    // authoring step and has no business on an undo stack. It also means editing a
-    // sprite-bearing root while the animation runs is pointless, because the next tick
-    // overwrites it. Space pauses it, which is why that key exists.
-    //
-    // M13 replaces all of this with a pose the animator owns, which composes on top of the
-    // authored transform instead of into it. Recomposition has already moved out of here and
-    // into the frame, so pausing no longer freezes the editor along with the animation.
-    for (const scene::StableId root : m_scene->roots()) {
-        if (m_scene->sprite(root) == nullptr) {
-            continue;
-        }
-        const float angle = seconds * 0.6F;
-        m_scene->set_local_transform(
-            root, scene::LocalTransform{.position = {.x = std::cos(angle) * 30.0F,
-                                                     .y = std::sin(angle * 1.3F) * 18.0F}});
-    }
+void SceneDemo::advance(std::uint64_t frame_ns) {
+    ATLAS_ZONE_NAMED("scene demo advance");
+    m_advance = animation::advance(*m_scene, m_clips, std::min(frame_ns, kMaxFrameStepNs));
 }
 
 void SceneDemo::recompose() {
@@ -333,7 +383,13 @@ renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
     ATLAS_ZONE_NAMED("scene demo draw");
 
     m_batch.begin(pass, m_camera.view_projection());
-    m_batch.set_texture(m_textures.texture_for(m_texture_id), m_textures.sampler());
+
+    // The texture is set per sprite rather than once per frame, because the grandchild draws
+    // from the sprite sheet and everything else from the tile. `set_texture` flushes when the
+    // texture actually changes and does nothing when it does not, so a scene using one texture
+    // still costs one draw call; this one costs two, because `drawable()` is ordered by layer
+    // and the sheet is on the topmost.
+    assets::AssetId bound;
 
     // drawable() is already in draw order: by layer, then by identifier. Sorting here as well
     // would be a second ordering rule that could drift from the first.
@@ -344,24 +400,17 @@ renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
             continue;
         }
 
-        // The batcher draws axis-aligned rectangles, so a composed rotation cannot be shown.
-        // Position and scale are taken from the composed matrix and rotation is dropped. A
-        // scene that expresses one is told so once, rather than drawn quietly wrong; the
-        // re-deferral and its reason are in docs/DEFERRED.md under M3.
-        const auto m = world->matrix.uniform_elements();
-        const float scale_x = std::hypot(m[0], m[1]);
-        const float scale_y = std::hypot(m[4], m[5]);
-        if (!m_warned_rotation && (std::abs(m[1]) > kRotationTolerance * scale_x ||
-                                   std::abs(m[4]) > kRotationTolerance * scale_y)) {
-            m_warned_rotation = true;
-            // Once per demonstration, not once per scene: the flag is a member, so loading a
-            // different scene into the same object stays quiet. That was worth correcting and
-            // not worth a mechanism, because M13 removes the limitation this reports.
-            ATLAS_LOG_WARN(kApp, "a sprite carries a rotation the batcher cannot draw; it is "
-                                 "drawn axis-aligned, and this is reported once per run");
+        if (sprite->texture != bound) {
+            bound = sprite->texture;
+            m_batch.set_texture(m_textures.texture_for(bound), m_textures.sampler());
         }
-        const float width = sprite->size.x * scale_x;
-        const float height = sprite->size.y * scale_y;
+
+        // Rotation is drawn rather than dropped and warned about, which is what M13 bought.
+        // The composed matrix carries whatever the tree and the pose between them produced,
+        // and the batcher turns the quad about its own centre.
+        const Placement placement = decompose(world->matrix);
+        const float width = sprite->size.x * placement.scale.x;
+        const float height = sprite->size.y * placement.scale.y;
 
         // A pose's frame rectangle wins over the sprite's own when a clip has set one. That
         // single line is the whole of frame animation: a sprite already carries a rectangle,
@@ -371,10 +420,12 @@ renderer::BatchStats SceneDemo::draw(rhi::RenderPass& pass) {
             (pose != nullptr && pose->frame_uv.has_value()) ? *pose->frame_uv : sprite->uv;
 
         m_batch.add(renderer::Quad{
-            .bounds = {.position = {m[12] - (width * 0.5F), m[13] - (height * 0.5F)},
+            .bounds = {.position = {placement.position.x - (width * 0.5F),
+                                    placement.position.y - (height * 0.5F)},
                        .size = {width, height}},
             .uv = uv,
             .colour = sprite->tint,
+            .rotation = placement.rotation,
         });
     }
 

@@ -290,6 +290,30 @@ def case_scene_composition(binary: str) -> None:
     expect_contains(output_of(result), "edits recompose", "an edit reaches the drawn position")
 
 
+def case_animation_plays(binary: str) -> None:
+    # M13's acceptance path, and the first check in the repository that runs the committed
+    # animation clips. It goes through the real asset pipeline — the files are requested by
+    # virtual path, read and parsed on a worker, finalised into the cache on the main thread,
+    # and played — so it fails if a clip file stops parsing, if a clip resolves to an
+    # identifier the scene does not record, or if a clip decodes and nothing claims it.
+    #
+    # The poses are compared against a table recorded in the check itself, to a tolerance
+    # rather than to bytes: these pass through float easing, where whether a compiler contracts
+    # a multiply and an add changes the last bits. The clock is integer and is compared
+    # exactly. That split is deliberate and is written down at the assertion.
+    result = run(binary, ["--anim-check"])
+    expect_exit(result, 0, "the animation check")
+    text = output_of(result)
+    expect_contains(text, "poses match the recorded table",
+                    "the clips play what the recorded table says they should")
+    # The two-writer split of ADR-0012, at the level of the whole program: a scene can be
+    # animated for four seconds and still save the bytes it started with, and an entity can be
+    # dragged while a clip is moving it.
+    expect_contains(text, "saved bytes unchanged", "animating the scene saves what it started with")
+    expect_contains(text, "a drag while animating survives and undoes",
+                    "an edit lands while a clip plays, and undo takes back only the edit")
+
+
 CASES = {
     "version": case_version,
     "help": case_help,
@@ -297,6 +321,7 @@ CASES = {
     "headless_reaches_exact_tick": case_headless_reaches_exact_tick,
     "edit_round_trip": case_edit_round_trip,
     "scene_composition": case_scene_composition,
+    "animation_plays": case_animation_plays,
     "unbounded_throughput": case_unbounded_throughput,
     "headless_needs_a_bound": case_headless_needs_a_bound,
     "rejects_unknown_option": case_rejects_unknown_option,

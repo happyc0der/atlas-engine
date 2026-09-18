@@ -30,6 +30,7 @@ set(_atlas_headless_cases
     unbounded_throughput
     edit_round_trip
     scene_composition
+    animation_plays
     headless_needs_a_bound
     rejects_unknown_option
     rejects_bad_values

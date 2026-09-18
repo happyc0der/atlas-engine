@@ -20,7 +20,9 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlas::scene {
@@ -150,6 +152,37 @@ struct Animator {
     /// another without being two files.
     std::uint8_t loop = 1;
 };
+
+/// The bounds an animator's fields are held to, wherever they are read or offered.
+///
+/// Beside the component rather than inside the reader, because three places need to agree: the
+/// serialiser refuses a file outside them, the animator clamps to them, and the inspector must
+/// not offer a value the other two would reject. A widget that let a person type a speed the
+/// engine then clamps shows a number the engine does not use.
+///
+/// A day is not a meaningful limit on authoring — no clip is a day long — but it is a bound on
+/// a number that arrives from a file and is narrowed into a smaller field, which is where a
+/// silent truncation would otherwise live.
+inline constexpr std::uint32_t kMaxAnimatorStartMs = 86'400'000;
+inline constexpr float kMaxAnimatorSpeed = 100.0F;
+
+/// The name of a loop mode, and the mode a name spells.
+///
+/// Declared here, beside the field, because two unrelated places need it and a second copy is
+/// how a file comes to say "ping-pong" where a panel says "once". The serialiser writes these
+/// names into the scene file and the inspector shows them in a drop-down; there is no third
+/// spelling anywhere.
+///
+/// A value this build does not know reads as "once", which is what the animator does with it
+/// too. The two must agree, or a hand-edited file would round-trip into something that plays
+/// differently from what it says.
+[[nodiscard]] std::string_view animation_loop_name(std::uint8_t loop) noexcept;
+
+/// The stored value for a loop mode's name, or nothing when the name is not one.
+[[nodiscard]] std::optional<std::uint8_t> animation_loop_value(std::string_view name) noexcept;
+
+/// Every loop mode's name, in stored order, for a panel that offers the choice.
+[[nodiscard]] std::span<const std::string_view> animation_loop_names() noexcept;
 
 /// A viewpoint attached to an entity.
 struct Camera {

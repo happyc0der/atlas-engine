@@ -393,6 +393,103 @@ void draw_position_editor(edit::History& history, scene::StableId id,
     }
 }
 
+/// The animator, as the four things a person actually reaches for while tuning one.
+///
+/// Above the component table for the same reason the position editor is: a drop-down and two
+/// drag fields inside a fixed-fit column are squeezed to nothing.
+///
+/// Every change goes through `SetAnimator`, which merges with a previous one on the same
+/// entity, so scrubbing the start time is one undo step rather than one per frame — and the
+/// group is closed when the interaction ends rather than on a timer. Removing the component is
+/// a separate command and deliberately does not merge: taking an animation off is one act.
+///
+/// **What is not here: choosing the clip.** An animator names an asset, and naming one means
+/// typing a path and hashing it, which is a file picker rather than a widget. The clip is shown
+/// as the identifier the component carries so that a mismatch is at least visible, and the
+/// deferral is recorded with what would change it.
+void draw_animator_editor(edit::History& history, scene::StableId id,
+                          const scene::Animator& animator) {
+    const auto emit = [&](const scene::Animator& edited) {
+        if (auto status = history.apply(std::make_unique<edit::SetAnimator>(id, edited),
+                                        edit::Coalesce::WithPrevious);
+            !status) {
+            ATLAS_LOG_WARN(kTools, "animator edit refused: {}", status.error());
+        }
+    };
+
+    bool playing = animator.playing;
+    if (ImGui::Checkbox("playing", &playing)) {
+        scene::Animator edited = animator;
+        edited.playing = playing;
+        emit(edited);
+        // A checkbox is one act, not a drag: without this the next drag on another field
+        // would merge into it and one undo would take both back.
+        history.break_coalescing();
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("remove animator")) {
+        if (auto status = history.apply(std::make_unique<edit::RemoveAnimator>(id)); !status) {
+            ATLAS_LOG_WARN(kTools, "removing the animator was refused: {}", status.error());
+        }
+        // The component is gone; nothing below may read it this frame.
+        return;
+    }
+
+    float speed = animator.speed;
+    // The same bounds the component documents and the animator clamps to. A field that let a
+    // value past them would show a number the engine does not use.
+    //
+    // An unchanged value emits nothing, for the reason written at the position editor: a drag
+    // field reports itself edited on every frame the pointer rests on it.
+    if (ImGui::DragFloat("speed", &speed, 0.01F, 0.0F, scene::kMaxAnimatorSpeed, "%.2f") &&
+        speed != animator.speed) {
+        scene::Animator edited = animator;
+        edited.speed = std::clamp(speed, 0.0F, scene::kMaxAnimatorSpeed);
+        emit(edited);
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        history.break_coalescing();
+    }
+
+    auto start = static_cast<int>(animator.start_ms);
+    if (ImGui::DragInt("start (ms)", &start, 10.0F, 0,
+                       static_cast<int>(scene::kMaxAnimatorStartMs))) {
+        const auto clamped = static_cast<std::uint32_t>(
+            std::clamp(start, 0, static_cast<int>(scene::kMaxAnimatorStartMs)));
+        if (clamped != animator.start_ms) {
+            scene::Animator edited = animator;
+            edited.start_ms = clamped;
+            emit(edited);
+        }
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        history.break_coalescing();
+    }
+
+    // The names come from the scene, which is where the serialiser gets them too. A list
+    // written out here would be a second spelling of the same three words, and the first time
+    // they disagreed the file and the panel would describe different playback.
+    const auto names = scene::animation_loop_names();
+    const auto current = static_cast<std::size_t>(animator.loop);
+    const std::string shown{scene::animation_loop_name(animator.loop)};
+    if (ImGui::BeginCombo("loop", shown.c_str())) {
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            const bool selected = i == current;
+            if (ImGui::Selectable(std::string{names[i]}.c_str(), selected) && !selected) {
+                scene::Animator edited = animator;
+                edited.loop = static_cast<std::uint8_t>(i);
+                emit(edited);
+                history.break_coalescing();
+            }
+            if (selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+}
+
 /// The name field, as an editable text box that commits one undoable rename.
 ///
 /// Above the component table rather than a row in it, because a text field inside a
@@ -457,6 +554,11 @@ void draw_inspector(edit::History& history, scene::StableId id,
         ImGui::Separator();
     }
 
+    if (const auto* animator = scene.animator(id)) {
+        draw_animator_editor(history, id, *animator);
+        ImGui::Separator();
+    }
+
     if (!ImGui::BeginTable("components", 2, ImGuiTableFlags_SizingFixedFit)) {
         return;
     }
@@ -490,6 +592,32 @@ void draw_inspector(edit::History& history, scene::StableId id,
                                        sprite->tint.g, sprite->tint.b, sprite->tint.a));
         row("sprite layer", std::format("{}", sprite->layer));
         row("sprite visible", sprite->visible ? "yes" : "no");
+    }
+
+    // The authored side of animation. The clip is shown as the identifier the component
+    // carries rather than as a path: the component holds a hash, and the panel has no way back
+    // from one to the file it came from.
+    if (const auto* animator = scene.animator(id)) {
+        row("animator clip", std::format("{:#018x}", animator->clip.value()));
+    }
+
+    // And the derived side, read only, beside it. These are what the animator wrote this frame
+    // and what the world transform above was composed from; nothing here is authored and none
+    // of it is saved. Shown for the same reason the world translation is shown beside the local
+    // one: when an entity is in the wrong place the question is always which of the two
+    // disagrees, and before this milestone the answer was invisible.
+    if (const auto* pose = scene.animation_pose(id)) {
+        row("pose time", std::format("{:.3f} s", static_cast<double>(pose->elapsed_ns) / 1e9));
+        row("pose offset",
+            std::format("{:.3f}, {:.3f}", pose->position_offset.x, pose->position_offset.y));
+        row("pose rotation", std::format("{:.3f} rad", pose->rotation_offset));
+        row("pose scale",
+            std::format("{:.3f}, {:.3f}", pose->scale_factor.x, pose->scale_factor.y));
+        row("pose frame", pose->frame_uv.has_value()
+                              ? std::format("{:.3f}, {:.3f} + {:.3f}, {:.3f}",
+                                            pose->frame_uv->position.x, pose->frame_uv->position.y,
+                                            pose->frame_uv->size.x, pose->frame_uv->size.y)
+                              : std::string{"whole texture"});
     }
 
     if (const auto* camera = scene.camera(id)) {

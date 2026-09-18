@@ -102,6 +102,16 @@ if(ATLAS_BUILD_TESTS)
                  COMMAND "${Python3_EXECUTABLE}"
                          "${PROJECT_SOURCE_DIR}/tools/gen_audio_assets.py" --check)
         set_tests_properties(audio_assets_current PROPERTIES LABELS "lint")
+
+        # The textures likewise, added in M13 when the sprite sheet arrived. Its generator
+        # writes the PNG pixel data as uncompressed deflate blocks on purpose: a byte
+        # comparison against a file produced by another machine's zlib would be comparing
+        # compression libraries rather than content, which is precisely how the shader
+        # currency check above came to pass by coincidence for six milestones.
+        add_test(NAME textures_current
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/tools/gen_textures.py" --check)
+        set_tests_properties(textures_current PROPERTIES LABELS "lint")
     else()
         message(STATUS "Atlas: Python not found; the boundary and licence checks will not "
                        "run as tests (CI runs them separately)")

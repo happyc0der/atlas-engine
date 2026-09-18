@@ -366,6 +366,15 @@ integration ran for the first time. What it found is recorded in
 - **An importer cache for clips.** A clip is a few hundred bytes of text that parses faster than
   a cache entry would read, and the artifact cache is texture-shaped end to end. Same trigger as
   audio: an import measured above five milliseconds.
+- **Choosing a clip from the inspector.** The animator panel can start, stop, scrub, re-speed,
+  change the loop mode and remove an animator, and it cannot say *which clip*. An animator names
+  an asset by an identifier that is a hash of a path and a type, and there is no way back from
+  one to the other: the panel would have to offer the paths that exist, which means browsing a
+  mounted filesystem, which is a file picker rather than a widget. Text input was the blocker
+  until M11 and is no longer; the remaining work is real and is about assets, not about
+  animation. The panel shows the identifier so that a wrong clip is at least visible. Picked up
+  when a scene is authored in the editor rather than built in code, which is the first time
+  somebody needs to attach a clip they did not compile in.
 
 ## Decided by ADR-0010, planned as milestones
 

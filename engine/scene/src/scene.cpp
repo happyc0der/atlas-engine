@@ -7,12 +7,38 @@
 #include <entt/entity/registry.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <format>
 #include <unordered_map>
 #include <utility>
 
 namespace atlas::scene {
+namespace {
+
+/// The one spelling of the loop modes. Indexed by the stored value, so the order is the
+/// format's order and not a presentation choice.
+constexpr std::array<std::string_view, 3> kLoopNames{"once", "loop", "ping-pong"};
+
+}  // namespace
+
+std::string_view animation_loop_name(std::uint8_t loop) noexcept {
+    return loop < kLoopNames.size() ? kLoopNames[loop] : kLoopNames[0];
+}
+
+std::optional<std::uint8_t> animation_loop_value(std::string_view name) noexcept {
+    for (std::size_t i = 0; i < kLoopNames.size(); ++i) {
+        if (kLoopNames[i] == name) {
+            return static_cast<std::uint8_t>(i);
+        }
+    }
+    return std::nullopt;
+}
+
+std::span<const std::string_view> animation_loop_names() noexcept {
+    return kLoopNames;
+}
+
 namespace {
 
 constexpr log::Category kScene{"scene"};

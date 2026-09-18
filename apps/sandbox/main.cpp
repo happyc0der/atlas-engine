@@ -45,11 +45,13 @@
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <ranges>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <variant>
 
 namespace {
@@ -122,6 +124,7 @@ Options:
   --audio-driver NAME    SDL audio driver, e.g. dummy.
   --edit-check           Apply and undo edits to the demo scene headlessly, then exit.
   --scene-check          Check the demo scene's shape and composition headlessly, then exit.
+  --anim-check           Play the demo scene's clips headlessly and check the poses, then exit.
   --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
   --hot-reload           Re-read assets whose files change while running.
   --cache-dir PATH       Keep decoded assets here between runs, so a repeated import is a
@@ -224,7 +227,7 @@ void step_simulation(atlas::Tick tick) {
     // asserts main-thread affinity on every mutation, so without it the first create aborts.
     atlas::mark_main_thread();
 
-    auto built = atlas::sandbox::SceneDemo::build_demo_scene(atlas::assets::AssetId{});
+    auto built = atlas::sandbox::SceneDemo::build_demo_scene();
     if (!built) {
         return std::unexpected(built.error());
     }
@@ -309,7 +312,7 @@ void step_simulation(atlas::Tick tick) {
 [[nodiscard]] atlas::Status run_scene_check() {
     atlas::mark_main_thread();
 
-    auto built = atlas::sandbox::SceneDemo::build_demo_scene(atlas::assets::AssetId{});
+    auto built = atlas::sandbox::SceneDemo::build_demo_scene();
     if (!built) {
         return std::unexpected(built.error());
     }
@@ -405,6 +408,341 @@ void step_simulation(atlas::Tick tick) {
     return atlas::ok();
 }
 
+/// The demonstration scene's animation, with no device: the whole path a frame takes.
+///
+/// This is M13's acceptance check, and what it asserts is chosen against what could plausibly
+/// be wrong rather than against what is convenient to measure.
+///
+/// **Through the real asset pipeline**, not clips built in code. The clip files are committed
+/// and hand-written, and a check that assembled its own clips would prove the evaluator works
+/// while saying nothing about whether the files the application ships actually parse, resolve
+/// to the identifiers the scene records, and play. Those are three ways this could be broken
+/// that no unit test would notice.
+///
+/// **Poses to a tolerance, not to bytes.** The lab's determinism checks compare hashes exactly
+/// because the lab is integer throughout. This is not: a pose reaches these numbers through
+/// float easing, and whether a compiler contracts a multiply and an add into one instruction
+/// changes the last bits. Comparing bytes here would make a check that passes on one machine
+/// and fails on another for no reason anybody could act on. The clock itself is integer and so
+/// *is* compared exactly, because it can be.
+[[nodiscard]] atlas::Status run_anim_check(std::string_view assets_dir) {
+    atlas::mark_main_thread();
+
+    atlas::assets::FileSystem filesystem;
+    if (auto status = filesystem.mount("assets", std::filesystem::path{assets_dir}); !status) {
+        return std::unexpected(std::move(status).error().context("mounting the asset root"));
+    }
+    auto registry = atlas::assets::Registry::create(filesystem, {});
+    if (!registry) {
+        return std::unexpected(std::move(registry).error());
+    }
+
+    const atlas::sandbox::DemoAssets ids;
+    atlas::animation::ClipCache clips;
+
+    const std::array<std::pair<std::string_view, atlas::assets::AssetId>, 2> wanted{{
+        {atlas::sandbox::kDemoOrbitClipPath, ids.orbit_clip},
+        {atlas::sandbox::kDemoCycleClipPath, ids.cycle_clip},
+    }};
+    for (const auto& [path, expected] : wanted) {
+        auto parsed = atlas::assets::VirtualPath::parse(path);
+        if (!parsed) {
+            return std::unexpected(std::move(parsed).error());
+        }
+        auto id = registry->request(*parsed, atlas::assets::AssetType::AnimationClip);
+        if (!id) {
+            return std::unexpected(std::move(id).error());
+        }
+        // The identifier a scene component carries is a hash of the path and the type. If the
+        // registry derived a different one the clip would load and the scene would still not
+        // play it, which is a failure with no symptom worth the name.
+        if (*id != expected) {
+            return atlas::fail(
+                atlas::ErrorCode::Internal,
+                std::format("'{}' did not resolve to the identifier the scene records", path));
+        }
+    }
+
+    // Bounded rather than open: a worker that never finishes should fail this check, not hang
+    // it. Decoding two small documents takes a few milliseconds; a second is far past generous.
+    constexpr int kMaxPumps = 1000;
+    for (int pump = 0; pump < kMaxPumps; ++pump) {
+        registry->pump();
+        clips.finalise_pending(*registry);
+        const auto progress = registry->stats();
+        if (progress.ready + progress.failed == progress.total) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto asset_stats = registry->stats();
+    if (asset_stats.ready != wanted.size() || asset_stats.failed != 0) {
+        return atlas::fail(atlas::ErrorCode::Internal,
+                           std::format("the clips did not load: {} ready, {} failed, {} total",
+                                       asset_stats.ready, asset_stats.failed, asset_stats.total));
+    }
+    // There was a second assertion here, on `awaiting_finalisation`, for the clip that decodes
+    // and is never claimed. It was removed rather than kept: an asset sitting in Decoded is an
+    // asset that is not Ready, so the count above has already failed by the time this could,
+    // and an assertion that cannot fail is decoration rather than coverage. The mutation that
+    // found this — making the clip finaliser skip its own type — is reported as caught by the
+    // line above, which is what actually caught it.
+
+    auto built = atlas::sandbox::SceneDemo::build_demo_scene(ids);
+    if (!built) {
+        return std::unexpected(built.error());
+    }
+    atlas::scene::Scene scene = std::move(*built);
+
+    // What the file says before anything has been animated. Nothing below may change it,
+    // which is the invariant the whole two-writer design rests on.
+    auto before = atlas::scene::to_text(scene);
+    if (!before) {
+        return std::unexpected(before.error());
+    }
+
+    // Found from the scene rather than assumed, so this keeps working if the demonstration
+    // changes shape: the animated root, and an animated entity below it.
+    atlas::scene::StableId root = atlas::scene::StableId::None;
+    atlas::scene::StableId descendant = atlas::scene::StableId::None;
+    for (const atlas::scene::StableId id : scene.animators()) {
+        if (scene.parent(id) == atlas::scene::StableId::None) {
+            root = id;
+        } else {
+            descendant = id;
+        }
+    }
+    if (!atlas::scene::valid(root) || !atlas::scene::valid(descendant)) {
+        return atlas::fail(atlas::ErrorCode::NotFound,
+                           "the demonstration scene no longer has an animated root and an "
+                           "animated descendant, which this check needs");
+    }
+    const atlas::scene::StableId middle = scene.parent(descendant);
+
+    // One frame at sixty a second, as an exact number of nanoseconds. The same sequence every
+    // run, which is what makes the poses below reproducible at all: the module reads no clock.
+    constexpr std::uint64_t kStepNs = 16'666'667;
+
+    // What the clips produce, recorded rather than observed.
+    //
+    // Derived from the two committed clip files by working their own arithmetic out
+    // separately, not by running this code and writing down what it said: a table produced by
+    // the thing it checks is not a check. The orbit's keys are half a second apart with linear
+    // easing, so a sample at a whole second is a key; the cycle is eight hundred milliseconds
+    // long, so these four sample points land on all four of its cells, which is why these four
+    // were chosen. The last is past the orbit's four-second duration and so also proves the
+    // clip looped rather than held its last key.
+    struct Expected {
+        int steps;
+        float position_x;
+        float position_y;
+        float rotation;
+        float uv_x;
+        float uv_y;
+    };
+
+    // The rotations are transcribed from the clip file digit for digit, and one of them is
+    // close enough to pi that the linter offers to replace it with the constant. Declining is
+    // the point: this table records what `orbit.clip.json` says, not what pi is. Swapping in a
+    // more accurate constant would make the check pass against a file that no longer says this,
+    // which is the one thing a recorded table must not do.
+    constexpr std::array<Expected, 4> kExpected{{
+        {.steps = 60,
+         .position_x = 0.0F,
+         .position_y = 18.0F,
+         .rotation = 1.570796F,
+         .uv_x = 0.5F,
+         .uv_y = 0.0F},
+        {.steps = 120,
+         .position_x = -30.0F,
+         .position_y = 0.0F,
+         // NOLINTNEXTLINE(modernize-use-std-numbers)
+         .rotation = 3.141593F,
+         .uv_x = 0.0F,
+         .uv_y = 0.5F},
+        {.steps = 180,
+         .position_x = 0.0F,
+         .position_y = -18.0F,
+         .rotation = 4.712389F,
+         .uv_x = 0.5F,
+         .uv_y = 0.5F},
+        {.steps = 240,
+         .position_x = 30.0F,
+         .position_y = 0.0F,
+         .rotation = 0.0F,
+         .uv_x = 0.0F,
+         .uv_y = 0.0F},
+    }};
+
+    // Wide enough to absorb a compiler contracting a multiply and an add, narrow enough that
+    // every wrong answer available here — the wrong key, the wrong cell, a clip that held
+    // instead of looping — is far outside it.
+    constexpr float kTolerance = 1e-3F;
+    constexpr float kTurn = 2.0F * std::numbers::pi_v<float>;
+
+    int step = 0;
+    for (const Expected& expected : kExpected) {
+        for (; step < expected.steps; ++step) {
+            atlas::animation::advance(scene, clips, kStepNs);
+        }
+        scene.update_transforms();
+
+        const auto* pose = scene.animation_pose(root);
+        if (pose == nullptr) {
+            return atlas::fail(atlas::ErrorCode::Internal, "the animated root has no pose");
+        }
+        // The clock is integer and so is compared exactly. There is no float anywhere between
+        // the step and this number, and allowing it to drift would be allowing the one thing
+        // an integer clock exists to prevent.
+        const std::uint64_t elapsed = static_cast<std::uint64_t>(expected.steps) * kStepNs;
+        if (pose->elapsed_ns != elapsed) {
+            return atlas::fail(atlas::ErrorCode::Internal,
+                               std::format("after {} steps the clock reads {} ns, not {}",
+                                           expected.steps, pose->elapsed_ns, elapsed));
+        }
+        if (std::abs(pose->position_offset.x - expected.position_x) > kTolerance ||
+            std::abs(pose->position_offset.y - expected.position_y) > kTolerance ||
+            std::abs(pose->rotation_offset - expected.rotation) > kTolerance) {
+            return atlas::fail(
+                atlas::ErrorCode::Internal,
+                std::format("after {} steps the root's pose is ({:.4f}, {:.4f}) turned {:.4f}, "
+                            "and the recorded table says ({:.4f}, {:.4f}) turned {:.4f}",
+                            expected.steps, pose->position_offset.x, pose->position_offset.y,
+                            pose->rotation_offset, expected.position_x, expected.position_y,
+                            expected.rotation));
+        }
+
+        // The frame track, which is the other half of animation and the half that costs the
+        // renderer nothing. Checked as the rectangle rather than as a cell index, because the
+        // rectangle is what is drawn: a grid read as rows by columns instead of columns by
+        // rows produces the right cell number and the wrong picture.
+        const auto* frame = scene.animation_pose(descendant);
+        if (frame == nullptr || !frame->frame_uv.has_value()) {
+            return atlas::fail(atlas::ErrorCode::Internal,
+                               "the animated descendant has no frame rectangle");
+        }
+        if (std::abs(frame->frame_uv->position.x - expected.uv_x) > kTolerance ||
+            std::abs(frame->frame_uv->position.y - expected.uv_y) > kTolerance) {
+            return atlas::fail(
+                atlas::ErrorCode::Internal,
+                std::format("after {} steps the frame is at ({:.3f}, {:.3f}) and the recorded "
+                            "table says ({:.3f}, {:.3f})",
+                            expected.steps, frame->frame_uv->position.x,
+                            frame->frame_uv->position.y, expected.uv_x, expected.uv_y));
+        }
+
+        // The rotation has to survive composition to be worth anything: the root turns and
+        // every descendant hangs off it. This pins the arithmetic the draw path uses to get a
+        // rotation back out of a composed matrix, which is otherwise checked nowhere — the
+        // batcher's own GPU test proves it draws a rotation it is handed, not that this is the
+        // rotation it should have been handed.
+        const auto* composed = scene.world_transform(middle);
+        if (composed == nullptr) {
+            return atlas::fail(atlas::ErrorCode::Internal, "a child has no world transform");
+        }
+        const float drawn = atlas::sandbox::decompose(composed->matrix).rotation;
+        // Compared as an angle rather than as a number. The clip's rotation is deliberately
+        // unwrapped — a key at two pi means a whole revolution — and a matrix cannot remember
+        // how many turns it took to get where it is, so the two agree modulo a turn and this
+        // is the comparison that says so.
+        if (std::abs(std::remainder(drawn - expected.rotation, kTurn)) > kTolerance) {
+            return atlas::fail(atlas::ErrorCode::Internal,
+                               std::format("after {} steps a child is drawn turned {:.4f}, and "
+                                           "its animated parent is turned {:.4f}",
+                                           expected.steps, drawn, expected.rotation));
+        }
+    }
+
+    // The byte test, at the level of the whole program. Two hundred and forty frames of
+    // animation have been written into this scene and the file it would save is unchanged to
+    // the byte, because the animator writes only the derived pose. That is what keeps the
+    // sandbox's save-load-save check meaningful while clips are playing.
+    auto after = atlas::scene::to_text(scene);
+    if (!after) {
+        return std::unexpected(after.error());
+    }
+    if (*after != *before) {
+        return atlas::fail(atlas::ErrorCode::Internal,
+                           "animating the scene changed what it would save");
+    }
+
+    // And the other half of the two-writer split: an edit lands while the clips are playing.
+    // Before M13 this was impossible on this scene — the animation wrote the authored
+    // transform, so an edit to an animated root survived until the next tick and no longer.
+    const auto* authored = scene.local_transform(root);
+    if (authored == nullptr) {
+        return atlas::fail(atlas::ErrorCode::Internal, "the animated root has no local transform");
+    }
+    const atlas::scene::LocalTransform original = *authored;
+
+    constexpr float kShiftX = 11.0F;
+    constexpr float kShiftY = -6.0F;
+    atlas::scene::LocalTransform dragged = original;
+    dragged.position.x += kShiftX;
+    dragged.position.y += kShiftY;
+
+    atlas::edit::History history{scene};
+    if (auto status =
+            history.apply(std::make_unique<atlas::edit::SetLocalTransform>(root, dragged));
+        !status) {
+        return status;
+    }
+    // Another frame of animation on top of the edit, deliberately. If the animator wrote the
+    // authored transform this is the step that would throw the edit away.
+    atlas::animation::advance(scene, clips, kStepNs);
+    scene.update_transforms();
+
+    // Where the root is drawn must be its authored position plus its pose, and the pose is
+    // read back rather than assumed still: the frame above moved the clip on as well.
+    const auto check_placement = [&](const atlas::scene::LocalTransform& expected,
+                                     std::string_view what) -> atlas::Status {
+        const auto* world = scene.world_transform(root);
+        const auto* pose = scene.animation_pose(root);
+        if (world == nullptr || pose == nullptr) {
+            return atlas::fail(atlas::ErrorCode::Internal, "the animated root lost a component");
+        }
+        const atlas::math::Vec2 drawn = atlas::sandbox::decompose(world->matrix).position;
+        const float drift_x = drawn.x - (expected.position.x + pose->position_offset.x);
+        const float drift_y = drawn.y - (expected.position.y + pose->position_offset.y);
+        if (std::abs(drift_x) > kTolerance || std::abs(drift_y) > kTolerance) {
+            return atlas::fail(
+                atlas::ErrorCode::Internal,
+                std::format("{}: the root is drawn at ({:.4f}, {:.4f}), which is not where its "
+                            "authored position and its pose add up to",
+                            what, drawn.x, drawn.y));
+        }
+        return atlas::ok();
+    };
+    if (auto status = check_placement(dragged, "after a drag while animating"); !status) {
+        return status;
+    }
+
+    // Undo takes the drag back and leaves the animation entirely alone, which is the sentence
+    // the whole of ADR-0012 exists to make true. The authored value is compared exactly: undo
+    // restores a recorded transform rather than recomputing one, so anything but equality is
+    // a defect and not a rounding difference.
+    if (!history.undo()) {
+        return atlas::fail(atlas::ErrorCode::Internal, "undoing the drag failed");
+    }
+    scene.update_transforms();
+    const auto* restored = scene.local_transform(root);
+    if (restored == nullptr || restored->position != original.position) {
+        return atlas::fail(atlas::ErrorCode::Internal,
+                           "undoing the drag did not restore the authored position");
+    }
+    if (auto status = check_placement(original, "after undoing the drag"); !status) {
+        return status;
+    }
+    if (scene.animation_pose(root) == nullptr) {
+        return atlas::fail(atlas::ErrorCode::Internal, "undo removed the animation");
+    }
+
+    std::printf("anim check: %d frames, 2 clips, poses match the recorded table, saved bytes "
+                "unchanged, a drag while animating survives and undoes\n",
+                step);
+    return atlas::ok();
+}
+
 [[nodiscard]] atlas::Status run(int argc, const char* const* argv) {
     auto args = atlas::Args::parse(argc, argv);
     if (!args) {
@@ -426,6 +764,10 @@ void step_simulation(atlas::Tick tick) {
 
     if (args->has("scene-check")) {
         return run_scene_check();
+    }
+
+    if (args->has("anim-check")) {
+        return run_anim_check(args->value_or("assets-dir", std::string_view{"assets/source"}));
     }
 
     const auto options = read_options(*args);
@@ -609,13 +951,6 @@ void step_simulation(atlas::Tick tick) {
             } else if (const auto* key = std::get_if<atlas::platform::KeyPressed>(&event)) {
                 if (key->key == atlas::platform::Key::Escape) {
                     quit = true;
-                } else if (key->key == atlas::platform::Key::Space && scene_demo.has_value()) {
-                    // The animation writes the sprite-bearing roots every tick, so an edit to
-                    // one is overwritten within a frame. Pausing is what makes the editor
-                    // usable on this scene at all.
-                    scene_demo->set_animating(!scene_demo->animating());
-                    ATLAS_LOG_INFO(kApp, "demo animation {}",
-                                   scene_demo->animating() ? "running" : "paused");
                 } else if (key->key == atlas::platform::Key::Z && scene_demo.has_value() &&
                            (key->modifiers.control || key->modifiers.super)) {
                     // Already gated: the overlay saw this event first and, for a key, returns
@@ -714,9 +1049,6 @@ void step_simulation(atlas::Tick tick) {
         for (std::uint32_t i = 0; i < ticks_to_run; ++i) {
             const atlas::Tick tick = accumulator->current_tick() + i;
             step_simulation(tick);
-            if (scene_demo.has_value()) {
-                scene_demo->tick(tick, options->ticks_per_second);
-            }
         }
         accumulator->commit(ticks_to_run);
         const auto tick_ns =
@@ -725,6 +1057,15 @@ void step_simulation(atlas::Tick tick) {
                                            .count());
 
         counters.record(frame_ns, tick_ns, ticks_to_run, plan.dropped_ticks);
+
+        // Animation is driven by frame time, not by ticks, and it sits outside the tick loop
+        // on purpose. It is presentation: it reaches no simulation state, nothing it produces
+        // is hashed, and a machine drawing at ninety frames a second must see the same motion
+        // as one drawing at thirty. It writes only the derived pose, so it can run in the same
+        // frame as an edit without either overwriting the other.
+        if (scene_demo.has_value()) {
+            scene_demo->advance(frame_ns);
+        }
 
         // A minimised window has no image to draw into. The simulation carries on; only
         // presentation is skipped.
