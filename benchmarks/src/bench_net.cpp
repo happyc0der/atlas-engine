@@ -56,11 +56,17 @@ namespace {
 
 using atlas::bench::Result;
 
+/// Abort rather than exit, which is what every other benchmark here does: a benchmark that
+/// cannot set itself up has nothing to unwind, and a measurement taken after a failed setup
+/// would be a number with no meaning.
+[[noreturn]] void die(const std::string& why) {
+    std::fprintf(stderr, "benchmark setup failed: %s\n", why.c_str());
+    std::abort();
+}
+
 void require(const atlas::Status& status, std::string_view what) {
     if (!status) {
-        std::fprintf(stderr, "benchmark setup failed (%s): %s\n", std::string{what}.c_str(),
-                     std::string{status.error().message()}.c_str());
-        std::exit(1);
+        die(std::format("{}: {}", what, status.error().message()));
     }
 }
 
@@ -110,8 +116,7 @@ struct Participant {
         for (const std::size_t commands : {std::size_t{0}, std::size_t{8}}) {
             auto hub = atlas::net::LoopbackHub::create({.peer_count = peers});
             if (!hub) {
-                std::fprintf(stderr, "benchmark setup failed: no hub\n");
-                std::exit(1);
+                die("no hub");
             }
 
             std::vector<std::unique_ptr<Participant>> table;
@@ -121,8 +126,7 @@ struct Participant {
                 require(participant->queue.register_handler(kPoke, poke_handler()), "handler");
                 auto session = atlas::net::Session::create((*hub)->end(i), {});
                 if (!session) {
-                    std::fprintf(stderr, "benchmark setup failed: no session\n");
-                    std::exit(1);
+                    die("no session");
                 }
                 participant->session = *std::move(session);
                 table.push_back(std::move(participant));
@@ -132,11 +136,10 @@ struct Participant {
             // this measures.
             for (int attempt = 0; attempt < 64; ++attempt) {
                 for (auto& participant : table) {
-                    auto report =
+                    const auto report =
                         participant->session->poll(0, participant->queue, participant->gate);
                     if (!report) {
-                        std::fprintf(stderr, "benchmark setup failed: handshake\n");
-                        std::exit(1);
+                        die("handshake");
                     }
                 }
             }
@@ -153,11 +156,10 @@ struct Participant {
                                 "send_turn");
                     }
                     for (auto& participant : table) {
-                        auto report =
+                        const auto report =
                             participant->session->poll(0, participant->queue, participant->gate);
                         if (!report) {
-                            std::fprintf(stderr, "benchmark run failed: poll\n");
-                            std::exit(1);
+                            die("poll");
                         }
                         // Retired so the gate's window does not run out over two thousand
                         // iterations, which would turn this into a measurement of refusals.
@@ -177,19 +179,19 @@ struct Participant {
             "net/encode_turn", std::format("commands={}", commands), 20'000, 2'000, [&message] {
                 const auto bytes = atlas::net::encode(message);
                 if (!bytes) {
-                    std::exit(1);
+                    die("encode");
                 }
             }));
 
         const auto encoded = atlas::net::encode(message);
         if (!encoded) {
-            std::exit(1);
+            die("encode");
         }
         results.push_back(atlas::bench::measure(
             "net/decode_turn", std::format("commands={}", commands), 20'000, 2'000, [&encoded] {
                 const auto back = atlas::net::decode(*encoded);
                 if (!back) {
-                    std::exit(1);
+                    die("decode");
                 }
             }));
     }
