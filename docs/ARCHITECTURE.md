@@ -24,6 +24,7 @@ graph TD
   edit[atlas::edit<br/>undoable scene commands, history]
   animation[atlas::animation<br/>clips, evaluation, derived pose]
   simulation[atlas::simulation<br/>ticks, commands, systems, hashing]
+  net[atlas::net<br/>lockstep session, turns, loopback link]
   runtime[atlas::runtime<br/>deferred: composition, main loop]
   tools[atlas::tools<br/>editor shell, panels]
   apps[apps: sandbox, lab, common<br/>composition roots, not modules]
@@ -60,6 +61,8 @@ graph TD
   animation --> scene
   simulation --> core
   simulation --> tasks
+  net --> core
+  net --> simulation
   runtime --> assets
   runtime --> core
   runtime --> math

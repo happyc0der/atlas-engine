@@ -28,6 +28,7 @@ set(ATLAS_MODULES
     edit
     animation
     simulation
+    net
     runtime
     tools
     CACHE INTERNAL "All known Atlas module names")
@@ -61,6 +62,15 @@ set(ATLAS_MODULE_DEPS_edit              "core;scene" CACHE INTERNAL "")
 # presentation, it is hashed nowhere, and what draws the result is not its concern.
 set(ATLAS_MODULE_DEPS_animation         "core;math;assets;scene" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_simulation        "core;tasks" CACHE INTERNAL "")
+
+# net: deterministic lockstep over the command queue, and nothing else (ADR-0014). It holds
+# what is genuinely about peers — a bounded inbox, the message codec, an in-memory link, and a
+# session — while the turn gate and the command-source interface live in simulation, because a
+# mod is also a command source and must not depend on networking for an interface about the
+# command queue. No transport edge: there is no socket in this milestone by decision, and
+# adding one is a separate change with its own ADR. It must never depend on renderer, scene or
+# platform: a peer exchanges commands and hashes, and nothing it does is presentation.
+set(ATLAS_MODULE_DEPS_net               "core;simulation" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_runtime           "core;math;platform;rhi;renderer;assets;scene;simulation" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_rhi_internal      "core;platform;rhi" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_tools             "core;math;platform;platform_internal;rhi;rhi_internal;renderer;assets;scene;edit;simulation" CACHE INTERNAL "")
