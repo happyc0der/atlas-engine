@@ -13,6 +13,7 @@ atlas_add_module(simulation
         src/replay.cpp
         src/save.cpp
         src/schedule.cpp
+        src/turn_gate.cpp
         src/world.cpp
     HEADERS
         include/atlas/simulation/tick_accumulator.hpp
@@ -26,6 +27,7 @@ atlas_add_module(simulation
         include/atlas/simulation/save.hpp
         include/atlas/simulation/snapshot.hpp
         include/atlas/simulation/table.hpp
+        include/atlas/simulation/turn_gate.hpp
         include/atlas/simulation/world.hpp
     DEPENDS
         core

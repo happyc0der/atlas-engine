@@ -10,6 +10,7 @@ atlas_add_test(simulation
         test_kernel.cpp
         test_save.cpp
         test_snapshot.cpp
+        test_turn_gate.cpp
     DEPENDS
         atlas::simulation
     LABELS
