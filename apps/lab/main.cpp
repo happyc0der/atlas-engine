@@ -960,9 +960,12 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
         for (std::uint32_t i = 0; i < ticks_to_run; ++i) {
             const atlas::Tick tick = sim.kernel->current_tick();
             if (options->commands_per_tick > 0) {
+                // Stamped with this peer's own identifier. Solo that is `Local`, which is
+                // what it has always been; under lockstep it becomes the identifier the
+                // handshake assigned, because `Local` means peer zero rather than "me".
                 if (auto s = atlas::lab::submit_synthetic_commands(
                         sim.commands, tick, options->commands_per_tick, options->seed,
-                        sim.lab.layout.cell_count());
+                        sim.lab.layout.cell_count(), atlas::sim::SourceId::Local);
                     !s) {
                     return std::unexpected(std::move(s).error().context("synthetic commands"));
                 }
@@ -976,8 +979,16 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
             last_applied = report->commands_applied;
             last_rejected = report->commands_rejected;
             if (recorder.has_value()) {
-                recorder->record_commands(report->applied_commands);
-                recorder->record_tick(*report);
+                // A recorder that has hit its limit stops the run rather than carrying on
+                // producing a recording it can no longer write. Carrying on would mean
+                // finishing the run, writing a file, and finding out at load time that the
+                // tail is missing — which is the failure this guard exists to remove.
+                if (auto status = recorder->record_commands(report->applied_commands); !status) {
+                    return std::unexpected(std::move(status).error().context("recording a tick"));
+                }
+                if (auto status = recorder->record_tick(*report); !status) {
+                    return std::unexpected(std::move(status).error().context("recording a tick"));
+                }
             }
         }
         accumulator->commit(ticks_run);
@@ -1222,8 +1233,12 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
     }
     if (recorder.has_value()) {
         const auto replay = recorder->take();
+        auto bytes = replay.to_bytes();
+        if (!bytes) {
+            return std::unexpected(std::move(bytes).error().context("writing the replay"));
+        }
         if (auto s = atlas::lab::write_file_bytes_atomically(
-                std::filesystem::path{options->record_path}, replay.to_bytes());
+                std::filesystem::path{options->record_path}, *bytes);
             !s) {
             return std::unexpected(std::move(s).error().context("writing the replay"));
         }

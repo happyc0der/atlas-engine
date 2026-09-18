@@ -23,14 +23,19 @@
 #include <vector>
 
 using atlas::ErrorCode;
+using atlas::Tick;
+using atlas::sim::check_writable;
 using atlas::sim::Command;
 using atlas::sim::command_type;
 using atlas::sim::CommandHandler;
 using atlas::sim::CommandType;
+using atlas::sim::HashCheckpoint;
 using atlas::sim::Kernel;
 using atlas::sim::KernelConfig;
+using atlas::sim::kMaxReplaySystemHashes;
 using atlas::sim::play;
 using atlas::sim::Replay;
+using atlas::sim::ReplayLimits;
 using atlas::sim::ReplayRecorder;
 using atlas::sim::SourceId;
 using atlas::sim::World;
@@ -126,8 +131,8 @@ struct Scenario {
 
         auto report = kernel.step();
         REQUIRE(report.has_value());
-        recorder.record_commands(report->applied_commands);
-        recorder.record_tick(*report);
+        REQUIRE(recorder.record_commands(report->applied_commands).has_value());
+        REQUIRE(recorder.record_tick(*report).has_value());
     }
 
     return recorder.take();
@@ -165,12 +170,78 @@ TEST_CASE("replaying repeatedly keeps matching", "[sim][determinism]") {
     }
 }
 
+TEST_CASE("a recorder refuses rather than producing a recording nothing can read",
+          "[sim][determinism]") {
+    // The writer could not fail and the reader could refuse, so a long enough run produced a
+    // file that was written successfully and would never load again. That is a fake success
+    // path, and it was found while lifting the command codec out of replay.cpp for M14.
+    //
+    // The limits are lowered here rather than reached honestly: tripping the real ceiling needs
+    // ten million commands, which is half a gigabyte of allocation to prove a comparison.
+    Scenario scenario;
+    Kernel kernel(scenario.h.world, scenario.h.schedule, scenario.h.commands,
+                  KernelConfig{.seed = 7, .record_applied_commands = true});
+
+    ReplayRecorder recorder(7, 0, scenario.h.world.hash(), 1,
+                            ReplayLimits{.max_commands = 4, .max_checkpoints = 1000});
+
+    std::size_t recorded = 0;
+    bool refused = false;
+    for (int tick = 0; tick < 10 && !refused; ++tick) {
+        REQUIRE(scenario.h.commands
+                    .submit(static_cast<Tick>(tick), SourceId{1}, kBump, bump_payload(0, 1))
+                    .has_value());
+        const auto report = kernel.step();
+        REQUIRE(report.has_value());
+
+        const auto status = recorder.record_commands(report->applied_commands);
+        if (!status) {
+            refused = true;
+            CHECK(status.error().code() == atlas::ErrorCode::Exhausted);
+            // The message names the limit, because "recording stopped" without a number is not
+            // something a person can act on.
+            CHECK(status.error().message().contains("at most 4"));
+            break;
+        }
+        recorded += report->applied_commands.size();
+        REQUIRE(recorder.record_tick(*report).has_value());
+    }
+
+    CHECK(refused);
+    CHECK(recorded == 4);
+
+    // And the recording that stopped is still a recording: refusing whole rather than
+    // truncating is what keeps the part already captured usable.
+    const Replay partial = recorder.take();
+    const auto written = partial.to_bytes();
+    REQUIRE(written.has_value());
+    CHECK(Replay::from_bytes(*written).has_value());
+}
+
+TEST_CASE("a recording larger than a reader accepts is refused before it is written",
+          "[sim][determinism]") {
+    // The belt to the recorder's braces, for a Replay assembled by hand rather than recorded.
+    // Checked with the limit rather than against it: materialising ten million commands to trip
+    // the real ceiling costs hundreds of megabytes to prove one comparison, so this asserts the
+    // shape of the guard and the recorder's test above asserts that it fires.
+    Replay replay;
+    CHECK(check_writable(replay).has_value());
+
+    replay.checkpoints.push_back(HashCheckpoint{.tick = 0, .state_hash = 1});
+    replay.checkpoints.back().system_hashes.resize(kMaxReplaySystemHashes + 1);
+    const auto refused = check_writable(replay);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().code() == atlas::ErrorCode::Exhausted);
+    CHECK_FALSE(replay.to_bytes().has_value());
+}
+
 TEST_CASE("a recording survives being written and read back", "[sim][determinism]") {
     // A replay that only works in the process that made it is not a replay.
     const Replay recording = record_run(1234, 80);
 
-    const auto bytes = recording.to_bytes();
-    const auto restored = Replay::from_bytes(bytes);
+    const auto written = recording.to_bytes();
+    REQUIRE(written.has_value());
+    const auto restored = Replay::from_bytes(*written);
     REQUIRE(restored.has_value());
 
     CHECK(restored->seed == recording.seed);
@@ -322,8 +393,8 @@ TEST_CASE("a replay with sparse checkpoints still checks them", "[sim][determini
     for (int i = 0; i < 100; ++i) {
         auto report = kernel.step();
         REQUIRE(report.has_value());
-        recorder.record_commands(report->applied_commands);
-        recorder.record_tick(*report);
+        REQUIRE(recorder.record_commands(report->applied_commands).has_value());
+        REQUIRE(recorder.record_tick(*report).has_value());
     }
 
     const Replay recording = recorder.take();
@@ -339,7 +410,9 @@ TEST_CASE("a replay with sparse checkpoints still checks them", "[sim][determini
 
 TEST_CASE("a corrupt recording is refused", "[sim][determinism]") {
     const Replay recording = record_run(17, 20);
-    auto bytes = recording.to_bytes();
+    auto written = recording.to_bytes();
+    REQUIRE(written.has_value());
+    std::vector<std::byte> bytes = *std::move(written);
 
     SECTION("wrong magic") {
         bytes[0] = std::byte{0xFF};

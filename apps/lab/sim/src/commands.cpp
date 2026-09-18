@@ -68,7 +68,8 @@ Status register_lab_commands(sim::CommandQueue& commands, const TableIds& ids,
 }
 
 Status submit_synthetic_commands(sim::CommandQueue& commands, Tick target, std::uint32_t count,
-                                 std::uint64_t seed, std::uint32_t cell_count) {
+                                 std::uint64_t seed, std::uint32_t cell_count,
+                                 sim::SourceId source) {
     if (cell_count == 0) {
         return ok();
     }
@@ -77,8 +78,7 @@ Status submit_synthetic_commands(sim::CommandQueue& commands, Tick target, std::
         const auto cell = static_cast<std::uint32_t>(stream.next_below(cell_count));
         const auto color = static_cast<std::uint8_t>(stream.next_below(kColorCount));
         const auto payload = encode_set_color_index(cell, color);
-        if (auto status = commands.submit(target, sim::SourceId::Local, kSetColorIndex, payload);
-            !status) {
+        if (auto status = commands.submit(target, source, kSetColorIndex, payload); !status) {
             return status;
         }
     }

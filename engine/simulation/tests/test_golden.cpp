@@ -19,6 +19,7 @@
 /// was measured, and on what, is in docs/DETERMINISM.md.
 
 #include <atlas/core/assert.hpp>
+#include <atlas/simulation/golden.hpp>
 #include <atlas/simulation/kernel.hpp>
 
 #include "synthetic_systems.hpp"
@@ -29,6 +30,11 @@
 
 using atlas::sim::Kernel;
 using atlas::sim::KernelConfig;
+using atlas::sim::kGoldenAllTicks;
+using atlas::sim::kGoldenFinalState;
+using atlas::sim::kGoldenRows;
+using atlas::sim::kGoldenSeed;
+using atlas::sim::kGoldenTicks;
 using atlas::sim::testing::Harness;
 using atlas::sim::testing::increment_values;
 using atlas::sim::testing::random_into_counter;
@@ -41,10 +47,9 @@ const bool kMainThreadMarked = [] {
     return true;
 }();
 
-/// Fixed in every respect: the seed, the row count, the systems, the tick count.
-constexpr std::uint64_t kGoldenSeed = 0x0A71'A5'0000'0001ULL;
-constexpr std::size_t kGoldenRows = 64;
-constexpr std::uint64_t kGoldenTicks = 500;
+// The scenario and its recorded hashes are declared in <atlas/simulation/golden.hpp>. They
+// moved there in M14: a lockstep handshake exchanges them to decide whether two builds can be
+// compared at all, and a module cannot include a test.
 
 struct Golden {
     std::uint64_t final_state = 0;
@@ -92,8 +97,8 @@ TEST_CASE("the fixed scenario still produces its recorded hashes", "[sim][golden
     // hash restored and everything else as it is now, this scenario still produced
     // 0xCECE73AEEC22FBCA and 0xD71CEC7C1078DD46, so the simulation's state is bit-identical
     // and only the function that reduces it to a number changed.
-    CHECK(golden.final_state == 0xAA82'430D'E232'1AFFULL);
-    CHECK(golden.all_ticks == 0x2603'546C'5687'E95EULL);
+    CHECK(golden.final_state == kGoldenFinalState);
+    CHECK(golden.all_ticks == kGoldenAllTicks);
 }
 
 TEST_CASE("the fixed scenario is stable within a run", "[sim][golden]") {

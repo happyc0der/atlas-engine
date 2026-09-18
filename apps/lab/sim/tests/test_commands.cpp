@@ -64,8 +64,12 @@ TEST_CASE("the cell bound follows the grid rather than the registration", "[lab]
 TEST_CASE("synthetic commands are a function of seed and tick", "[lab][commands]") {
     LabHarness a(kSmall);
     LabHarness b(kSmall);
-    REQUIRE(atlas::lab::submit_synthetic_commands(a.commands, 5, 3, 99, 256).has_value());
-    REQUIRE(atlas::lab::submit_synthetic_commands(b.commands, 5, 3, 99, 256).has_value());
+    REQUIRE(atlas::lab::submit_synthetic_commands(a.commands, 5, 3, 99, 256,
+                                                  atlas::sim::SourceId::Local)
+                .has_value());
+    REQUIRE(atlas::lab::submit_synthetic_commands(b.commands, 5, 3, 99, 256,
+                                                  atlas::sim::SourceId::Local)
+                .has_value());
     const auto da = a.commands.drain(5);
     const auto db = b.commands.drain(5);
     REQUIRE(da.size() == 3);
@@ -74,7 +78,9 @@ TEST_CASE("synthetic commands are a function of seed and tick", "[lab][commands]
         CHECK(da[i].payload == db[i].payload);
     }
     LabHarness c(kSmall);
-    REQUIRE(atlas::lab::submit_synthetic_commands(c.commands, 5, 3, 100, 256).has_value());
+    REQUIRE(atlas::lab::submit_synthetic_commands(c.commands, 5, 3, 100, 256,
+                                                  atlas::sim::SourceId::Local)
+                .has_value());
     const auto dc = c.commands.drain(5);
     bool any_differs = false;
     for (std::size_t i = 0; i < 3; ++i) {

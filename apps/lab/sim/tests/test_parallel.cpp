@@ -50,7 +50,8 @@ struct Outcome {
     Outcome outcome;
     for (std::uint64_t i = 0; i < kTicks; ++i) {
         REQUIRE(atlas::lab::submit_synthetic_commands(h.commands, kernel.current_tick(), 3, kSeed,
-                                                      h.lab.layout.cell_count())
+                                                      h.lab.layout.cell_count(),
+                                                      atlas::sim::SourceId::Local)
                     .has_value());
         const auto report = kernel.step();
         REQUIRE(report.has_value());

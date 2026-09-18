@@ -63,6 +63,18 @@ constexpr std::size_t kTableSectionOverhead = 4 + 8;
     }
     header.hash_algorithm_version = *algorithm;
 
+    // Checked here rather than only in `load`, which is where it used to live. `read_header` is
+    // the cheap peek a caller makes to decide whether a file is worth opening — and it was
+    // answering "yes" for a save whose hashes this build cannot compare against anything. A peek
+    // that reports compatibility it has not checked is worse than no peek.
+    if (header.hash_algorithm_version != kHashAlgorithmVersion) {
+        return std::unexpected(
+            Error(ErrorCode::VersionMismatch,
+                  std::format("this save records hashes from algorithm version {}, and this build "
+                              "uses version {}; the stored hash cannot be compared",
+                              header.hash_algorithm_version, kHashAlgorithmVersion)));
+    }
+
     auto tick = reader.read_u64();
     if (!tick) {
         return std::unexpected(std::move(tick).error().context("reading the tick"));
@@ -152,14 +164,6 @@ Status load(World& world, Kernel& kernel, CommandQueue& commands,
     auto header = read_header_from(reader);
     if (!header) {
         return std::unexpected(std::move(header).error());
-    }
-
-    if (header->hash_algorithm_version != kHashAlgorithmVersion) {
-        return std::unexpected(
-            Error(ErrorCode::VersionMismatch,
-                  std::format("this save records hashes from algorithm version {}, and this build "
-                              "uses version {}; the stored hash cannot be compared",
-                              header->hash_algorithm_version, kHashAlgorithmVersion)));
     }
 
     auto table_count = reader.read_count(kMaxTables, kTableSectionOverhead);

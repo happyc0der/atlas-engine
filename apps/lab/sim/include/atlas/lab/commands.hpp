@@ -50,8 +50,15 @@ encode_set_color_index(std::uint32_t cell, std::uint8_t color) noexcept;
 /// A deterministic command source for headless runs, without which a replay test proves far
 /// less than it appears to: `count` set_color_index commands for `target`, drawn from a
 /// stream keyed by seed and tick. Failure: whatever submit reports.
+///
+/// `source` is a parameter rather than `SourceId::Local`, which it was until M14. Under
+/// lockstep `Local` is a *role* — it means peer zero, not "whoever is running this" — so a peer
+/// that stamped `Local` would be signing another peer's name to its own commands, and the two
+/// streams would collide in the total order that makes lockstep work. The stream the payloads
+/// are drawn from is keyed by seed and tick only, so two peers asked for the same seed produce
+/// the same commands under different names, which is exactly what a test wants.
 [[nodiscard]] Status submit_synthetic_commands(sim::CommandQueue& commands, Tick target,
                                                std::uint32_t count, std::uint64_t seed,
-                                               std::uint32_t cell_count);
+                                               std::uint32_t cell_count, sim::SourceId source);
 
 }  // namespace atlas::lab

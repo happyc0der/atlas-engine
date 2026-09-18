@@ -168,21 +168,21 @@ std::vector<Result> run() {
     // per-cell work, is what is measured. Two commands per tick, as the golden test does.
     for (const std::uint64_t ticks : {1'000ULL, 10'000ULL, 100'000ULL}) {
         results.push_back(with_units(
-            atlas::bench::measure("simulation/run", std::format("ticks={} cells=256", ticks),
-                                  ticks >= 100'000 ? 1 : 3, 1,
-                                  [&] {
-                                      auto lab = make_lab(16, 4);
-                                      atlas::sim::Kernel kernel(
-                                          lab->world.world, lab->schedule, lab->commands,
-                                          {.seed = 11, .record_system_hashes = false});
-                                      for (std::uint64_t i = 0; i < ticks; ++i) {
-                                          require(atlas::lab::submit_synthetic_commands(
-                                                      lab->commands, kernel.current_tick(), 2, 11,
-                                                      lab->world.layout.cell_count()),
-                                                  "submitting commands");
-                                          step_or_die(kernel);
-                                      }
-                                  }),
+            atlas::bench::measure(
+                "simulation/run", std::format("ticks={} cells=256", ticks),
+                ticks >= 100'000 ? 1 : 3, 1,
+                [&] {
+                    auto lab = make_lab(16, 4);
+                    atlas::sim::Kernel kernel(lab->world.world, lab->schedule, lab->commands,
+                                              {.seed = 11, .record_system_hashes = false});
+                    for (std::uint64_t i = 0; i < ticks; ++i) {
+                        require(atlas::lab::submit_synthetic_commands(
+                                    lab->commands, kernel.current_tick(), 2, 11,
+                                    lab->world.layout.cell_count(), atlas::sim::SourceId::Local),
+                                "submitting commands");
+                        step_or_die(kernel);
+                    }
+                }),
             ticks, "ticks"));
     }
 

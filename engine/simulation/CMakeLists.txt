@@ -18,6 +18,7 @@ atlas_add_module(simulation
         include/atlas/simulation/tick_accumulator.hpp
         include/atlas/simulation/save_stream.hpp
         include/atlas/simulation/command.hpp
+        include/atlas/simulation/golden.hpp
         include/atlas/simulation/kernel.hpp
         include/atlas/simulation/rng.hpp
         include/atlas/simulation/schedule.hpp

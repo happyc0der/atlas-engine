@@ -31,9 +31,9 @@ struct Golden {
     golden.initial = h.lab.world.hash();
     atlas::Hasher over_time;
     for (std::uint64_t i = 0; i < kGoldenTicks; ++i) {
-        REQUIRE(atlas::lab::submit_synthetic_commands(h.commands, kernel.current_tick(),
-                                                      kGoldenCommandsPerTick, kGoldenKernelSeed,
-                                                      h.lab.layout.cell_count())
+        REQUIRE(atlas::lab::submit_synthetic_commands(
+                    h.commands, kernel.current_tick(), kGoldenCommandsPerTick, kGoldenKernelSeed,
+                    h.lab.layout.cell_count(), atlas::sim::SourceId::Local)
                     .has_value());
         const auto report = kernel.step();
         REQUIRE(report.has_value());

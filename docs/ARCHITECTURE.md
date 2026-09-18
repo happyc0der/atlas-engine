@@ -128,6 +128,7 @@ declaration. Its only permitted consumer is `atlas::rhi`.
 | assets | Virtual paths, asset IDs, importers, load states, hot reload | Touches the GPU directly |
 | audio | The output device, the mixer, clips and voices | Reaches simulation or scene state, or produces anything that is hashed |
 | scene | Presentation entities, transforms, hierarchy, serialization | Is the grand-strategy database |
+| animation | Clip evaluation, the clip cache, and the derived pose it writes | Writes an authored component, or produces anything that is hashed |
 | simulation | Ticks, commands, system contracts, RNG, hashing, replay, snapshots | Contains game rules |
 | runtime | Composition, main loop, subsystem lifetimes | Depends on tools or editor code |
 | edit | Undoable scene commands, the history that applies them | Holds a UI type; is the simulation's command queue; is depended on by anything that draws |

@@ -33,6 +33,30 @@ namespace atlas::sim {
 inline constexpr std::uint64_t kReplayMagic = 0x59'41'4C'50'52'41'56'00ULL;  // "\0VARPLAY"
 inline constexpr std::uint32_t kReplayFormatVersion = 1;
 
+/// Bounds on what a recording may hold, enforced when it is written as well as when it is read.
+///
+/// These were file-local constants that only the reader consulted, and the writer could
+/// therefore produce a file the reader refused: `record_commands` appended without limit,
+/// `to_bytes` wrote without checking, and `from_bytes` then rejected the result. A recording
+/// that is written successfully and is permanently unreadable is a fake success path, and M14
+/// found it while lifting the command codec out of this file.
+///
+/// They live here rather than in the source so that the writer and the reader share one number
+/// instead of two that happen to agree.
+inline constexpr std::size_t kMaxReplayCommands = 10'000'000;
+inline constexpr std::size_t kMaxReplayCheckpoints = 10'000'000;
+inline constexpr std::size_t kMaxReplaySystemHashes = 4096;
+
+/// What a recorder will accept before it refuses.
+///
+/// The limits are configurable only so that the guard has a test that runs in a millisecond
+/// instead of one that allocates ten million commands to trip it. Nothing in the engine sets
+/// them to anything but the defaults.
+struct ReplayLimits {
+    std::size_t max_commands = kMaxReplayCommands;
+    std::size_t max_checkpoints = kMaxReplayCheckpoints;
+};
+
 /// A state hash recorded at a particular tick.
 struct HashCheckpoint {
     Tick tick = 0;
@@ -60,9 +84,22 @@ struct Replay {
     /// Hashes at intervals, always including the last tick.
     std::vector<HashCheckpoint> checkpoints;
 
-    [[nodiscard]] std::vector<std::byte> to_bytes() const;
+    /// Fails when this recording is larger than `from_bytes` would accept.
+    ///
+    /// A `Result` rather than a plain vector because the writer used to be unable to fail while
+    /// the reader could refuse, which meant a long enough run produced a file nothing could
+    /// ever read. `ReplayRecorder` refuses at the limit as the run happens, so this only fires
+    /// for a `Replay` assembled by hand — belt and braces, and the recorder's guard is the one
+    /// with a fast test.
+    [[nodiscard]] Result<std::vector<std::byte>> to_bytes() const;
     [[nodiscard]] static Result<Replay> from_bytes(std::span<const std::byte> bytes);
 };
+
+/// Whether a recording is small enough to be written and read back.
+///
+/// Separated from `to_bytes` so a caller that is about to record for a long time can ask
+/// without serialising anything.
+[[nodiscard]] Status check_writable(const Replay& replay);
 
 /// Records a run as it happens.
 ///
@@ -74,13 +111,18 @@ class ReplayRecorder {
     /// `checkpoint_interval` of 1 records every tick, which is what a test wants and what a
     /// long run cannot afford.
     ReplayRecorder(std::uint64_t seed, Tick first_tick, std::uint64_t initial_state_hash,
-                   std::uint64_t checkpoint_interval = 1);
+                   std::uint64_t checkpoint_interval = 1, ReplayLimits limits = {});
 
     /// Record the commands drained for a tick, before they are applied.
-    void record_commands(std::span<const Command> commands);
+    ///
+    /// Fails with `Exhausted` when the recording is already as large as a reader will accept,
+    /// naming the limit. Refusing here rather than at `to_bytes` means a long run learns it has
+    /// stopped recording at the moment it stops, not after it has finished and the file will not
+    /// load. The recording up to that point stays valid and readable.
+    [[nodiscard]] Status record_commands(std::span<const Command> commands);
 
-    /// Record what a tick produced.
-    void record_tick(const TickReport& report);
+    /// Record what a tick produced. Fails for the same reason and in the same way.
+    [[nodiscard]] Status record_tick(const TickReport& report);
 
     [[nodiscard]] const Replay& replay() const noexcept { return m_replay; }
 
@@ -90,6 +132,7 @@ class ReplayRecorder {
     Replay m_replay;
     std::uint64_t m_interval;
     std::uint64_t m_ticks_recorded = 0;
+    ReplayLimits m_limits;
 };
 
 /// Where and how two runs stopped agreeing.

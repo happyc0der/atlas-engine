@@ -12,10 +12,9 @@ namespace {
 
 constexpr log::Category kSim{"sim"};
 
-/// Bounds on what a recording may claim, since one may come from anywhere.
-constexpr std::size_t kMaxCommands = 10'000'000;
-constexpr std::size_t kMaxCheckpoints = 10'000'000;
-constexpr std::size_t kMaxSystemHashes = 4096;
+// The bounds on what a recording may hold are declared in replay.hpp now, so that the writer
+// checks the same numbers the reader enforces. They used to live here, where only the reader
+// could see them, and a recording past them was written successfully and never read again.
 
 /// Smallest a command can encode to: tick, source, sequence, type, payload length.
 constexpr std::size_t kCommandOverhead = 8 + 4 + 8 + 4 + 8;
@@ -74,7 +73,41 @@ void write_command(SaveWriter& writer, const Command& command) {
 
 }  // namespace
 
-std::vector<std::byte> Replay::to_bytes() const {
+Status check_writable(const Replay& replay) {
+    if (replay.commands.size() > kMaxReplayCommands) {
+        return std::unexpected(
+            Error(ErrorCode::Exhausted,
+                  std::format("this recording holds {} commands and a reader accepts at most {}",
+                              replay.commands.size(), kMaxReplayCommands)));
+    }
+    if (replay.checkpoints.size() > kMaxReplayCheckpoints) {
+        return std::unexpected(Error(
+            ErrorCode::Exhausted,
+            std::format("this recording holds {} checkpoints and a reader accepts at most {}. "
+                        "A larger checkpoint interval records fewer.",
+                        replay.checkpoints.size(), kMaxReplayCheckpoints)));
+    }
+    for (const HashCheckpoint& checkpoint : replay.checkpoints) {
+        if (checkpoint.system_hashes.size() > kMaxReplaySystemHashes) {
+            return std::unexpected(
+                Error(ErrorCode::Exhausted,
+                      std::format("the checkpoint at tick {} holds {} system hashes and a reader "
+                                  "accepts at most {}",
+                                  checkpoint.tick, checkpoint.system_hashes.size(),
+                                  kMaxReplaySystemHashes)));
+        }
+    }
+    return {};
+}
+
+Result<std::vector<std::byte>> Replay::to_bytes() const {
+    // Before a byte is written, not after. The reader's limits are the writer's limits, and a
+    // recording that would fail to load is refused here where the caller can still do something
+    // about it.
+    if (auto status = check_writable(*this); !status) {
+        return std::unexpected(std::move(status).error());
+    }
+
     SaveWriter writer;
 
     writer.write_u64(kReplayMagic);
@@ -124,10 +157,21 @@ Result<Replay> Replay::from_bytes(std::span<const std::byte> bytes) {
         return std::unexpected(std::move(format).error());
     }
     replay.format_version = *format;
-    if (replay.format_version != kReplayFormatVersion) {
+    // Newer and older are refused separately, as the save format already does. One equality
+    // test covering both directions told somebody with an old recording the same thing it told
+    // somebody with a new one, and those two people need to do different things.
+    if (replay.format_version > kReplayFormatVersion) {
+        return std::unexpected(Error(
+            ErrorCode::VersionMismatch,
+            std::format("this replay is version {}, and this build understands up to {}. Playing "
+                        "it would silently ignore whatever the newer version added.",
+                        replay.format_version, kReplayFormatVersion)));
+    }
+    if (replay.format_version < kReplayFormatVersion) {
         return std::unexpected(
             Error(ErrorCode::VersionMismatch,
-                  std::format("this replay is version {} and this build reads version {}",
+                  std::format("this replay is version {}, and this build reads only version {}. No "
+                              "migration exists yet.",
                               replay.format_version, kReplayFormatVersion)));
     }
 
@@ -155,7 +199,7 @@ Result<Replay> Replay::from_bytes(std::span<const std::byte> bytes) {
         *field = *value;
     }
 
-    auto command_count = reader.read_count(kMaxCommands, kCommandOverhead);
+    auto command_count = reader.read_count(kMaxReplayCommands, kCommandOverhead);
     if (!command_count) {
         return std::unexpected(std::move(command_count).error().context("the command count"));
     }
@@ -169,7 +213,7 @@ Result<Replay> Replay::from_bytes(std::span<const std::byte> bytes) {
         replay.commands.push_back(std::move(*command));
     }
 
-    auto checkpoint_count = reader.read_count(kMaxCheckpoints, kCheckpointOverhead);
+    auto checkpoint_count = reader.read_count(kMaxReplayCheckpoints, kCheckpointOverhead);
     if (!checkpoint_count) {
         return std::unexpected(std::move(checkpoint_count).error().context("the checkpoint count"));
     }
@@ -189,7 +233,7 @@ Result<Replay> Replay::from_bytes(std::span<const std::byte> bytes) {
         }
         checkpoint.state_hash = *hash;
 
-        auto system_count = reader.read_count(kMaxSystemHashes, 12);
+        auto system_count = reader.read_count(kMaxReplaySystemHashes, 12);
         if (!system_count) {
             return std::unexpected(std::move(system_count).error().context("a system hash count"));
         }
@@ -218,18 +262,38 @@ Result<Replay> Replay::from_bytes(std::span<const std::byte> bytes) {
 }
 
 ReplayRecorder::ReplayRecorder(std::uint64_t seed, Tick first_tick,
-                               std::uint64_t initial_state_hash, std::uint64_t checkpoint_interval)
-    : m_interval(checkpoint_interval == 0 ? 1 : checkpoint_interval) {
+                               std::uint64_t initial_state_hash, std::uint64_t checkpoint_interval,
+                               ReplayLimits limits)
+    : m_interval(checkpoint_interval == 0 ? 1 : checkpoint_interval), m_limits(limits) {
     m_replay.seed = seed;
     m_replay.first_tick = first_tick;
     m_replay.initial_state_hash = initial_state_hash;
 }
 
-void ReplayRecorder::record_commands(std::span<const Command> commands) {
+Status ReplayRecorder::record_commands(std::span<const Command> commands) {
+    // Refused whole rather than truncated. Half a tick's commands would replay as a run nobody
+    // performed, which is worse than a recording that stops and says where.
+    if (m_replay.commands.size() + commands.size() > m_limits.max_commands) {
+        return std::unexpected(Error(
+            ErrorCode::Exhausted,
+            std::format("this recording already holds {} commands and a reader accepts at most "
+                        "{}; recording stopped rather than producing a file that cannot be read",
+                        m_replay.commands.size(), m_limits.max_commands)));
+    }
     m_replay.commands.insert(m_replay.commands.end(), commands.begin(), commands.end());
+    return {};
 }
 
-void ReplayRecorder::record_tick(const TickReport& report) {
+Status ReplayRecorder::record_tick(const TickReport& report) {
+    if (m_ticks_recorded % m_interval == 0 &&
+        m_replay.checkpoints.size() >= m_limits.max_checkpoints) {
+        return std::unexpected(
+            Error(ErrorCode::Exhausted,
+                  std::format("this recording already holds {} checkpoints and a reader accepts at "
+                              "most {}; a larger checkpoint interval records fewer",
+                              m_replay.checkpoints.size(), m_limits.max_checkpoints)));
+    }
+
     ++m_replay.tick_count;
     ++m_ticks_recorded;
 
@@ -240,6 +304,7 @@ void ReplayRecorder::record_tick(const TickReport& report) {
             .system_hashes = report.system_hashes,
         });
     }
+    return {};
 }
 
 Result<ReplayResult> play(const Replay& replay, World& world, Schedule& schedule,

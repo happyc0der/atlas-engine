@@ -28,7 +28,8 @@ TEST_CASE("save, load and continue matches an uninterrupted run", "[lab][save]")
         for (std::uint64_t i = 0; i < ticks; ++i) {
             const atlas::Tick tick = kernel.current_tick();
             REQUIRE(atlas::lab::submit_synthetic_commands(h.commands, tick, 2, 77,
-                                                          h.lab.layout.cell_count())
+                                                          h.lab.layout.cell_count(),
+                                                          atlas::sim::SourceId::Local)
                         .has_value());
             REQUIRE(kernel.step().has_value());
         }
