@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -270,10 +271,24 @@ def case_audio_clip_loads_and_reloads(binary: str) -> None:
                    "the clip loads, plays, is reloaded, and plays again")
     expect_contains(text, "1 total, 1 ready, 0 failed", "the clip reached ready")
 
-    # One clip after a reload, not two. A reload creates a new clip and must release the one
-    # it displaced; without that the pool grows by one every time a file is touched, which is
-    # a leak that nothing else here would notice.
-    expect_contains(text, "1 voices peak, 0 underruns, 1 clips", "the displaced clip was released")
+    # One clip after a reload, not two. A reload creates a new clip and must release the one it
+    # displaced; without that the pool grows by one every time a file is touched, which is a leak
+    # nothing else here would notice.
+    #
+    # The underrun count is deliberately not part of this. It used to be, because all three
+    # numbers share a log line and matching the whole line was convenient — and then a loaded
+    # machine produced one underrun and failed an assertion named "the displaced clip was
+    # released", which is not what it checks. An underrun is a real-time property of the machine:
+    # PERFORMANCE.md's M12 section says plainly that two consecutive long frames can click, by
+    # design. Where that claim is worth making it is measured and recorded there, not asserted
+    # here on whatever the continuous-integration runner happened to be doing.
+    match = re.search(r"audio: (\d+) voices peak, (\d+) underruns, (\d+) clips", text)
+    if match is None:
+        raise CheckFailed(f"no audio summary line\n--- output ---\n{text}")
+    if match.group(1) != "1" or match.group(3) != "1":
+        raise CheckFailed(
+            f"expected one voice and one clip after the reload, got {match.group(1)} voice(s) "
+            f"and {match.group(3)} clip(s)\n--- output ---\n{text}")
 
 
 
