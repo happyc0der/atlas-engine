@@ -506,6 +506,54 @@ def check_loopback_corrupt_turn_is_caught(binary: str) -> None:
     expect_contains(text, "the first system whose writes differ", "the divergence names a system")
 
 
+def check_mod_runs_and_changes_state(binary: str) -> None:
+    """The sandbox end to end: a mod loads, submits, and the simulation notices."""
+    with_mod = headless(binary, "--mod", "synthetic.wasm", ticks=40)
+    expect_exit(with_mod, 0, "a run with a mod")
+    text = output_of(with_mod)
+    expect_contains(text, "mod 'synthetic.wasm' loaded", "the mod loaded")
+    # One command a tick, none refused, and still running at the end. A mod that was disabled
+    # at tick three and one that simply had nothing to say both submit few commands, so the
+    # state at the end is what separates them.
+    expect_contains(text, "40 submitted, 0 refused", "the mod's own accounting")
+    expect_contains(text, "still running", "the mod survived the run")
+
+    # The anti-vacuity check, and the reason this case is not two cases. A mod that loads,
+    # runs, reports and changes nothing would pass every assertion above.
+    without = headless(binary, ticks=40)
+    expect_exit(without, 0, "a run without a mod")
+    mod_hash = final_hash(text, "a run with a mod")
+    plain_hash = final_hash(output_of(without), "a run without one")
+    if mod_hash == plain_hash:
+        raise CheckFailed(f"the mod changed nothing: both runs ended at {mod_hash}")
+
+    # And it is deterministic, which is the property lockstep will rest on in the next slice.
+    again = headless(binary, "--mod", "synthetic.wasm", ticks=40)
+    expect_exit(again, 0, "a repeated run with a mod")
+    if final_hash(output_of(again), "a repeated run") != mod_hash:
+        raise CheckFailed("two runs of the same mod disagreed")
+
+
+def check_mod_path_is_validated(binary: str) -> None:
+    """A mod's name is untrusted input, and is refused rather than resolved."""
+    escape = headless(binary, "--mod", "../../../etc/passwd", ticks=1)
+    expect_exit(escape, 1, "a mod name that climbs out of the mount")
+    # Refused by VirtualPath before anything opens a file, which is why the message is about the
+    # path rather than about a file that could not be read.
+    expect_contains(output_of(escape), "mod", "the refusal names the mod")
+
+    missing = headless(binary, "--mod", "no-such-mod.wasm", ticks=1)
+    expect_exit(missing, 1, "a mod that is not there")
+
+
+def check_mod_is_not_a_peer(binary: str) -> None:
+    """A mod's commands are its own, and its identifier is not in the peer range."""
+    result = headless(binary, "--mod", "synthetic.wasm", ticks=5)
+    expect_exit(result, 0, "a run with a mod")
+    # 2147483648 is bit 31 alone: the first mod identifier, and one no peer index can reach.
+    expect_contains(output_of(result), "loaded as source 2147483648", "the mod's identifier")
+
+
 CASES = {
     "version": check_version,
     "help": check_help,
@@ -516,6 +564,9 @@ CASES = {
     "deterministic_hash": check_deterministic_hash,
     "seed_changes_hash": check_seed_changes_hash,
     "commands_change_hash": check_commands_change_hash,
+    "mod_runs_and_changes_state": check_mod_runs_and_changes_state,
+    "mod_path_is_validated": check_mod_path_is_validated,
+    "mod_is_not_a_peer": check_mod_is_not_a_peer,
     "save_writes_file": check_save_writes_file,
     "load_continues": check_load_continues,
     "load_different_grid_adopts_layout": check_load_different_grid_adopts_layout,

@@ -17,6 +17,7 @@ here at the same time, including the one entry that is an admission rather than 
 | `../cooked/shaders/*.spv`, `*.msl` | `tools/cook_shaders.py` from `shaders/*.hlsl` | GPL-3.0-or-later, as the sources |
 | `textures/sheet.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
 | `textures/tile.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
+| `../mods/synthetic.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 
 Both audio files are checked by `ctest -L lint`, which regenerates them into a scratch
 directory and compares byte for byte. A change to a waveform that is not also a change to the
@@ -36,6 +37,14 @@ versions — so a byte comparison against a file another machine generated would
 libraries rather than content. That is exactly the trap the shader currency check fell into,
 and M13 fixed both in the same milestone. The cost is four kilobytes; the benefit is a check
 that means what it says.
+
+`mods/synthetic.wasm` is WebAssembly written byte by byte by its generator rather than assembled
+from source by `wat2wasm`. A `.wasm` from an assembler is third-party compiler output, so a byte
+comparison would be comparing `wabt` versions rather than content — the same trap the shader
+currency check sat in until M13, and the reason both PNGs above store their pixels uncompressed.
+The cost is that the mod is written in an encoder rather than in a language; the benefit is a
+check that means what it says, and a mod that can be rebuilt on any machine with no toolchain at
+all. A real mod would be written in AssemblyScript, Rust or C; this one is forty instructions.
 
 ## Third-party or hand-made
 

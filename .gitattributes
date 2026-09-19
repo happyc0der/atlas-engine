@@ -12,3 +12,4 @@
 *.wav binary
 *.ogg binary
 *.flac binary
+*.wasm binary

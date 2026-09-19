@@ -12,6 +12,8 @@
 #include <atlas/app/main_guard.hpp>
 #include <atlas/app/ppm.hpp>
 #include <atlas/app/run_bounds.hpp>
+#include <atlas/assets/filesystem.hpp>
+#include <atlas/assets/virtual_path.hpp>
 #include <atlas/audio/device.hpp>
 #include <atlas/audio/synth.hpp>
 #include <atlas/core/args.hpp>
@@ -25,12 +27,15 @@
 #include <atlas/lab/cell_id_pass.hpp>
 #include <atlas/lab/commands.hpp>
 #include <atlas/lab/generate.hpp>
+#include <atlas/lab/mod_views.hpp>
 #include <atlas/lab/snapshot.hpp>
 #include <atlas/lab/systems.hpp>
 #include <atlas/net/loopback.hpp>
 #include <atlas/net/session.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/rhi/device.hpp>
+#include <atlas/script/mod_host.hpp>
+#include <atlas/script/runtime.hpp>
 #include <atlas/simulation/kernel.hpp>
 #include <atlas/simulation/replay.hpp>
 #include <atlas/simulation/save.hpp>
@@ -82,6 +87,9 @@ struct Options {
     std::string_view log_level;
     std::string_view log_file;
     std::string_view shader_dir;
+    /// A mod to load from the `mods` mount, or empty for none.
+    std::string_view mod;
+    std::string_view mods_dir;
     std::string_view screenshot;
     std::string_view save_path;
     std::string_view load_path;
@@ -131,6 +139,11 @@ Options:
                          polls. Counted in polls rather than ticks because a stalled run's
                          tick is exactly what stops advancing. Use with hold:T.
   --commands-per-tick N  Submit N deterministic set_color_index commands each tick.
+  --mod NAME             Load a sandboxed WebAssembly mod from the mods directory and run it
+                         once per tick, before that tick. Its commands are stamped with its own
+                         identifier and never sent to peers: every peer runs the same mod and
+                         produces the same commands, which is what the hash check verifies.
+  --mods-dir PATH        Where --mod looks. Default: assets/mods.
   --workers N            Worker threads beside this one for the simulation's compute phase.
                          Default: one per hardware thread beyond this one. Zero runs everything
                          on the calling thread. The state hash is the same at every setting,
@@ -216,6 +229,8 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
     options.log_level = args.value_or("log-level", std::string_view{"info"});
     options.log_file = args.value_or("log-file", std::string_view{});
     options.shader_dir = args.value_or("shader-dir", std::string_view{"assets/cooked/shaders"});
+    options.mod = args.value_or("mod", std::string_view{});
+    options.mods_dir = args.value_or("mods-dir", std::string_view{"assets/mods"});
     options.screenshot = args.value_or("screenshot", std::string_view{});
     options.save_path = args.value_or("save", std::string_view{});
     options.load_path = args.value_or("load", std::string_view{});
@@ -341,6 +356,95 @@ struct Simulation {
     std::shared_ptr<atlas::lab::CellBound> bound = std::make_shared<atlas::lab::CellBound>(0);
     std::unique_ptr<atlas::sim::Kernel> kernel;  ///< Always set once make_simulation returns.
 };
+
+/// The script runtime and the one mod this run loaded, held together so they die in order.
+///
+/// A mod must not outlive the runtime it was built against: WAMR's allocator belongs to the
+/// runtime, so a mod freed afterwards would be handing memory back to something that no longer
+/// exists. Declaring them in this order and destroying the whole struct at once is what makes
+/// that a property of the type rather than a rule the reader has to remember.
+struct Mods {
+    std::optional<atlas::script::Runtime> runtime;
+    std::unique_ptr<atlas::script::ModHost> host;
+    /// Rebuilt each tick, and owned here because a view is a span over somebody else's bytes.
+    atlas::lab::LayoutView layout;
+
+    [[nodiscard]] bool loaded() const noexcept { return host != nullptr; }
+};
+
+/// Load `--mod`, or nothing at all when it was not given.
+///
+/// The bytes come through `assets::VirtualPath` and a mounted root, exactly as a save file
+/// does, because a mod is untrusted input in the same way. The lab has never had a filesystem
+/// and said so at the audio call site — "giving it a filesystem and a mount to play one click
+/// would be a larger change than the audio module itself" — and that reasoning was about
+/// proportion. A mod changes the proportion: `VirtualPath` is the only validated way to turn a
+/// name from the command line into a file inside a directory, and rolling that by hand for
+/// untrusted input is precisely what this project does not do.
+[[nodiscard]] atlas::Result<Mods> load_mods(const Options& options, const Simulation& sim) {
+    Mods mods;
+    if (options.mod.empty()) {
+        return mods;
+    }
+
+    atlas::assets::FileSystem files;
+    if (auto status = files.mount("mods", std::filesystem::path(options.mods_dir)); !status) {
+        return std::unexpected(std::move(status).error().context("mounting the mods directory"));
+    }
+    auto path = atlas::assets::VirtualPath::parse(options.mod);
+    if (!path) {
+        return std::unexpected(std::move(path).error().context("the mod's name"));
+    }
+    auto bytes = files.read(*path);
+    if (!bytes) {
+        return std::unexpected(std::move(bytes).error().context("reading the mod"));
+    }
+
+    auto runtime = atlas::script::Runtime::create();
+    if (!runtime) {
+        return std::unexpected(std::move(runtime).error());
+    }
+    mods.runtime = *std::move(runtime);
+
+    auto host = atlas::script::ModHost::create(
+        *mods.runtime, 0, *bytes, options.mod,
+        {.seed = options.seed,
+         .input_delay = options.loopback_peers > 1 ? options.input_delay : 1});
+    if (!host) {
+        return std::unexpected(std::move(host).error());
+    }
+    mods.host = *std::move(host);
+    if (auto status = mods.host->start(); !status) {
+        return std::unexpected(std::move(status).error().context("starting the mod"));
+    }
+
+    mods.layout = atlas::lab::layout_view(sim.lab.layout);
+    ATLAS_LOG_INFO(kApp, "mod '{}' loaded as source {}", options.mod,
+                   static_cast<std::uint32_t>(mods.host->id()));
+    return mods;
+}
+
+/// Publish this tick's views and let the mod decide, before the tick runs.
+///
+/// **Once per tick and never once per frame.** Peers run different numbers of frames per tick,
+/// so a per-frame call would make the number of mod invocations depend on frame rate, and
+/// therefore the commands, and therefore the state.
+void run_mod_for_tick(Mods& mods, Simulation& sim, atlas::Tick tick, atlas::sim::TurnGate& gate) {
+    if (!mods.loaded()) {
+        return;
+    }
+    const std::array<atlas::script::ModView, 2> views{
+        atlas::script::ModView{.name = "layout", .bytes = mods.layout.bytes},
+        atlas::script::ModView{.name = "colour",
+                               .bytes = atlas::lab::color_view(sim.lab.world, sim.lab.ids)},
+    };
+    mods.host->set_views(views);
+    if (const auto report = mods.host->poll(tick, sim.commands, gate); !report) {
+        // Cannot happen by design — a mod that misbehaves is reported closed rather than as an
+        // error — but a driver that ignored it would be assuming that on the reader's behalf.
+        ATLAS_LOG_ERROR(kApp, "polling the mod failed: {}", report.error());
+    }
+}
 
 /// `gate` is borrowed and optional: null is a solo run, which is every run but a loopback one.
 /// A kernel given no gate never refuses a tick, which is the path this binary has always taken.
@@ -928,6 +1032,15 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
         return std::unexpected(simulation.error());
     }
     Simulation& sim = **simulation;
+
+    auto mods = load_mods(*options, sim);
+    if (!mods) {
+        return std::unexpected(std::move(mods).error());
+    }
+    // A solo run has nothing to gate on, and a mod never marks a gate in any case. Declared
+    // here so the reference `poll` takes outlives every call to it.
+    atlas::sim::TurnGate mod_gate;
+
     ATLAS_LOG_INFO(kApp, "world: {}x{} cells in {} chunks of {}, seed {}, initial hash {:#018x}",
                    sim.lab.layout.width(), sim.lab.layout.height(), sim.lab.layout.chunk_count(),
                    sim.lab.layout.chunk_size(), options->seed, sim.lab.world.hash());
@@ -1353,6 +1466,9 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
         std::uint32_t ticks_run = 0;
         for (std::uint32_t i = 0; i < ticks_to_run; ++i) {
             const atlas::Tick tick = sim.kernel->current_tick();
+            // Before the tick, never once per frame: peers run different numbers of frames per
+            // tick, so a per-frame call would make a mod's output depend on frame rate.
+            run_mod_for_tick(*mods, sim, tick, mod_gate);
             if (options->commands_per_tick > 0) {
                 // Stamped with this peer's own identifier. Solo that is `Local`, which is
                 // what it has always been; under lockstep it becomes the identifier the
@@ -1650,6 +1766,20 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
     counters.report();
     const std::uint64_t ticks_total = sim.kernel->current_tick() - first_tick;
     const auto elapsed_us = std::max<std::uint64_t>(1, micros_since(run_start));
+    if (mods->loaded()) {
+        // Reported whether or not the mod is still running, and saying which: a mod that was
+        // disabled at tick three and a mod that simply had nothing to say produce the same
+        // command count, and only one of them is a problem.
+        const auto stats = mods->host->stats();
+        ATLAS_LOG_INFO(kApp,
+                       "mod '{}': {} submitted, {} refused, {} log line(s) dropped over {} "
+                       "tick(s), {}",
+                       mods->host->name(), stats.commands_submitted, stats.commands_refused,
+                       stats.log_lines_dropped, stats.ticks_run,
+                       mods->host->disabled()
+                           ? std::string("disabled: ") + std::string(mods->host->disabled_because())
+                           : std::string("still running"));
+    }
     ATLAS_LOG_INFO(kApp, "final tick={} state hash={:#018x} late commands={} pick disagreements={}",
                    sim.kernel->current_tick(), last_hash, sim.kernel->late_commands(),
                    pick_mismatches);

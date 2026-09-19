@@ -17,6 +17,8 @@ atlas_add_app(lab
         atlas::app_common
         atlas::lab_sim
         atlas::net
+        atlas::script
+        atlas::assets
         atlas::lab_view
         atlas::audio
         atlas::platform

@@ -13,6 +13,7 @@ atlas_add_app_library(lab_sim
         src/systems.cpp
         src/commands.cpp
         src/snapshot.cpp
+        src/mod_views.cpp
     DEPENDS
         atlas::simulation
 )

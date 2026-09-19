@@ -16,6 +16,8 @@
 
 #include <algorithm>
 #include <array>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
@@ -519,4 +521,67 @@ TEST_CASE("an input delay of zero is refused", "[script][host]") {
     const auto refused = f.host({}, "immediate", {.input_delay = 0});
     REQUIRE_FALSE(refused.has_value());
     CHECK(refused.error().code() == ErrorCode::InvalidArgument);
+}
+
+TEST_CASE("the committed demonstration mod loads and does what it says", "[script][host]") {
+    // The real artifact, read from the tree rather than built in the test. Everything else in
+    // this file checks the host against modules written for the occasion; this checks that the
+    // bytes actually shipped are a mod, which is the only way `assets/mods/synthetic.wasm` is
+    // covered by anything faster than an integration case.
+    //
+    // The command type is registered here under the same name the mod looks up. Its meaning is
+    // the lab's; what the engine needs to know is that a five-byte payload arrives.
+    Fixture f;
+    const auto set_color = atlas::sim::command_type("set_color_index");
+    CommandHandler handler;
+    handler.validate = [](std::span<const std::byte> payload) -> atlas::Status {
+        if (payload.size() != 5) {
+            return std::unexpected(atlas::Error(ErrorCode::MalformedData, "expected five bytes"));
+        }
+        return atlas::ok();
+    };
+    handler.apply = [](atlas::sim::World&, std::span<const std::byte>) {};
+    REQUIRE(f.queue.register_handler(set_color, std::move(handler)));
+
+    std::ifstream file("assets/mods/synthetic.wasm", std::ios::binary);
+    REQUIRE(file.is_open());
+    const std::vector<char> raw((std::istreambuf_iterator<char>(file)),
+                                std::istreambuf_iterator<char>());
+    REQUIRE_FALSE(raw.empty());
+    std::vector<std::byte> bytes;
+    bytes.reserve(raw.size());
+    for (const char value : raw) {
+        bytes.push_back(static_cast<std::byte>(value));
+    }
+
+    auto host = ModHost::create(f.runtime, 0, bytes, "synthetic", {.seed = 99});
+    REQUIRE(host.has_value());
+    REQUIRE((*host)->start().has_value());
+
+    // A grid of 64 cells, as four little-endian bytes: the mod has no idea how big the world is
+    // until this says so, which is what stops it from being written against one grid.
+    const std::array<std::byte, 4> layout{std::byte{64}, std::byte{0}, std::byte{0}, std::byte{0}};
+    const std::array<ModView, 1> views{ModView{.name = "layout", .bytes = layout}};
+    (*host)->set_views(views);
+
+    for (atlas::Tick tick = 0; tick < 4; ++tick) {
+        const auto report = (*host)->poll(tick, f.queue, f.gate);
+        REQUIRE(report.has_value());
+        CHECK(report->commands_submitted == 1);
+    }
+    CHECK_FALSE((*host)->disabled());
+
+    const auto drained = f.queue.drain(8);
+    REQUIRE(drained.size() == 4);
+    for (const auto& command : drained) {
+        CHECK(command.source == atlas::sim::mod_source(0));
+        REQUIRE(command.payload.size() == 5);
+        // Inside the grid it was told about, and inside the colour range it was built with.
+        const auto cell = static_cast<std::uint32_t>(command.payload[0]) |
+                          (static_cast<std::uint32_t>(command.payload[1]) << 8U) |
+                          (static_cast<std::uint32_t>(command.payload[2]) << 16U) |
+                          (static_cast<std::uint32_t>(command.payload[3]) << 24U);
+        CHECK(cell < 64);
+        CHECK(std::to_integer<int>(command.payload[4]) < 8);
+    }
 }

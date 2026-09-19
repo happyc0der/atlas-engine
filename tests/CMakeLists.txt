@@ -94,6 +94,9 @@ set(_atlas_lab_headless_cases
     deterministic_hash
     seed_changes_hash
     commands_change_hash
+    mod_runs_and_changes_state
+    mod_path_is_validated
+    mod_is_not_a_peer
     save_writes_file
     load_continues
     load_different_grid_adopts_layout

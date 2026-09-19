@@ -112,6 +112,15 @@ if(ATLAS_BUILD_TESTS)
                  COMMAND "${Python3_EXECUTABLE}"
                          "${PROJECT_SOURCE_DIR}/tools/gen_textures.py" --check)
         set_tests_properties(textures_current PROPERTIES LABELS "lint")
+
+        # And the demonstration mod, added in M15. Its generator writes WebAssembly bytes
+        # directly rather than calling an assembler, for the same reason the textures avoid
+        # zlib: a byte comparison against output from a third-party compiler compares tool
+        # versions rather than content. ADR-0015 left the choice open and this is the answer.
+        add_test(NAME mods_current
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/tools/gen_mods.py" --check)
+        set_tests_properties(mods_current PROPERTIES LABELS "lint")
     else()
         message(STATUS "Atlas: Python not found; the boundary and licence checks will not "
                        "run as tests (CI runs them separately)")
