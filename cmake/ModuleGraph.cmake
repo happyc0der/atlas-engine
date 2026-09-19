@@ -30,6 +30,7 @@ set(ATLAS_MODULES
     simulation
     net
     script
+    text
     runtime
     tools
     CACHE INTERNAL "All known Atlas module names")
@@ -81,9 +82,19 @@ set(ATLAS_MODULE_DEPS_net               "core;simulation" CACHE INTERNAL "")
 # command. It must never depend on scene, renderer or platform — a mod submits commands and
 # reads bytes, and none of what it does is presentation.
 set(ATLAS_MODULE_DEPS_script            "core;simulation;assets" CACHE INTERNAL "")
+
+# text: string tables, one lookup and one substituter (ADR-0016). It depends on assets because
+# a string table is an asset like any other and the catalog finalises one the way the texture
+# and clip caches do. Nothing else depends on it but `tools`, and that single edge is a
+# constraint on the design rather than an observation about it: `core::to_string(Severity)` and
+# `assets::to_string(AssetState)` keep their own words, because those words are also log text
+# and routing them through a table would make every integration case's grep depend on a locale.
+# The overlay maps enum to key on its own side instead. It must never depend on scene, renderer,
+# platform or simulation: looking a string up is not presentation and is certainly not a tick.
+set(ATLAS_MODULE_DEPS_text              "core;assets" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_runtime           "core;math;platform;rhi;renderer;assets;scene;simulation" CACHE INTERNAL "")
 set(ATLAS_MODULE_DEPS_rhi_internal      "core;platform;rhi" CACHE INTERNAL "")
-set(ATLAS_MODULE_DEPS_tools             "core;math;platform;platform_internal;rhi;rhi_internal;renderer;assets;scene;edit;simulation" CACHE INTERNAL "")
+set(ATLAS_MODULE_DEPS_tools             "core;math;platform;platform_internal;rhi;rhi_internal;renderer;assets;scene;edit;simulation;text" CACHE INTERNAL "")
 
 # Third-party libraries permitted in a module's PUBLIC headers. Everything else must be a
 # private implementation detail. Each entry needs an ADR.

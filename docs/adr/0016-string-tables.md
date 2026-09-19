@@ -89,11 +89,15 @@ own side. So `text` is a leaf with one edge instead of an edge threaded through 
                "edit.command.rename": "rename" } }
 ```
 
-This makes `assets` link the JSON reader for a third consumer. Three statements in
-`docs/DEPENDENCIES.md` and one in `docs/ARCHITECTURE.md` say it is private to two modules; they
-are corrected in the same change, and ARCHITECTURE's is reworded rather than appended to,
-because "private to exactly one module" followed by a list of two was already strained before
-this record made it three.
+**The parser lives in `engine/assets/src/string_table.cpp`, not in `engine/text`.** An importer
+runs on an asset worker and hands back plain strings, exactly as `animation_clip.cpp` does, and
+`text` receives an `assets::ImportedStringTable` that contains no JSON type. So `text` never
+links the JSON reader and **the boundary statement does not change**: nlohmann-json stays
+private to `scene` and `assets`. What changes is the *purpose* recorded against it in
+`docs/DEPENDENCIES.md`, which names two file formats and now needs a third, and the
+replacement-cost row, which names two files and now needs a third. ARCHITECTURE's sentence is
+reworded anyway, because "private to exactly one module" followed by two names for both SDL3 and
+the JSON reader was already saying something other than what it meant.
 
 **3. A missing key returns the key itself.** Never an empty string, never an error. A panel
 reading `ui.controls.pause` where it meant "Pause" is visibly wrong and still usable, which is

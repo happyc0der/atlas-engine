@@ -26,6 +26,7 @@ graph TD
   simulation[atlas::simulation<br/>ticks, commands, systems, hashing]
   net[atlas::net<br/>lockstep session, turns, loopback link]
   script[atlas::script<br/>WebAssembly sandbox, mod host, budgets]
+  text[atlas::text<br/>string tables, lookup, substitution]
   runtime[atlas::runtime<br/>deferred: composition, main loop]
   tools[atlas::tools<br/>editor shell, panels]
   apps[apps: sandbox, lab, common<br/>composition roots, not modules]
@@ -67,6 +68,8 @@ graph TD
   script --> assets
   script --> core
   script --> simulation
+  text --> assets
+  text --> core
   runtime --> assets
   runtime --> core
   runtime --> math
@@ -86,6 +89,7 @@ graph TD
   tools --> rhi_internal
   tools --> scene
   tools --> simulation
+  tools --> text
 
   apps --> renderer
   apps --> assets
@@ -111,9 +115,11 @@ construction; `atlas::lab_view` holds the cell field and the identifier pass, so
 draw with the application's own code; and `apps/lab/main.cpp` is the composition root that
 puts a window, a device and an overlay around them.
 
-Third-party libraries are private to exactly one module: SDL3 to `platform` and `rhi`,
-EnTT to `scene`, nlohmann-json to `scene` and `assets`, Dear ImGui to `tools`, Tracy to `core` behind
-compiled-out macros. EnTT is permitted in `atlas/scene` headers by ADR-0004 and does not
+Third-party libraries are private to the modules named here and to no others: SDL3 to
+`platform` and `rhi`, EnTT to `scene`, nlohmann-json to `scene` and `assets`, Dear ImGui to
+`tools`, Tracy to `core` behind compiled-out macros, WAMR to `script`. The sentence used to say
+"exactly one module" and then name two for both SDL3 and the JSON reader; what it means is that
+the list is closed, not that each entry has one name. EnTT is permitted in `atlas/scene` headers by ADR-0004 and does not
 appear in any of them.
 Because static-library `PRIVATE` dependencies propagate as `$<LINK_ONLY:>`, a public
 header that includes a third-party header fails to compile in an application. That is the
@@ -139,6 +145,7 @@ declaration. Its only permitted consumer is `atlas::rhi`.
 | simulation | Ticks, commands, system contracts, RNG, hashing, replay, snapshots | Contains game rules |
 | net | Lockstep sessions, turns, the message codec, a bounded inbox, an in-memory link | Owns a transport, or reaches the world, the scene or anything that draws |
 | script | The WebAssembly sandbox, the mod loader, the instruction and memory budgets, the mod host | Gives a guest any authority it was not handed, or lets one reach state except through a command |
+| text | String tables as assets, the catalog that finalises them, and a substituter that cannot throw | Formats with the standard library's runtime path, or holds a string the log also has to print |
 | runtime | Composition, main loop, subsystem lifetimes | Depends on tools or editor code |
 | edit | Undoable scene commands, the history that applies them | Holds a UI type; is the simulation's command queue; is depended on by anything that draws |
 | tools | Editor shell, panels: statistics, scene, log console, simulation controls, asset status | Is depended on by runtime modules |
