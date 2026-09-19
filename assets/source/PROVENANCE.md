@@ -18,6 +18,7 @@ here at the same time, including the one entry that is an admission rather than 
 | `textures/sheet.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
 | `textures/tile.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
 | `../mods/synthetic.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
+| `../mods/clock.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 
 Both audio files are checked by `ctest -L lint`, which regenerates them into a scratch
 directory and compares byte for byte. A change to a waveform that is not also a change to the
@@ -44,7 +45,14 @@ comparison would be comparing `wabt` versions rather than content — the same t
 currency check sat in until M13, and the reason both PNGs above store their pixels uncompressed.
 The cost is that the mod is written in an encoder rather than in a language; the benefit is a
 check that means what it says, and a mod that can be rebuilt on any machine with no toolchain at
-all. A real mod would be written in AssemblyScript, Rust or C; this one is forty instructions.
+all. A real mod would be written in AssemblyScript, Rust or C; these are forty instructions each.
+
+`mods/clock.wasm` is the one that is *meant* to be wrong. It reads a host clock and therefore
+decides differently on every machine, which under lockstep is a divergence — the demonstration
+of why the guest interface has no clock in it. The import it needs exists only when a host passes
+`--unsafe-debug-imports`, so the mod cannot even load by accident, and
+`tests/integration/lab_checks.py` asserts both halves: refused without the flag, and detected as
+a divergence with it. That case fails if anybody ever adds a clock to the interface for real.
 
 ## Third-party or hand-made
 

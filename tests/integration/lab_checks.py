@@ -554,6 +554,89 @@ def check_mod_is_not_a_peer(binary: str) -> None:
     expect_contains(output_of(result), "loaded as source 2147483648", "the mod's identifier")
 
 
+def check_mod_replay_needs_no_runtime(binary: str) -> None:
+    """Proof (a): a recording carries a mod's commands, and replaying needs no sandbox.
+
+    This is ADR-0009 decision 2 paying off. A mod's output is commands, commands are recorded,
+    and a replay feeds them back — so a recording made with a mod plays back identically on a
+    build that never loads one. Nothing here passes --mod to the replay.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        replay = pathlib.Path(tmp) / "mod.replay"
+        rec = headless(binary, "--mod", "synthetic.wasm", "--record", str(replay), ticks=40, seed=4)
+        expect_exit(rec, 0, "recording a run with a mod")
+        recorded = final_hash(output_of(rec), "the recorded run")
+
+        play = run(binary, ["--headless", *SMALL, "--seed", "4", "--play", str(replay)])
+        expect_exit(play, 0, "replaying without the mod")
+        text = output_of(play)
+        expect_contains(text, "replay matched", "the replay matched")
+        expect_contains(text, recorded, "the replay ended where the recording did")
+        # And it really did run without one: no runtime, no load, no sandbox.
+        if "script runtime ready" in text:
+            raise CheckFailed(f"the replay started a script runtime\n--- output ---\n{text}")
+
+
+def check_mod_peers_agree(binary: str) -> None:
+    """Proof (b): two peers running the same mod agree, without exchanging its commands."""
+    result = run(binary, ["--headless", *SMALL, "--unbounded", "--ticks", "60", "--seed", "4",
+                          "--loopback-peers", "2", "--mod", "synthetic.wasm",
+                          "--link-latency", "2", "--link-reorder", "7"])
+    expect_exit(result, 0, "two peers with a mod")
+    text = output_of(result)
+    expect_contains(text, "divergences=0", "no divergence")
+    # Both mods ran every tick and neither was disabled, which is what makes the agreement mean
+    # something: two mods that both stopped early would also agree.
+    expect_contains(text, "peer 0 mod 'synthetic.wasm': 60 submitted, 0 refused", "peer 0's mod")
+    expect_contains(text, "peer 1 mod 'synthetic.wasm': 60 submitted, 0 refused", "peer 1's mod")
+
+    # Exactly 58, and the number is the assertion rather than decoration. A mod decides **before**
+    # the tick it is called for, so over 60 ticks at delay 2 it stamps ticks 2 to 61 and 58 of
+    # those actually run. A mod called after the step instead would stamp 3 to 62 and land 57 —
+    # still deterministic, still agreed between peers, and a different simulation. Agreement
+    # cannot catch that; a count can.
+    expect_contains(text, "commands applied=58", "the mod decided before the tick, not after")
+
+    # The anti-vacuity half: the same run with no mod ends somewhere else, so the agreement
+    # above is an agreement about the mod's commands rather than about an empty simulation.
+    without = run(binary, ["--headless", *SMALL, "--unbounded", "--ticks", "60", "--seed", "4",
+                           "--loopback-peers", "2", "--link-latency", "2", "--link-reorder", "7"])
+    expect_exit(without, 0, "two peers without a mod")
+    if _peer_hash(text) == _peer_hash(output_of(without)):
+        raise CheckFailed("the mod changed nothing in a loopback run")
+
+
+def _peer_hash(text: str) -> str:
+    match = re.search(r"peer 0: final tick=\d+ state hash=(0x[0-9a-f]+)", text)
+    if not match:
+        raise CheckFailed(f"no peer 0 hash line\n--- output ---\n{text}")
+    return match.group(1)
+
+
+def check_mod_clock_diverges(binary: str) -> None:
+    """Proof (c): why the interface has no clock.
+
+    A mod that reads a host clock decides differently on each machine. Without the unsafe flag
+    it cannot even load; with it, two peers disagree and the session stops. **This case fails if
+    anybody ever adds a clock to the guest interface for real**, which is the point of keeping
+    it.
+    """
+    refused = headless(binary, "--mod", "clock.wasm", ticks=5)
+    expect_exit(refused, 1, "a clock mod with no flag")
+    expect_contains(output_of(refused), "atlas_debug_clock_ns", "the refusal names the import")
+    expect_contains(output_of(refused), "does not provide", "the host does not provide it")
+
+    diverged = run(binary, ["--headless", *SMALL, "--unbounded", "--ticks", "200", "--seed", "4",
+                            "--loopback-peers", "2", "--mod", "clock.wasm",
+                            "--unsafe-debug-imports"])
+    expect_exit(diverged, 1, "a clock mod under lockstep")
+    text = output_of(diverged)
+    expect_contains(text, "diverged at tick", "the divergence was detected")
+    # Attributed, not merely noticed: the whole reason hash checks carry per-system hashes.
+    expect_contains(text, "the first system whose writes differ", "the divergence names a system")
+    expect_contains(text, "UNSAFE debug imports", "the run said what it was doing")
+
+
 CASES = {
     "version": check_version,
     "help": check_help,
@@ -567,6 +650,9 @@ CASES = {
     "mod_runs_and_changes_state": check_mod_runs_and_changes_state,
     "mod_path_is_validated": check_mod_path_is_validated,
     "mod_is_not_a_peer": check_mod_is_not_a_peer,
+    "mod_replay_needs_no_runtime": check_mod_replay_needs_no_runtime,
+    "mod_peers_agree": check_mod_peers_agree,
+    "mod_clock_diverges": check_mod_clock_diverges,
     "save_writes_file": check_save_writes_file,
     "load_continues": check_load_continues,
     "load_different_grid_adopts_layout": check_load_different_grid_adopts_layout,

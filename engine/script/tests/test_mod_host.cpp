@@ -585,3 +585,51 @@ TEST_CASE("the committed demonstration mod loads and does what it says", "[scrip
         CHECK(std::to_integer<int>(command.payload[4]) < 8);
     }
 }
+
+TEST_CASE("the interface has no clock, and that is enforced rather than documented",
+          "[script][host]") {
+    // The guarantee `atlas_mod.h` opens with. A mod that can read a clock decides differently on
+    // a slower machine, which under lockstep is a divergence — so the import exists only to
+    // demonstrate that, and only for a host that asked for it by a name with "unsafe" in it.
+    //
+    // **This case fails if anybody ever adds a clock to the interface for real**, which is the
+    // reason it is written as two halves rather than one.
+    wasm::ModuleSpec spec;
+    spec.imports = {{.field = "atlas_debug_clock_ns", .results = {wasm::kValI64}}};
+    spec.tick_body = call_and_drop(0);
+    const auto bytes = wasm::as_bytes(wasm::build(spec));
+
+    SECTION("an ordinary runtime refuses it") {
+        auto runtime = Runtime::create();
+        REQUIRE(runtime.has_value());
+        const auto refused = ModHost::create(*runtime, 0, bytes, "clock");
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().code() == ErrorCode::ModImportRefused);
+        CHECK(refused.error().message().contains("atlas_debug_clock_ns"));
+    }
+
+    SECTION("a runtime that opted in provides it") {
+        // Proving the refusal above is the flag's doing and not a misspelling: the same bytes,
+        // the same loader, one setting different.
+        auto runtime = Runtime::create({.unsafe_debug_imports = true});
+        REQUIRE(runtime.has_value());
+        const auto loaded = ModHost::create(*runtime, 0, bytes, "clock");
+        REQUIRE(loaded.has_value());
+    }
+
+    SECTION("and every other import is unaffected either way") {
+        // A flag that widened the list by more than one would pass both halves above.
+        auto runtime = Runtime::create({.unsafe_debug_imports = true});
+        REQUIRE(runtime.has_value());
+        wasm::ModuleSpec invented;
+        // Shaped so the module itself validates — no arguments, one result for the
+        // `drop` to take — because a module refused for being malformed would prove
+        // nothing about the import list.
+        invented.imports = {{.field = "atlas_open_file", .results = {wasm::kValI32}}};
+        invented.tick_body = call_and_drop(0);
+        const auto refused =
+            ModHost::create(*runtime, 0, wasm::as_bytes(wasm::build(invented)), "hopeful");
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().code() == ErrorCode::ModImportRefused);
+    }
+}

@@ -127,20 +127,20 @@ struct Runtime::Impl {
 
 Runtime::Runtime() : m_impl(std::make_unique<Impl>()) {}
 
-Result<Runtime> Runtime::create(std::size_t budget_bytes) {
+Result<Runtime> Runtime::create(const RuntimeConfig& config) {
     ATLAS_ASSERT_MAIN_THREAD();
     ATLAS_ASSERT_MSG(!alive(), "a second script::Runtime while one is alive; it is process-wide");
 
-    if (budget_bytes <= kHeaderBytes) {
+    if (config.budget_bytes <= kHeaderBytes) {
         return std::unexpected(Error(ErrorCode::InvalidArgument,
                                      std::format("a script runtime budget of {} bytes cannot hold "
                                                  "anything; the per-allocation header alone is {}",
-                                                 budget_bytes, kHeaderBytes)));
+                                                 config.budget_bytes, kHeaderBytes)));
     }
 
     auto& c = counters();
     c = Counters{};
-    c.budget = budget_bytes;
+    c.budget = config.budget_bytes;
 
     // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization) — see the next line.
     RuntimeInitArgs args{};
@@ -171,7 +171,7 @@ Result<Runtime> Runtime::create(std::size_t budget_bytes) {
     // like the runtime itself and belongs to the object that owns the runtime's lifetime. A
     // failure is a programmer error — the table is a compile-time constant — so it takes the
     // runtime down with it rather than leaving mods to fail one at a time later.
-    if (!register_host_imports()) {
+    if (!register_host_imports(config.unsafe_debug_imports)) {
         wasm_runtime_destroy();
         c = Counters{};
         return std::unexpected(Error(ErrorCode::ScriptRuntimeInitFailed,
@@ -181,7 +181,8 @@ Result<Runtime> Runtime::create(std::size_t budget_bytes) {
     c.alive = true;
     Runtime runtime;
     runtime.m_impl->owns = true;
-    ATLAS_LOG_INFO(kScript, "script runtime ready, budget {} KiB", budget_bytes / 1024);
+    ATLAS_LOG_INFO(kScript, "script runtime ready, budget {} KiB{}", config.budget_bytes / 1024,
+                   config.unsafe_debug_imports ? ", UNSAFE debug imports offered" : "");
     return runtime;
 }
 

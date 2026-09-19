@@ -45,27 +45,38 @@ struct RuntimeStats {
     std::size_t allocations_refused = 0;
 };
 
+/// How the runtime is brought up.
+struct RuntimeConfig {
+    /// Total the runtime's allocator may hold across every loaded mod.
+    ///
+    /// Sized so that eight mods at the default linear-memory ceiling fit with room for the
+    /// module structures beside them, rather than being a round number. Separate from a mod's
+    /// own linear-memory limit, and both apply: that one is what a guest can address, this is
+    /// what the runtime spends holding it.
+    std::size_t budget_bytes = std::size_t{160} * 1024 * 1024;
+
+    /// Offer mods a host clock.
+    ///
+    /// **Off, and it exists only so that something can prove why.** A mod that can read a clock
+    /// decides differently on a slower machine, which under lockstep is a divergence — so the
+    /// guest interface has no clock and `atlas_mod.h` says so at the top. The demonstration of
+    /// that is a mod which imports one and diverges on purpose, and it needs the import to
+    /// exist somewhere. Anything that turns this on must say "unsafe" where a person can see it.
+    bool unsafe_debug_imports = false;
+};
+
 class Runtime {
   public:
     /// Bring the runtime up. At most one may exist in a process, and a second `create()` while
     /// one is alive is a programmer error rather than a recoverable one, so it asserts.
     ///
-    /// `budget` caps the runtime's own allocator across every mod together. It is separate from
-    /// a mod's linear-memory limit and both apply: linear memory is what a guest can address,
-    /// and this is what the runtime spends on top of it holding module structures.
-    [[nodiscard]] static Result<Runtime> create(std::size_t budget_bytes = kDefaultBudgetBytes);
+    [[nodiscard]] static Result<Runtime> create(const RuntimeConfig& config = {});
 
     ~Runtime();
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
     Runtime(Runtime&& other) noexcept;
     Runtime& operator=(Runtime&& other) noexcept;
-
-    /// Total the runtime's allocator may hold across every loaded mod.
-    ///
-    /// Sized so that the default eight mods at the default linear-memory ceiling fit with room
-    /// for the module structures beside them, rather than being a round number.
-    static constexpr std::size_t kDefaultBudgetBytes = std::size_t{160} * 1024 * 1024;
 
     [[nodiscard]] RuntimeStats stats() const noexcept;
 

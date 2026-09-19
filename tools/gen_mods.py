@@ -64,6 +64,7 @@ OP_I32_STORE = 0x36
 OP_I32_STORE8 = 0x3A
 OP_I32_WRAP_I64 = 0xA7
 OP_I64_EXTEND_I32_U = 0xAD
+OP_I32_REM_U = 0x70
 
 
 def uleb(value: int) -> bytes:
@@ -105,21 +106,16 @@ def func_type(params: list[int], results: list[int]) -> bytes:
 
 # --- the module ----------------------------------------------------------------------------
 
-# Host functions, in the order they are imported. Their indices are their positions here, and
-# the three functions the mod defines follow them.
-IMPORTS = [
-    ("atlas_command_type", [VAL_I32, VAL_I32], [VAL_I32]),
-    ("atlas_submit", [VAL_I32, VAL_I32, VAL_I32], [VAL_I32]),
-    ("atlas_random", [VAL_I32, VAL_I64], [VAL_I64]),
-    ("atlas_view_read", [VAL_I32, VAL_I32, VAL_I32, VAL_I32], [VAL_I32]),
-]
-
-IMPORT_COMMAND_TYPE = 0
-IMPORT_SUBMIT = 1
-IMPORT_RANDOM = 2
-IMPORT_VIEW_READ = 3
-
-FIRST_LOCAL_FUNC = len(IMPORTS)
+# Every host function either mod imports, by the shape `atlas_mod.h` declares. A pointer is an
+# i32 in WebAssembly, which is why each one takes i32 where the C header says `const void*`.
+HOST = {
+    "atlas_command_type": ([VAL_I32, VAL_I32], [VAL_I32]),
+    "atlas_submit": ([VAL_I32, VAL_I32, VAL_I32], [VAL_I32]),
+    "atlas_random": ([VAL_I32, VAL_I64], [VAL_I64]),
+    "atlas_view_read": ([VAL_I32, VAL_I32, VAL_I32, VAL_I32], [VAL_I32]),
+    # Not in atlas_mod.h, and deliberately not. See clock_tick_body.
+    "atlas_debug_clock_ns": ([], [VAL_I64]),
+}
 
 # Linear memory layout, chosen so every address is a small constant and nothing overlaps.
 ADDR_CELL_COUNT = 0  # four bytes, read from view 0
@@ -131,8 +127,9 @@ COLOR_COUNT = 8
 PAYLOAD_BYTES = 5
 
 
-def tick_body() -> bytes:
-    """The body of `mod_tick`, without its trailing `end`."""
+def synthetic_tick_body(imports: list[str]) -> bytes:
+    """The body of `mod_tick` for the well-behaved mod, without its trailing `end`."""
+    index = {name: position for position, name in enumerate(imports)}
     code = bytearray()
 
     # atlas_view_read(0, 0, ADDR_CELL_COUNT, 4) — the grid's size, so the mod has no idea how
@@ -141,7 +138,7 @@ def tick_body() -> bytes:
     code += bytes([OP_I32_CONST]) + sleb(0)  # offset 0
     code += bytes([OP_I32_CONST]) + sleb(ADDR_CELL_COUNT)
     code += bytes([OP_I32_CONST]) + sleb(4)
-    code += bytes([OP_CALL]) + uleb(IMPORT_VIEW_READ)
+    code += bytes([OP_CALL]) + uleb(index["atlas_view_read"])
     code += bytes([OP_DROP])
 
     # memory[ADDR_PAYLOAD .. +4] = (i32)atlas_random(0, (i64)cell_count)
@@ -150,7 +147,7 @@ def tick_body() -> bytes:
     code += bytes([OP_I32_CONST]) + sleb(ADDR_CELL_COUNT)
     code += bytes([OP_I32_LOAD]) + bytes([0x02, 0x00])  # align 4, offset 0
     code += bytes([OP_I64_EXTEND_I32_U])
-    code += bytes([OP_CALL]) + uleb(IMPORT_RANDOM)
+    code += bytes([OP_CALL]) + uleb(index["atlas_random"])
     code += bytes([OP_I32_WRAP_I64])
     code += bytes([OP_I32_STORE]) + bytes([0x02, 0x00])
 
@@ -158,7 +155,7 @@ def tick_body() -> bytes:
     code += bytes([OP_I32_CONST]) + sleb(ADDR_PAYLOAD + 4)
     code += bytes([OP_I32_CONST]) + sleb(1)  # stream 1, so the two draws do not share a sequence
     code += bytes([OP_I64_CONST]) + sleb(COLOR_COUNT)
-    code += bytes([OP_CALL]) + uleb(IMPORT_RANDOM)
+    code += bytes([OP_CALL]) + uleb(index["atlas_random"])
     code += bytes([OP_I32_WRAP_I64])
     code += bytes([OP_I32_STORE8]) + bytes([0x00, 0x00])  # align 1, offset 0
 
@@ -169,10 +166,59 @@ def tick_body() -> bytes:
     # of submitting a type that happens to hash the same.
     code += bytes([OP_I32_CONST]) + sleb(ADDR_COMMAND_NAME)
     code += bytes([OP_I32_CONST]) + sleb(len(COMMAND_NAME))
-    code += bytes([OP_CALL]) + uleb(IMPORT_COMMAND_TYPE)
+    code += bytes([OP_CALL]) + uleb(index["atlas_command_type"])
     code += bytes([OP_I32_CONST]) + sleb(ADDR_PAYLOAD)
     code += bytes([OP_I32_CONST]) + sleb(PAYLOAD_BYTES)
-    code += bytes([OP_CALL]) + uleb(IMPORT_SUBMIT)
+    code += bytes([OP_CALL]) + uleb(index["atlas_submit"])
+    code += bytes([OP_DROP])
+
+    return bytes(code)
+
+
+SYNTHETIC_IMPORTS = ["atlas_command_type", "atlas_submit", "atlas_random", "atlas_view_read"]
+CLOCK_IMPORTS = ["atlas_command_type", "atlas_submit", "atlas_view_read", "atlas_debug_clock_ns"]
+
+
+def clock_tick_body(imports: list[str]) -> bytes:
+    """The body of `mod_tick` for the mod that diverges on purpose.
+
+    Identical to the well-behaved mod except for where the cell comes from: a host clock rather
+    than the simulation's generator. Two peers read different nanoseconds, pick different cells,
+    and disagree at the first hash check — which is the whole point. This mod is the
+    demonstration of why `atlas_mod.h` has no clock in it, and the test that fails if anybody
+    ever adds one: the import it needs is registered only when a host explicitly opts in, under
+    a flag with "unsafe" in its name.
+    """
+    index = {name: position for position, name in enumerate(imports)}
+    code = bytearray()
+
+    code += bytes([OP_I32_CONST]) + sleb(0)
+    code += bytes([OP_I32_CONST]) + sleb(0)
+    code += bytes([OP_I32_CONST]) + sleb(ADDR_CELL_COUNT)
+    code += bytes([OP_I32_CONST]) + sleb(4)
+    code += bytes([OP_CALL]) + uleb(index["atlas_view_read"])
+    code += bytes([OP_DROP])
+
+    # cell = (i32)atlas_debug_clock_ns() % cell_count
+    code += bytes([OP_I32_CONST]) + sleb(ADDR_PAYLOAD)
+    code += bytes([OP_CALL]) + uleb(index["atlas_debug_clock_ns"])
+    code += bytes([OP_I32_WRAP_I64])
+    code += bytes([OP_I32_CONST]) + sleb(ADDR_CELL_COUNT)
+    code += bytes([OP_I32_LOAD]) + bytes([0x02, 0x00])
+    code += bytes([OP_I32_REM_U])
+    code += bytes([OP_I32_STORE]) + bytes([0x02, 0x00])
+
+    # A fixed colour, so the clock is the only thing that differs between peers.
+    code += bytes([OP_I32_CONST]) + sleb(ADDR_PAYLOAD + 4)
+    code += bytes([OP_I32_CONST]) + sleb(1)
+    code += bytes([OP_I32_STORE8]) + bytes([0x00, 0x00])
+
+    code += bytes([OP_I32_CONST]) + sleb(ADDR_COMMAND_NAME)
+    code += bytes([OP_I32_CONST]) + sleb(len(COMMAND_NAME))
+    code += bytes([OP_CALL]) + uleb(index["atlas_command_type"])
+    code += bytes([OP_I32_CONST]) + sleb(ADDR_PAYLOAD)
+    code += bytes([OP_I32_CONST]) + sleb(PAYLOAD_BYTES)
+    code += bytes([OP_CALL]) + uleb(index["atlas_submit"])
     code += bytes([OP_DROP])
 
     return bytes(code)
@@ -183,7 +229,7 @@ def function_body(code: bytes) -> bytes:
     return uleb(len(inner)) + inner
 
 
-def build_module() -> bytes:
+def build_module(imports: list[str], tick_body: bytes) -> bytes:
     out = bytearray(b"\x00asm\x01\x00\x00\x00")
 
     # Types: the three required functions, then one per import.
@@ -191,13 +237,13 @@ def build_module() -> bytes:
         func_type([], [VAL_I32]),  # mod_init
         func_type([VAL_I64], []),  # mod_tick
         func_type([], []),  # mod_shutdown
-    ] + [func_type(params, results) for _, params, results in IMPORTS]
+    ] + [func_type(*HOST[field]) for field in imports]
     out += section(SECTION_TYPE, uleb(len(types)) + b"".join(types))
 
-    imports = bytearray(uleb(len(IMPORTS)))
-    for index, (field, _, _) in enumerate(IMPORTS):
-        imports += name("atlas") + name(field) + bytes([0x00]) + uleb(3 + index)
-    out += section(SECTION_IMPORT, bytes(imports))
+    section_bytes = bytearray(uleb(len(imports)))
+    for position, field in enumerate(imports):
+        section_bytes += name("atlas") + name(field) + bytes([0x00]) + uleb(3 + position)
+    out += section(SECTION_IMPORT, bytes(section_bytes))
 
     out += section(SECTION_FUNCTION, uleb(3) + uleb(0) + uleb(1) + uleb(2))
 
@@ -207,13 +253,14 @@ def build_module() -> bytes:
 
     exports = bytearray(uleb(4))
     exports += name("memory") + bytes([0x02]) + uleb(0)
-    exports += name("mod_init") + bytes([0x00]) + uleb(FIRST_LOCAL_FUNC + 0)
-    exports += name("mod_tick") + bytes([0x00]) + uleb(FIRST_LOCAL_FUNC + 1)
-    exports += name("mod_shutdown") + bytes([0x00]) + uleb(FIRST_LOCAL_FUNC + 2)
+    first_local = len(imports)
+    exports += name("mod_init") + bytes([0x00]) + uleb(first_local + 0)
+    exports += name("mod_tick") + bytes([0x00]) + uleb(first_local + 1)
+    exports += name("mod_shutdown") + bytes([0x00]) + uleb(first_local + 2)
     out += section(SECTION_EXPORT, bytes(exports))
 
     init = bytes([OP_I32_CONST]) + sleb(0)  # nothing to set up, so nothing can go wrong
-    bodies = function_body(init) + function_body(tick_body()) + function_body(b"")
+    bodies = function_body(init) + function_body(tick_body) + function_body(b"")
     out += section(SECTION_CODE, uleb(3) + bodies)
 
     data = bytearray(uleb(1))
@@ -226,11 +273,20 @@ def build_module() -> bytes:
     return bytes(out)
 
 
+MODULES = [
+    ("synthetic.wasm", SYNTHETIC_IMPORTS, synthetic_tick_body),
+    ("clock.wasm", CLOCK_IMPORTS, clock_tick_body),
+]
+
+
 def generate(directory: pathlib.Path) -> list[pathlib.Path]:
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "synthetic.wasm"
-    path.write_bytes(build_module())
-    return [path]
+    written = []
+    for filename, imports, body in MODULES:
+        path = directory / filename
+        path.write_bytes(build_module(imports, body(imports)))
+        written.append(path)
+    return written
 
 
 def main() -> int:

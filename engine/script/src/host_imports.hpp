@@ -26,12 +26,18 @@
 namespace atlas::script {
 
 /// Every function a mod may import, sorted, for the loader to check against.
+///
+/// What it returns depends on whether the live runtime offered the unsafe debug imports, which
+/// is why it is a function rather than a constant: the loader must refuse an import the runtime
+/// did not register, and accept one it did, and those are the same list seen from two sides.
 [[nodiscard]] std::span<const std::string_view> host_import_names();
 
 /// Register the host imports with the runtime. Called once, by `Runtime::create`, after the
 /// runtime is up. Returns false if the runtime refused them, which is a programmer error here
 /// rather than bad data.
-[[nodiscard]] bool register_host_imports();
+///
+/// `with_debug` adds the clock a mod must not have. See `RuntimeConfig::unsafe_debug_imports`.
+[[nodiscard]] bool register_host_imports(bool with_debug);
 
 /// Everything the imports need, for the duration of one `mod_tick` call.
 ///

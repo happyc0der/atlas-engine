@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <format>
 #include <string>
@@ -158,7 +159,33 @@ std::int32_t native_view_read(wasm_exec_env_t exec_env, std::int32_t view, std::
     return static_cast<std::int32_t>(count);
 }
 
-/// The table, in the order `atlas_mod.h` declares them.
+/// A host clock, offered only when something explicitly asked for it.
+///
+/// **This exists so that a test can prove why the interface has no clock.** Under lockstep two
+/// peers read different values here, decide differently, and diverge at the first hash check —
+/// which is the demonstration ADR-0015 wants, and the test that fails if anybody later adds a
+/// clock to `atlas_mod.h` for real. It is deliberately not declared in that header: a mod
+/// written against the documented interface cannot reach it even by accident, because the only
+/// way to import it is to know the name and to be run by a host that opted in.
+std::int64_t native_debug_clock_ns(wasm_exec_env_t exec_env) {
+    const auto* call = current(exec_env);
+    if (call == nullptr) {
+        return ATLAS_ERR_REFUSED;
+    }
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+/// Whether the live runtime offered the clock. Set once by `register_host_imports`.
+///
+/// File-static for the same reason the allocator's counters are: at most one `Runtime` exists
+/// at a time, and both sides of this question — what was registered and what the loader will
+/// accept — have to give the same answer.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+bool g_debug_imports = false;
+
+/// The table, in the order `atlas_mod.h` declares them, with the unsafe one last.
 ///
 /// Not `constexpr` and not `const`: WAMR takes a mutable pointer and **keeps it** for as long as
 /// the imports are registered, so this has to be an object with a life rather than a temporary
@@ -166,7 +193,7 @@ std::int32_t native_view_read(wasm_exec_env_t exec_env, std::int32_t view, std::
 /// there is no conversion from a function pointer that is not a reinterpret_cast. The
 /// alternative to both is a different runtime.
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-type-reinterpret-cast)
-std::array<NativeSymbol, 8> g_imports{{
+std::array<NativeSymbol, 9> g_imports{{
     {"atlas_tick", reinterpret_cast<void*>(&native_tick), "()I", nullptr},
     {"atlas_command_type", reinterpret_cast<void*>(&native_command_type), "(*~)i", nullptr},
     {"atlas_submit", reinterpret_cast<void*>(&native_submit), "(i*~)i", nullptr},
@@ -175,7 +202,13 @@ std::array<NativeSymbol, 8> g_imports{{
     {"atlas_view_count", reinterpret_cast<void*>(&native_view_count), "()i", nullptr},
     {"atlas_view_size", reinterpret_cast<void*>(&native_view_size), "(i)i", nullptr},
     {"atlas_view_read", reinterpret_cast<void*>(&native_view_read), "(ii*~)i", nullptr},
+    // Last on purpose: registering the first N-1 is how the clock is withheld, so it must be
+    // the one on the end. A new import goes **before** this line.
+    {"atlas_debug_clock_ns", reinterpret_cast<void*>(&native_debug_clock_ns), "()I", nullptr},
 }};
+
+/// How many of the table are safe to offer. Everything but the clock.
+constexpr std::size_t kSafeImportCount = 8;
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-type-reinterpret-cast)
 
 }  // namespace
@@ -183,7 +216,20 @@ std::array<NativeSymbol, 8> g_imports{{
 std::span<const std::string_view> host_import_names() {
     // Derived from the same table the runtime is given, so the two cannot disagree. Sorted
     // because `Mod::load` binary-searches it and because a sorted list is a readable one.
-    static const std::vector<std::string_view> kNames = [] {
+    //
+    // Two lists rather than one, chosen by the same flag that chose how many to register: the
+    // loader must refuse an import the runtime did not register, and accept one it did, and
+    // computing both from the same array is what stops those two answers drifting apart.
+    static const std::vector<std::string_view> kSafeNames = [] {
+        std::vector<std::string_view> out;
+        out.reserve(kSafeImportCount);
+        for (const auto& symbol : std::span(g_imports).first(kSafeImportCount)) {
+            out.emplace_back(symbol.symbol);
+        }
+        std::ranges::sort(out);
+        return out;
+    }();
+    static const std::vector<std::string_view> kAllNames = [] {
         std::vector<std::string_view> out;
         out.reserve(g_imports.size());
         for (const auto& symbol : g_imports) {
@@ -192,17 +238,20 @@ std::span<const std::string_view> host_import_names() {
         std::ranges::sort(out);
         return out;
     }();
-    return kNames;
+    return g_debug_imports ? std::span<const std::string_view>(kAllNames)
+                           : std::span<const std::string_view>(kSafeNames);
 }
 
-bool register_host_imports() {
+bool register_host_imports(bool with_debug) {
+    g_debug_imports = with_debug;
     // The literal, not `std::string(kImportModule).c_str()`, which is what this was first and
     // is a dangling pointer: WAMR **keeps** the module-name pointer for as long as the imports
     // are registered, and a temporary string dies at the end of the statement. The symptom was
     // every import failing to link with the registration reporting success, which is a long way
     // from the cause.
-    return wasm_runtime_register_natives(ATLAS_IMPORT_MODULE, g_imports.data(),
-                                         static_cast<std::uint32_t>(g_imports.size()));
+    return wasm_runtime_register_natives(
+        ATLAS_IMPORT_MODULE, g_imports.data(),
+        static_cast<std::uint32_t>(with_debug ? g_imports.size() : kSafeImportCount));
 }
 
 struct ModHost::Impl {

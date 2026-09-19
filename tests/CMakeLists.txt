@@ -97,6 +97,9 @@ set(_atlas_lab_headless_cases
     mod_runs_and_changes_state
     mod_path_is_validated
     mod_is_not_a_peer
+    mod_replay_needs_no_runtime
+    mod_peers_agree
+    mod_clock_diverges
     save_writes_file
     load_continues
     load_different_grid_adopts_layout

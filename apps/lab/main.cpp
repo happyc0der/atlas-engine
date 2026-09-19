@@ -90,6 +90,8 @@ struct Options {
     /// A mod to load from the `mods` mount, or empty for none.
     std::string_view mod;
     std::string_view mods_dir;
+    /// Offer mods a host clock. Unsafe, and named so: see --help.
+    bool unsafe_debug_imports = false;
     std::string_view screenshot;
     std::string_view save_path;
     std::string_view load_path;
@@ -144,6 +146,10 @@ Options:
                          identifier and never sent to peers: every peer runs the same mod and
                          produces the same commands, which is what the hash check verifies.
   --mods-dir PATH        Where --mod looks. Default: assets/mods.
+  --unsafe-debug-imports Offer mods a host clock, which the interface deliberately does not
+                         have. A mod that reads one decides differently on a slower machine,
+                         so under lockstep this produces a divergence — which is the only
+                         reason it exists. Never use it for anything but that demonstration.
   --workers N            Worker threads beside this one for the simulation's compute phase.
                          Default: one per hardware thread beyond this one. Zero runs everything
                          on the calling thread. The state hash is the same at every setting,
@@ -223,6 +229,7 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
     options.no_render = args.has("no-render");
     options.no_gamepad = args.has("no-gamepad");
     options.no_audio = args.has("no-audio");
+    options.unsafe_debug_imports = args.has("unsafe-debug-imports");
     options.start_paused = args.has("paused");
     options.video_driver = args.value_or("video-driver", std::string_view{});
     options.audio_driver = args.value_or("audio-driver", std::string_view{});
@@ -357,34 +364,41 @@ struct Simulation {
     std::unique_ptr<atlas::sim::Kernel> kernel;  ///< Always set once make_simulation returns.
 };
 
-/// The script runtime and the one mod this run loaded, held together so they die in order.
+/// The script runtime, and the mod's bytes, read once for however many peers want them.
 ///
-/// A mod must not outlive the runtime it was built against: WAMR's allocator belongs to the
-/// runtime, so a mod freed afterwards would be handing memory back to something that no longer
-/// exists. Declaring them in this order and destroying the whole struct at once is what makes
-/// that a property of the type rather than a rule the reader has to remember.
-struct Mods {
+/// The runtime is process-wide — WAMR's initialisation is, so `script::Runtime` is too — which
+/// is why a loopback run with four peers has one of these and four hosts rather than four of
+/// everything. A host must not outlive it: WAMR's allocator belongs to the runtime, so a mod
+/// freed afterwards would hand memory back to something that no longer exists.
+struct ModRuntime {
     std::optional<atlas::script::Runtime> runtime;
+    std::vector<std::byte> bytes;
+
+    [[nodiscard]] bool wanted() const noexcept { return runtime.has_value(); }
+};
+
+/// One peer's mod, and the view buffer it reads.
+struct ModPlayer {
     std::unique_ptr<atlas::script::ModHost> host;
-    /// Rebuilt each tick, and owned here because a view is a span over somebody else's bytes.
+    /// Owned here because a view is a span over somebody else's bytes, and these are the bytes.
     atlas::lab::LayoutView layout;
 
     [[nodiscard]] bool loaded() const noexcept { return host != nullptr; }
 };
 
-/// Load `--mod`, or nothing at all when it was not given.
+/// Read `--mod` and bring the runtime up, or do nothing at all when it was not given.
 ///
-/// The bytes come through `assets::VirtualPath` and a mounted root, exactly as a save file
-/// does, because a mod is untrusted input in the same way. The lab has never had a filesystem
-/// and said so at the audio call site — "giving it a filesystem and a mount to play one click
-/// would be a larger change than the audio module itself" — and that reasoning was about
-/// proportion. A mod changes the proportion: `VirtualPath` is the only validated way to turn a
-/// name from the command line into a file inside a directory, and rolling that by hand for
-/// untrusted input is precisely what this project does not do.
-[[nodiscard]] atlas::Result<Mods> load_mods(const Options& options, const Simulation& sim) {
-    Mods mods;
+/// The bytes come through `assets::VirtualPath` and a mounted root, exactly as a save file does,
+/// because a mod is untrusted input in the same way. The lab has never had a filesystem and said
+/// so at the audio call site — "giving it a filesystem and a mount to play one click would be a
+/// larger change than the audio module itself" — and that reasoning was about proportion. A mod
+/// changes the proportion: `VirtualPath` is the only validated way to turn a name from the
+/// command line into a file inside a directory, and rolling that by hand for untrusted input is
+/// precisely what this project does not do.
+[[nodiscard]] atlas::Result<ModRuntime> open_mod_runtime(const Options& options) {
+    ModRuntime opened;
     if (options.mod.empty()) {
-        return mods;
+        return opened;
     }
 
     atlas::assets::FileSystem files;
@@ -399,29 +413,55 @@ struct Mods {
     if (!bytes) {
         return std::unexpected(std::move(bytes).error().context("reading the mod"));
     }
+    opened.bytes = *std::move(bytes);
 
-    auto runtime = atlas::script::Runtime::create();
+    if (options.unsafe_debug_imports) {
+        // Said out loud, at warning level, every time. A run that offers a mod a clock is a run
+        // whose results mean nothing, and the log is where somebody reading an unexpected
+        // divergence will look first.
+        ATLAS_LOG_WARN(kApp, "--unsafe-debug-imports: mods are offered a host clock; a mod that "
+                             "reads one will diverge under lockstep, which is the only thing "
+                             "this flag is for");
+    }
+    auto runtime =
+        atlas::script::Runtime::create({.unsafe_debug_imports = options.unsafe_debug_imports});
     if (!runtime) {
         return std::unexpected(std::move(runtime).error());
     }
-    mods.runtime = *std::move(runtime);
+    opened.runtime = *std::move(runtime);
+    return opened;
+}
+
+/// Give one simulation its own instance of the mod.
+///
+/// **Every peer uses the same index and the same seed**, unlike the synthetic command stream,
+/// which deliberately differs per peer. A mod's commands are never sent: each peer runs the mod
+/// itself and must reach the same answer, so anything that differs between peers here would be
+/// a divergence rather than a variation.
+[[nodiscard]] atlas::Result<ModPlayer> attach_mod(ModRuntime& shared, const Options& options,
+                                                  const Simulation& sim) {
+    ModPlayer player;
+    // Tested on the member rather than through `wanted()`, so that both a reader and the
+    // analyser can see that the dereference below is guarded.
+    if (!shared.runtime.has_value()) {
+        return player;
+    }
 
     auto host = atlas::script::ModHost::create(
-        *mods.runtime, 0, *bytes, options.mod,
+        *shared.runtime, 0, shared.bytes, options.mod,
         {.seed = options.seed,
          .input_delay = options.loopback_peers > 1 ? options.input_delay : 1});
     if (!host) {
         return std::unexpected(std::move(host).error());
     }
-    mods.host = *std::move(host);
-    if (auto status = mods.host->start(); !status) {
+    player.host = *std::move(host);
+    if (auto status = player.host->start(); !status) {
         return std::unexpected(std::move(status).error().context("starting the mod"));
     }
-
-    mods.layout = atlas::lab::layout_view(sim.lab.layout);
+    player.layout = atlas::lab::layout_view(sim.lab.layout);
     ATLAS_LOG_INFO(kApp, "mod '{}' loaded as source {}", options.mod,
-                   static_cast<std::uint32_t>(mods.host->id()));
-    return mods;
+                   static_cast<std::uint32_t>(player.host->id()));
+    return player;
 }
 
 /// Publish this tick's views and let the mod decide, before the tick runs.
@@ -429,21 +469,38 @@ struct Mods {
 /// **Once per tick and never once per frame.** Peers run different numbers of frames per tick,
 /// so a per-frame call would make the number of mod invocations depend on frame rate, and
 /// therefore the commands, and therefore the state.
-void run_mod_for_tick(Mods& mods, Simulation& sim, atlas::Tick tick, atlas::sim::TurnGate& gate) {
-    if (!mods.loaded()) {
+void run_mod_for_tick(ModPlayer& player, Simulation& sim, atlas::Tick tick,
+                      atlas::sim::TurnGate& gate) {
+    if (!player.loaded()) {
         return;
     }
     const std::array<atlas::script::ModView, 2> views{
-        atlas::script::ModView{.name = "layout", .bytes = mods.layout.bytes},
+        atlas::script::ModView{.name = "layout", .bytes = player.layout.bytes},
         atlas::script::ModView{.name = "colour",
                                .bytes = atlas::lab::color_view(sim.lab.world, sim.lab.ids)},
     };
-    mods.host->set_views(views);
-    if (const auto report = mods.host->poll(tick, sim.commands, gate); !report) {
+    player.host->set_views(views);
+    if (const auto report = player.host->poll(tick, sim.commands, gate); !report) {
         // Cannot happen by design — a mod that misbehaves is reported closed rather than as an
         // error — but a driver that ignored it would be assuming that on the reader's behalf.
         ATLAS_LOG_ERROR(kApp, "polling the mod failed: {}", report.error());
     }
+}
+
+/// One line saying what a mod did, so an integration case has something to assert on.
+void report_mod(const ModPlayer& player, std::string_view who) {
+    if (!player.loaded()) {
+        return;
+    }
+    const auto stats = player.host->stats();
+    ATLAS_LOG_INFO(kApp,
+                   "{}mod '{}': {} submitted, {} refused, {} log line(s) dropped over {} "
+                   "tick(s), {}",
+                   who, player.host->name(), stats.commands_submitted, stats.commands_refused,
+                   stats.log_lines_dropped, stats.ticks_run,
+                   player.host->disabled()
+                       ? std::string("disabled: ") + std::string(player.host->disabled_because())
+                       : std::string("still running"));
 }
 
 /// `gate` is borrowed and optional: null is a solo run, which is every run but a loopback one.
@@ -612,10 +669,19 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
         std::unique_ptr<Simulation> sim;
         atlas::sim::TurnGate gate;
         std::unique_ptr<atlas::net::Session> session;
+        /// Each peer runs its own instance of the same mod, with the same identifier and the
+        /// same seed. Its commands are never sent: the whole proof is that two machines running
+        /// the same mod produce the same commands without exchanging them.
+        ModPlayer mod;
         atlas::Tick next_turn = 0;
         std::uint64_t last_hash = 0;
         std::size_t applied = 0;
     };
+
+    auto mod_runtime = open_mod_runtime(options);
+    if (!mod_runtime) {
+        return std::unexpected(std::move(mod_runtime).error());
+    }
 
     std::vector<std::unique_ptr<Participant>> peers;
     peers.reserve(peer_count);
@@ -631,6 +697,12 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
             return std::unexpected(std::move(made).error());
         }
         participant->sim = *std::move(made);
+
+        auto player = attach_mod(*mod_runtime, options, *participant->sim);
+        if (!player) {
+            return std::unexpected(std::move(player).error());
+        }
+        participant->mod = *std::move(player);
 
         // Per-system hashes on, whatever the recording options say: a divergence that cannot be
         // attributed to a system is exactly what the hash checks exist to avoid.
@@ -791,6 +863,10 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
         bool progressed = false;
         for (auto& peer : peers) {
             while (peer->sim->kernel->ready()) {
+                // Before the tick this peer is about to run, and on this peer's own copy of the
+                // mod. Nothing about it crosses the link.
+                run_mod_for_tick(peer->mod, *peer->sim, peer->sim->kernel->current_tick(),
+                                 peer->gate);
                 auto report = peer->sim->kernel->step();
                 if (!report) {
                     return std::unexpected(std::move(report).error());
@@ -845,6 +921,26 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
                     static_cast<unsigned>(peer.session->self()),
                     static_cast<unsigned long long>(peer.session->stats().turns_sent),
                     static_cast<unsigned long long>(peer.session->stats().turns_received));
+        report_mod(peer.mod, std::format("peer {} ", i));
+    }
+
+    // Every peer's mod must have produced the same number of commands. The hashes agreeing
+    // already implies it, but this says which half of the proof failed when one does: a mod
+    // disabled on one peer and not another is a different problem from two mods that ran fully
+    // and disagreed.
+    for (std::size_t i = 1; i < peers.size(); ++i) {
+        if (!peers[i]->mod.loaded()) {
+            break;
+        }
+        const auto mine = peers[i]->mod.host->stats().commands_submitted;
+        const auto first = peers[0]->mod.host->stats().commands_submitted;
+        if (mine != first) {
+            return atlas::fail(atlas::ErrorCode::IntegrityCheckFailed,
+                               std::format("peer {}'s mod submitted {} commands and peer 0's "
+                                           "submitted {}; the same mod on the same seed must "
+                                           "reach the same answer",
+                                           i, mine, first));
+        }
     }
     std::printf("loopback: peers=%zu delay=%u latency=%u reorder=%llu agreed hashes=%llu "
                 "divergences=%llu stalls=%llu\n",
@@ -1033,7 +1129,11 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
     }
     Simulation& sim = **simulation;
 
-    auto mods = load_mods(*options, sim);
+    auto mod_runtime = open_mod_runtime(*options);
+    if (!mod_runtime) {
+        return std::unexpected(std::move(mod_runtime).error());
+    }
+    auto mods = attach_mod(*mod_runtime, *options, sim);
     if (!mods) {
         return std::unexpected(std::move(mods).error());
     }
@@ -1766,20 +1866,7 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
     counters.report();
     const std::uint64_t ticks_total = sim.kernel->current_tick() - first_tick;
     const auto elapsed_us = std::max<std::uint64_t>(1, micros_since(run_start));
-    if (mods->loaded()) {
-        // Reported whether or not the mod is still running, and saying which: a mod that was
-        // disabled at tick three and a mod that simply had nothing to say produce the same
-        // command count, and only one of them is a problem.
-        const auto stats = mods->host->stats();
-        ATLAS_LOG_INFO(kApp,
-                       "mod '{}': {} submitted, {} refused, {} log line(s) dropped over {} "
-                       "tick(s), {}",
-                       mods->host->name(), stats.commands_submitted, stats.commands_refused,
-                       stats.log_lines_dropped, stats.ticks_run,
-                       mods->host->disabled()
-                           ? std::string("disabled: ") + std::string(mods->host->disabled_because())
-                           : std::string("still running"));
-    }
+    report_mod(*mods, "");
     ATLAS_LOG_INFO(kApp, "final tick={} state hash={:#018x} late commands={} pick disagreements={}",
                    sim.kernel->current_tick(), last_hash, sim.kernel->late_commands(),
                    pick_mismatches);

@@ -53,7 +53,7 @@ TEST_CASE("a budget too small to hold anything is refused rather than starved",
           "[script][runtime]") {
     // Refused at `create` rather than producing a runtime where every allocation fails: a
     // runtime that cannot allocate looks exactly like one whose mods all happen to be broken.
-    const auto refused = Runtime::create(1);
+    const auto refused = Runtime::create({.budget_bytes = 1});
     REQUIRE_FALSE(refused.has_value());
     CHECK(refused.error().code() == atlas::ErrorCode::InvalidArgument);
     CHECK_FALSE(Runtime::alive());
