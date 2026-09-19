@@ -387,12 +387,6 @@ integration ran for the first time. What it found is recorded in
   Picked up when a payload is large enough that carrying it in every entry costs something
   measurable, or when something outside this repository needs to add a type of its own — at
   which point the switch stops being a complete list and becomes a limitation.
-- **A cap on the scene document's own length.** The clip reader has one, checked before the
-  parse, because that is the only bound a document parser can enforce: by the time any count
-  inside it is readable, the whole document has been allocated. The scene reader caps its entity
-  count and not its input, so the same hole is open there. Not fixed in a milestone about
-  animation, because widening that file carries its own risk; picked up the next time the scene
-  format is touched, which ADR-0012's own rule makes likely.
 - **An importer cache for clips.** A clip is a few hundred bytes of text that parses faster than
   a cache entry would read, and the artifact cache is texture-shaped end to end. Same trigger as
   audio: an import measured above five milliseconds.

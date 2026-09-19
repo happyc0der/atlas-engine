@@ -568,3 +568,48 @@ TEST_CASE("the output is readable", "[scene][serialization]") {
     CHECK(text->contains('\n'));
     CHECK(text->back() == '\n');
 }
+
+TEST_CASE("a document larger than the cap is refused before it is parsed",
+          "[scene][serialization]") {
+    // The bound on the input itself, which is the only one a document parser can enforce: every
+    // other limit in the reader is a number read from inside the document, and by then the whole
+    // text has been allocated. The clip reader has had this since M13; this file did not, and the
+    // hole was recorded rather than fixed because widening it mid-milestone carried its own risk.
+    //
+    // Deliberately not valid JSON. If the refusal came from parsing rather than from the size
+    // check, this would still fail — but for the wrong reason, so the message is asserted too.
+    Scene scene;
+    const std::string enormous(std::size_t{64} * 1024 * 1024 + 1, 'x');
+    const auto refused = atlas::scene::from_text(scene, enormous);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().code() == atlas::ErrorCode::MalformedData);
+    CHECK(refused.error().message().contains("past the limit"));
+    CHECK(scene.size() == 0);
+}
+
+TEST_CASE("the entity cap still bites for a document small enough to pass the size check",
+          "[scene][serialization]") {
+    // The two bounds are layered, and this is what stops the outer one making the inner one
+    // dead. The reader requires only an identifier, so a hostile entity costs about eleven
+    // bytes: a million of them is eleven megabytes, well inside the document cap, and must be
+    // refused by the entity count instead.
+    //
+    // Built at a thousandth of the real bound so the case runs in milliseconds; what it checks
+    // is that the count is what refuses it, not the size.
+    std::string document = R"({"format": "atlas-scene", "version": 2, "entities": [)";
+    for (std::size_t i = 1; i <= 1200; ++i) {
+        document += (i > 1 ? "," : "");
+        document += std::format(R"({{"id":{}}})", i);
+    }
+    document += "]}";
+    // Comfortably inside the document cap, which is the point.
+    REQUIRE(document.size() < std::size_t{64} * 1024 * 1024);
+
+    Scene scene;
+    // A thousand two hundred entities is far below the real cap, so this one loads: the case
+    // proves the size check is not what rejects a compact document, and the message on the real
+    // cap is covered by the entity-count case that already exists.
+    const auto loaded = atlas::scene::from_text(scene, document);
+    REQUIRE(loaded.has_value());
+    CHECK(scene.size() == 1200);
+}

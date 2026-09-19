@@ -60,6 +60,11 @@ inline constexpr std::uint32_t kMinSceneFormatVersion = 1;
 /// On failure the scene is left empty rather than half-populated, because a partially loaded
 /// scene is harder to reason about than an empty one and every caller would have to handle
 /// it.
+///
+/// A scene file is untrusted input. The text itself is bounded before it is parsed — which is
+/// the only bound a document parser can enforce, since every count inside a document can only
+/// be read once the whole thing has been allocated — and every count within it is bounded
+/// before anything is reserved.
 [[nodiscard]] Status from_text(Scene& scene, std::string_view text);
 
 }  // namespace atlas::scene

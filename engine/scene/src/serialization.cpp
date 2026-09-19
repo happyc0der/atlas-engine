@@ -30,6 +30,24 @@ using Json = nlohmann::ordered_json;
 constexpr std::size_t kMaxEntities = 1'000'000;
 constexpr std::size_t kMaxNameLength = 1024;
 
+/// The bound on the input itself, checked before the parse begins.
+///
+/// **This is the only bound a document parser can enforce.** Every limit below it is read from
+/// inside the document, and by the time any of them is readable the whole text has already been
+/// allocated and turned into a tree. The clip reader has had this since M13 and this file has
+/// not; the hole was recorded in `docs/DEFERRED.md` rather than fixed there, because widening
+/// this file during a milestone about animation carried its own risk.
+///
+/// Sixty-four mebibytes, and the number is chosen so that it and `kMaxEntities` both still
+/// matter. The writer emits about 190 bytes for the smallest entity it can produce, so a
+/// legitimate scene reaches this only at hundreds of thousands of entities — the sandbox's is
+/// four kilobytes. But the *reader* requires only an identifier, so a hostile document can hold
+/// an entity in eleven bytes: a million of those is eleven megabytes, passes this check, and is
+/// refused by `kMaxEntities` instead. A smaller cap here would make that second bound
+/// unreachable, and a bound that can never fire is worse than no bound, because it reads like
+/// protection.
+constexpr std::size_t kMaxDocumentBytes = std::size_t{64} * 1024 * 1024;
+
 // The animator's own bounds are declared beside the component, because the inspector has to
 // offer the same ones this refuses outside of.
 
@@ -194,6 +212,15 @@ Result<std::string> to_text(const Scene& scene) {
 
 Status from_text(Scene& scene, std::string_view text) {
     ATLAS_ZONE_NAMED("scene::from_text");
+
+    // Before the parse, not after it. See kMaxDocumentBytes: once the text is handed to the
+    // parser it has already been allocated, so this is the last moment an enormous input can be
+    // refused cheaply.
+    if (text.size() > kMaxDocumentBytes) {
+        return std::unexpected(Error(ErrorCode::MalformedData,
+                                     std::format("the scene file is {} bytes, past the limit of {}",
+                                                 text.size(), kMaxDocumentBytes)));
+    }
 
     // The non-throwing parse: ADR-0005 forbids exceptions crossing a module boundary, and a
     // malformed file is an expected outcome rather than an exceptional one.
