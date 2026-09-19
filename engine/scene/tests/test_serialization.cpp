@@ -579,7 +579,7 @@ TEST_CASE("a document larger than the cap is refused before it is parsed",
     // Deliberately not valid JSON. If the refusal came from parsing rather than from the size
     // check, this would still fail — but for the wrong reason, so the message is asserted too.
     Scene scene;
-    const std::string enormous(std::size_t{64} * 1024 * 1024 + 1, 'x');
+    const std::string enormous((std::size_t{64} * 1024 * 1024) + 1, 'x');
     const auto refused = atlas::scene::from_text(scene, enormous);
     REQUIRE_FALSE(refused.has_value());
     CHECK(refused.error().code() == atlas::ErrorCode::MalformedData);
