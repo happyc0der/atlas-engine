@@ -264,7 +264,7 @@ TEST_CASE("typing into the name field renames through the history", "[tools][gpu
 
     CHECK(fixture.scene.name(fixture.child) == "renamed");
     REQUIRE(history.undo_depth() == 1);
-    CHECK(history.undo_label() == "rename");
+    CHECK(history.undo_label() == "edit.command.rename");
 
     // And it is a real history entry, not a direct write: undo restores the old name.
     CHECK(history.undo());

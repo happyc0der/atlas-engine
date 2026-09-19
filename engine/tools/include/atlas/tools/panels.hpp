@@ -177,7 +177,10 @@ struct ControlsContext {
 [[nodiscard]] SimulationControlsRequest request_for(ControlAction action,
                                                     const ControlsContext& context) noexcept;
 
-/// A short name for a speed, for a panel or a status row.
+/// The catalogue key naming a speed, for a panel or a status row (ADR-0016).
+///
+/// **A key, not a display string**, so the caller resolves it through `text::Catalog`. `tools`
+/// has the only copy of this rule since M16; the lab had a second one that disagreed with it.
 [[nodiscard]] std::string_view speed_name(sim::Speed speed);
 
 }  // namespace atlas::tools

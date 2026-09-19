@@ -31,7 +31,9 @@
 #include <atlas/scene/scene.hpp>
 #include <atlas/scene/serialization.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
+#include <atlas/text/catalog.hpp>
 #include <atlas/tools/debug_ui.hpp>
+#include <atlas/tools/text_keys.hpp>
 
 #include "scene.hpp"
 #include "scene_demo.hpp"
@@ -802,6 +804,18 @@ void step_simulation(atlas::Tick tick) {
         return std::unexpected(std::move(registry).error().context("starting the asset registry"));
     }
 
+    // The interface's own text, requested like any other asset so that hot reload covers it.
+    // A table that fails to load is not fatal: the overlay then shows its keys, which is what
+    // a missing key does everywhere else and is legible rather than blank.
+    atlas::text::Catalog catalog;
+    if (const auto strings_path = atlas::assets::VirtualPath::parse("strings/en.json")) {
+        if (const auto requested =
+                registry->request(*strings_path, atlas::assets::AssetType::StringTable);
+            !requested) {
+            ATLAS_LOG_WARN(kApp, "no string table: {}", requested.error());
+        }
+    }
+
     // Subsystems are constructed in dependency order and destroyed in reverse, by scope.
     // The gamepad subsystem follows the window: a headless run has nothing to aim, and
     // enumerating input devices there is work with no consumer that can also raise a
@@ -896,6 +910,9 @@ void step_simulation(atlas::Tick tick) {
 
         if (!options->no_overlay) {
             auto ui = atlas::tools::DebugUi::create(*device, window);
+            if (ui) {
+                ui->set_catalog(&catalog);
+            }
             if (!ui) {
                 // Not fatal: an engineering overlay that cannot start should not stop the
                 // engine it is meant to observe.
@@ -996,6 +1013,11 @@ void step_simulation(atlas::Tick tick) {
         } else if (scene_demo.has_value()) {
             finalised = scene_demo->finalise_assets(*registry);
         }
+        // A third finaliser over the same registry, filtering by type exactly as the other
+        // two do. Hot reload therefore covers the interface's own text: editing a caption in
+        // the table changes the panel on the next frame.
+        finalised += catalog.finalise_pending(*registry);
+
         if (audio.has_value()) {
             // A second finaliser over the same registry, filtering by type. Both walk the same
             // sorted list and each skips what the other owns, which is the arrangement that
@@ -1139,27 +1161,33 @@ void step_simulation(atlas::Tick tick) {
                         }
 
                         const std::array<atlas::tools::Stat, 7> stats{{
-                            {.label = "frame", .value = overlay_values[0]},
-                            {.label = "tick", .value = overlay_values[1]},
-                            {.label = scene_demo.has_value() ? "sprites drawn" : "quads visible",
+                            {.label = atlas::tools::keys::kStatFrame, .value = overlay_values[0]},
+                            {.label = atlas::tools::keys::kStatTick, .value = overlay_values[1]},
+                            {.label = scene_demo.has_value()
+                                          ? atlas::tools::keys::kStatSpritesDrawn
+                                          : atlas::tools::keys::kStatQuadsVisible,
                              .value = overlay_values[2]},
-                            {.label = "draw calls", .value = overlay_values[3]},
-                            {.label = "uploaded", .value = overlay_values[4]},
-                            {.label = "zoom", .value = overlay_values[5]},
-                            {.label = "audio", .value = overlay_values[6]},
+                            {.label = atlas::tools::keys::kStatDrawCalls,
+                             .value = overlay_values[3]},
+                            {.label = atlas::tools::keys::kStatUploaded,
+                             .value = overlay_values[4]},
+                            {.label = atlas::tools::keys::kStatZoom, .value = overlay_values[5]},
+                            {.label = atlas::tools::keys::kStatAudio, .value = overlay_values[6]},
                         }};
-                        overlay->stats_panel("Atlas", stats);
+                        overlay->stats_panel(atlas::tools::keys::kTitleSandbox, stats);
 
                         // The panel takes the history, not the scene. The history exposes
                         // its scene as const and changes it only through undoable commands,
                         // so a widget still cannot reach past the validation Scene performs.
                         if (scene_demo.has_value()) {
-                            overlay->scene_panel("Scene", scene_demo->history());
+                            overlay->scene_panel(atlas::tools::keys::kTitleScene,
+                                                 scene_demo->history());
                         }
 
-                        overlay->asset_panel("Assets", *registry);
+                        overlay->asset_panel(atlas::tools::keys::kTitleAssets, *registry);
 
-                        if (overlay->log_console_panel("Log", *log_buffer).clear_requested) {
+                        if (overlay->log_console_panel(atlas::tools::keys::kTitleLog, *log_buffer)
+                                .clear_requested) {
                             log_buffer->clear();
                         }
 

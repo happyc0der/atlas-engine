@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <atlas/tools/panels.hpp>
+#include <atlas/tools/text_keys.hpp>
 
 #include <algorithm>
 #include <array>
@@ -130,23 +131,27 @@ SimulationControlsRequest request_for(ControlAction action,
 
 std::string_view speed_name(sim::Speed speed) {
     switch (speed.policy) {
-    case sim::SpeedPolicy::Paused: return "paused";
-    case sim::SpeedPolicy::SingleStep: return "step";
-    case sim::SpeedPolicy::Unbounded: return "unbounded";
+    case sim::SpeedPolicy::Paused: return keys::kSpeedPaused;
+    case sim::SpeedPolicy::SingleStep: return keys::kSpeedStep;
+    case sim::SpeedPolicy::Unbounded: return keys::kSpeedUnbounded;
     case sim::SpeedPolicy::Realtime: break;
     }
 
     // A fractional speed is realtime with a denominator. Naming it by the numerator alone
     // would report a half-speed run as "1x" on the one row that says how fast time is running.
+    //
+    // The lab had its own copy of this function until M16 and that copy was missing this
+    // check, so the lab did report a half-speed run as "1x". Two spellings of one rule is how
+    // that happens, and deleting the second is what fixed it.
     if (speed.denominator != 1) {
-        return "custom";
+        return keys::kSpeedCustom;
     }
     switch (speed.numerator) {
-    case 1: return "1x";
-    case 2: return "2x";
-    case 4: return "4x";
-    case 8: return "8x";
-    default: return "custom";
+    case 1: return keys::kSpeed1x;
+    case 2: return keys::kSpeed2x;
+    case 4: return keys::kSpeed4x;
+    case 8: return keys::kSpeed8x;
+    default: return keys::kSpeedCustom;
     }
 }
 

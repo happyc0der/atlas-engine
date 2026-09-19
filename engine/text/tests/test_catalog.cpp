@@ -4,6 +4,7 @@
 // The asset path arrives in the next slice; everything asserted here is about the lookup
 // itself, and the case that matters most is the one where the lookup fails — because that is
 // the path a shipped build takes when somebody adds a string and forgets the table.
+#include <atlas/assets/importer.hpp>
 #include <atlas/text/catalog.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -139,6 +140,45 @@ TEST_CASE("clear drops the entries and the memory of what was missing", "[text]"
     // A key absent from the old table may be present in the new one, so it is asked about
     // again rather than remembered as hopeless.
     CHECK(catalog.lookup("ui.ok") == "ui.ok");
+}
+
+TEST_CASE("a failed load leaves the catalog empty, not half-filled", "[text]") {
+    // `load` is reachable without a parser — the lab calls it directly — so its own failure
+    // path needs its own test. Built here rather than parsed, because the importer refuses a
+    // duplicate first and this is about what happens when one reaches the catalog anyway.
+    Catalog catalog;
+    REQUIRE(catalog.insert("ui.previous", "Previous").has_value());
+
+    atlas::assets::ImportedStringTable table;
+    table.locale = "en";
+    table.strings.emplace_back("ui.first", "First");
+    table.strings.emplace_back("ui.second", "Second");
+    table.strings.emplace_back("ui.first", "Again");
+
+    const auto status = catalog.load(table);
+    REQUIRE_FALSE(status.has_value());
+
+    // Neither the old contents nor the half that was accepted: a refused table leaves nothing
+    // of itself behind, and nothing of what it replaced either.
+    CHECK(catalog.size() == 0);
+    CHECK(catalog.locale().empty());
+    CHECK(catalog.lookup("ui.first") == "ui.first");
+    CHECK(catalog.lookup("ui.previous") == "ui.previous");
+}
+
+TEST_CASE("load replaces rather than merges", "[text]") {
+    Catalog catalog;
+    REQUIRE(catalog.insert("ui.gone", "Gone").has_value());
+
+    atlas::assets::ImportedStringTable table;
+    table.locale = "fr";
+    table.strings.emplace_back("ui.kept", "Gardé");
+
+    REQUIRE(catalog.load(table).has_value());
+    CHECK(catalog.size() == 1);
+    CHECK(catalog.locale() == "fr");
+    CHECK(catalog.lookup("ui.kept") == "Gardé");
+    CHECK(catalog.lookup("ui.gone") == "ui.gone");
 }
 
 TEST_CASE("a key found on a hit stays valid as more entries arrive", "[text]") {

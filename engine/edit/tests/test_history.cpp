@@ -70,14 +70,14 @@ TEST_CASE("applying pushes, and undo and redo move between the stacks", "[edit][
     CHECK(history.can_undo());
     CHECK_FALSE(history.can_redo());
     CHECK(history.revision() == 1);
-    CHECK(history.undo_label() == "rename");
+    CHECK(history.undo_label() == "edit.command.rename");
 
     CHECK(history.undo());
     CHECK(bytes(fixture.scene) == before);
     CHECK_FALSE(history.can_undo());
     CHECK(history.can_redo());
     CHECK(history.revision() == 2);
-    CHECK(history.redo_label() == "rename");
+    CHECK(history.redo_label() == "edit.command.rename");
 
     CHECK(history.redo());
     CHECK(fixture.scene.name(fixture.child) == "renamed");

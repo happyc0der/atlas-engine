@@ -71,6 +71,24 @@ std::size_t Catalog::log_new_misses() const {
     return named;
 }
 
+Status Catalog::load(const assets::ImportedStringTable& table) {
+    // Replaced, never merged: see the header.
+    clear();
+
+    for (const auto& [key, value] : table.strings) {
+        if (auto status = insert(key, value); !status) {
+            // The importer already refuses duplicates and oversized entries, so reaching here
+            // means this catalog's own bound was the binding one. Either way nothing is left
+            // half-applied.
+            clear();
+            return status;
+        }
+    }
+
+    m_locale = table.locale;
+    return {};
+}
+
 std::size_t Catalog::finalise_pending(assets::Registry& registry) {
     ATLAS_ASSERT_MAIN_THREAD();
     ATLAS_ZONE_NAMED("Catalog::finalise_pending");
@@ -94,31 +112,17 @@ std::size_t Catalog::finalise_pending(assets::Registry& registry) {
             continue;
         }
 
-        // Replaced, never merged: see the header. A reload that kept old keys would make hot
-        // reload a way of accumulating stale text.
-        clear();
-
-        Status status;
-        for (const auto& [key, value] : imported->strings) {
-            status = insert(key, value);
-            if (!status) {
-                break;
-            }
-        }
-
+        const Status status = load(*imported);
         if (!status) {
-            // The parser already refuses duplicates and oversized entries, so reaching here
-            // means the catalog's own bound was the binding one. Either way the table is not
-            // half-loaded: what was inserted is dropped, and the asset is marked failed so the
-            // registry reports it rather than leaving it looking loaded.
-            clear();
+            // `load` has already emptied the catalog, so nothing is half-applied. The asset
+            // is marked failed so the registry reports it rather than leaving it looking
+            // loaded and merely silent.
             ATLAS_LOG_ERROR(kText, "string table {} was refused: {}", id.to_string(),
                             status.error());
             registry.mark_failed(id, status.error().to_string());
             continue;
         }
 
-        m_locale = std::move(imported->locale);
         registry.mark_ready(id);
         ++taken;
         ATLAS_LOG_INFO(kText, "string table '{}' ready with {} entries", m_locale,

@@ -24,6 +24,7 @@ atlas_add_app(lab
         atlas::platform
         atlas::rhi
         atlas::tools
+        atlas::text
 )
 
 if(ATLAS_BUILD_TESTS AND TARGET atlas_lab_view)

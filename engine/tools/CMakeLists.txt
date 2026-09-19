@@ -17,6 +17,7 @@ atlas_add_module(tools
     HEADERS
         include/atlas/tools/debug_ui.hpp
         include/atlas/tools/panels.hpp
+        include/atlas/tools/text_keys.hpp
     DEPENDS
         core
         assets
@@ -27,6 +28,7 @@ atlas_add_module(tools
         rhi_internal
         math
         scene
+        text
     PRIVATE_DEPS
         imgui::imgui
         atlas::sdl3

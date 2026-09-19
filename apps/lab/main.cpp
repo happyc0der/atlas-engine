@@ -13,6 +13,7 @@
 #include <atlas/app/ppm.hpp>
 #include <atlas/app/run_bounds.hpp>
 #include <atlas/assets/filesystem.hpp>
+#include <atlas/assets/importer.hpp>
 #include <atlas/assets/virtual_path.hpp>
 #include <atlas/audio/device.hpp>
 #include <atlas/audio/synth.hpp>
@@ -43,8 +44,10 @@
 #include <atlas/simulation/tick_accumulator.hpp>
 #include <atlas/simulation/turn_gate.hpp>
 #include <atlas/tasks/worker_pool.hpp>
+#include <atlas/text/catalog.hpp>
 #include <atlas/tools/debug_ui.hpp>
 #include <atlas/tools/panels.hpp>
+#include <atlas/tools/text_keys.hpp>
 
 #include "file_bytes.hpp"
 
@@ -90,6 +93,7 @@ struct Options {
     /// A mod to load from the `mods` mount, or empty for none.
     std::string_view mod;
     std::string_view mods_dir;
+    std::string_view strings_dir;
     /// Offer mods a host clock. Unsafe, and named so: see --help.
     bool unsafe_debug_imports = false;
     std::string_view screenshot;
@@ -146,6 +150,8 @@ Options:
                          identifier and never sent to peers: every peer runs the same mod and
                          produces the same commands, which is what the hash check verifies.
   --mods-dir PATH        Where --mod looks. Default: assets/mods.
+  --strings-dir PATH     Where the interface's string table is read from.
+                         Default: assets/source/strings.
   --unsafe-debug-imports Offer mods a host clock, which the interface deliberately does not
                          have. A mod that reads one decides differently on a slower machine,
                          so under lockstep this produces a divergence — which is the only
@@ -238,6 +244,7 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
     options.shader_dir = args.value_or("shader-dir", std::string_view{"assets/cooked/shaders"});
     options.mod = args.value_or("mod", std::string_view{});
     options.mods_dir = args.value_or("mods-dir", std::string_view{"assets/mods"});
+    options.strings_dir = args.value_or("strings-dir", std::string_view{"assets/source/strings"});
     options.screenshot = args.value_or("screenshot", std::string_view{});
     options.save_path = args.value_or("save", std::string_view{});
     options.load_path = args.value_or("load", std::string_view{});
@@ -1048,27 +1055,51 @@ struct Phases {
 /// quietly leaving a button missing.
 const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode::Count)>
     kMapModeNames{
-        atlas::lab::to_string(atlas::lab::MapMode::RegionValue),
-        atlas::lab::to_string(atlas::lab::MapMode::OwnerIndex),
-        atlas::lab::to_string(atlas::lab::MapMode::PopulationValue),
-        atlas::lab::to_string(atlas::lab::MapMode::ColorIndex),
+        // Keys, not the names `lab_sim` returns. `apps/lab/sim` may link only
+        // `atlas::simulation`, so it cannot reach `atlas::text` and its own `to_string` stays
+        // what it is; the mapping to display text happens here, in the composition root, which
+        // is where every other lab-side presentation decision already lives.
+        atlas::tools::keys::kMapRegionValue,
+        atlas::tools::keys::kMapOwnerIndex,
+        atlas::tools::keys::kMapPopulationValue,
+        atlas::tools::keys::kMapColourIndex,
 };
 
-[[nodiscard]] std::string_view speed_name(const atlas::sim::Speed& speed) {
-    using atlas::sim::SpeedPolicy;
-    switch (speed.policy) {
-    case SpeedPolicy::Paused: return "paused";
-    case SpeedPolicy::SingleStep: return "step";
-    case SpeedPolicy::Unbounded: return "unbounded";
-    case SpeedPolicy::Realtime: break;
+/// Read the interface's text, the way a mod is read.
+///
+/// Through `assets::FileSystem` and `VirtualPath`, not through a registry: the lab does not
+/// have one, and M12 declined to give it one for a reason that still holds — a registry buys
+/// hot reload, and nothing here asks for it. A table that will not load is not fatal. The
+/// overlay then shows its keys, which is what a missing key does everywhere else and is
+/// legible rather than blank, so the run continues and says what happened once.
+void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
+                  std::string_view name) {
+    atlas::assets::FileSystem files;
+    if (auto status = files.mount("strings", std::filesystem::path(strings_dir)); !status) {
+        ATLAS_LOG_WARN(kApp, "no string table: {}", status.error());
+        return;
     }
-    switch (speed.numerator) {
-    case 1: return "1x";
-    case 2: return "2x";
-    case 4: return "4x";
-    case 8: return "8x";
-    default: return "custom";
+    const auto path = atlas::assets::VirtualPath::parse(name);
+    if (!path) {
+        ATLAS_LOG_WARN(kApp, "no string table: {}", path.error());
+        return;
     }
+    const auto bytes = files.read(*path);
+    if (!bytes) {
+        ATLAS_LOG_WARN(kApp, "no string table: {}", bytes.error());
+        return;
+    }
+    const auto imported = atlas::assets::import_string_table(*bytes, path->text());
+    if (!imported) {
+        ATLAS_LOG_WARN(kApp, "no string table: {}", imported.error());
+        return;
+    }
+    if (auto status = catalog.load(*imported); !status) {
+        ATLAS_LOG_WARN(kApp, "no string table: {}", status.error());
+        return;
+    }
+    ATLAS_LOG_INFO(kApp, "string table '{}' loaded with {} entries", catalog.locale(),
+                   catalog.size());
 }
 
 [[nodiscard]] atlas::Status run(int argc, const char* const* argv) {
@@ -1090,6 +1121,10 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
     }
 
     const atlas::app::LogSession logging;
+    // Declared before the overlay and outliving it, because the overlay borrows it. Filled
+    // after logging is configured, or what it has to say about a missing table would be said
+    // to a sink registry that has no sinks in it yet.
+    atlas::text::Catalog catalog;
     // Owned here, so it dies with this function and the sink registry's weak reference to
     // it simply stops resolving. Four thousand records is a few seconds of a busy frame loop
     // and about a megabyte, which is worth having when something goes wrong once.
@@ -1106,6 +1141,7 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
     atlas::mark_main_thread();
     ATLAS_THREAD_NAME("main");
     ATLAS_LOG_INFO(kApp, "startup: {}", atlas::build_info::summary());
+    load_strings(catalog, options->strings_dir, "en.json");
 
     if (options->loopback_peers > 0) {
         return run_loopback(*options);
@@ -1242,6 +1278,7 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                 ATLAS_LOG_WARN(kApp, "the debug overlay is unavailable: {}", ui.error());
             } else {
                 overlay = std::move(*ui);
+                overlay->set_catalog(&catalog);
             }
         }
     }
@@ -1659,7 +1696,7 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                         values[0] = std::format("{}", frame_index);
                         values[1] = std::format("{}", sim.kernel->current_tick());
                         values[2] = std::format("{:#018x}", last_hash);
-                        values[3] = std::string{speed_name(accumulator->speed())};
+                        values[3] = std::string{atlas::tools::speed_name(accumulator->speed())};
                         values[4] = std::string{atlas::lab::to_string(mode)};
                         values[5] = std::format("{} of {}", last_draw.visible_chunks,
                                                 sim.lab.layout.chunk_count());
@@ -1687,25 +1724,25 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                             values[16] = "off";
                         }
                         const std::array<atlas::tools::Stat, 17> stats{{
-                            {.label = "frame", .value = values[0]},
-                            {.label = "tick", .value = values[1]},
-                            {.label = "state hash", .value = values[2]},
-                            {.label = "speed", .value = values[3]},
-                            {.label = "map mode", .value = values[4]},
-                            {.label = "visible chunks", .value = values[5]},
-                            {.label = "batch", .value = values[6]},
-                            {.label = "events (cpu)", .value = values[7]},
-                            {.label = "simulation (cpu)", .value = values[8]},
-                            {.label = "snapshot (cpu)", .value = values[9]},
-                            {.label = "draw (cpu)", .value = values[10]},
-                            {.label = "acquire+present", .value = values[11]},
-                            {.label = "zoom", .value = values[12]},
-                            {.label = "seed", .value = values[13]},
-                            {.label = "commands", .value = values[14]},
-                            {.label = "hash version", .value = values[15]},
-                            {.label = "audio", .value = values[16]},
+                            {.label = atlas::tools::keys::kStatFrame, .value = values[0]},
+                            {.label = atlas::tools::keys::kStatTick, .value = values[1]},
+                            {.label = atlas::tools::keys::kStatStateHash, .value = values[2]},
+                            {.label = atlas::tools::keys::kStatSpeed, .value = values[3]},
+                            {.label = atlas::tools::keys::kStatMapMode, .value = values[4]},
+                            {.label = atlas::tools::keys::kStatVisibleChunks, .value = values[5]},
+                            {.label = atlas::tools::keys::kStatBatch, .value = values[6]},
+                            {.label = atlas::tools::keys::kStatEventsCpu, .value = values[7]},
+                            {.label = atlas::tools::keys::kStatSimulationCpu, .value = values[8]},
+                            {.label = atlas::tools::keys::kStatSnapshotCpu, .value = values[9]},
+                            {.label = atlas::tools::keys::kStatDrawCpu, .value = values[10]},
+                            {.label = atlas::tools::keys::kStatAcquirePresent, .value = values[11]},
+                            {.label = atlas::tools::keys::kStatZoom, .value = values[12]},
+                            {.label = atlas::tools::keys::kStatSeed, .value = values[13]},
+                            {.label = atlas::tools::keys::kStatCommands, .value = values[14]},
+                            {.label = atlas::tools::keys::kStatHashVersion, .value = values[15]},
+                            {.label = atlas::tools::keys::kStatAudio, .value = values[16]},
                         }};
-                        overlay->stats_panel("Strategy Lab", stats);
+                        overlay->stats_panel(atlas::tools::keys::kTitleLab, stats);
 
                         const atlas::tools::SimulationControlsView view{
                             .speed = accumulator->speed(),
@@ -1719,9 +1756,11 @@ const std::array<std::string_view, static_cast<std::size_t>(atlas::lab::MapMode:
                                                      ? recorder->replay().commands.size()
                                                      : std::uint64_t{0},
                         };
-                        apply_controls(overlay->simulation_controls_panel("Controls", view));
+                        apply_controls(overlay->simulation_controls_panel(
+                            atlas::tools::keys::kTitleControls, view));
 
-                        if (overlay->log_console_panel("Log", *log_buffer).clear_requested) {
+                        if (overlay->log_console_panel(atlas::tools::keys::kTitleLog, *log_buffer)
+                                .clear_requested) {
                             log_buffer->clear();
                         }
                         // Text input is switched on only while a field has focus, and off

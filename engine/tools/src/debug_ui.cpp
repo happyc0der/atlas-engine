@@ -4,8 +4,11 @@
 #include <atlas/core/profile.hpp>
 #include <atlas/edit/command.hpp>
 #include <atlas/rhi/internal/sdl_gpu_access.hpp>
+#include <atlas/text/catalog.hpp>
+#include <atlas/text/substitute.hpp>
 #include <atlas/tools/debug_ui.hpp>
 #include <atlas/tools/panels.hpp>
+#include <atlas/tools/text_keys.hpp>
 
 #include "imgui_keymap.hpp"
 #include <SDL3/SDL_gpu.h>
@@ -17,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -55,6 +59,11 @@ void submit_modifiers(ImGuiIO& io, const platform::KeyModifiers& modifiers) {
 
 struct DebugUi::Impl {
     ImGuiContext* context = nullptr;
+
+    /// Where text comes from. Borrowed, may be null, and null is a supported state: with no
+    /// catalog every key resolves to itself, so the overlay is labelled with keys rather than
+    /// being blank. See `DebugUi::set_catalog`.
+    const text::Catalog* catalog = nullptr;
     bool frame_open = false;
     bool backend_ready = false;
 
@@ -320,7 +329,45 @@ namespace {
 
 /// Draw one entity's subtree. Recursive because the tree is, and the scene bounds its own
 /// depth, so the recursion is bounded by the same limit.
-void draw_tree_node(const scene::Scene& scene, scene::StableId id,
+/// Resolve a key, with no catalog meaning every key resolves to itself.
+///
+/// The absent-catalog path is deliberately the same code as the missing-key path rather than a
+/// second one: a panel drawn with no table shows `ui.entity.id`, which is legible and obviously
+/// unfinished, and every existing test keeps working without a registry wired into it.
+[[nodiscard]] std::string_view tr(const text::Catalog* catalog, std::string_view key) {
+    return catalog != nullptr ? catalog->lookup(key) : key;
+}
+
+/// Substitute into a looked-up pattern, for the strings that carry numbers.
+template <typename... Args>
+[[nodiscard]] std::string trf(const text::Catalog* catalog, std::string_view key,
+                              const Args&... args) {
+    const std::array<std::string, sizeof...(Args)> owned{std::format("{}", args)...};
+    std::array<std::string_view, sizeof...(Args)> views{};
+    for (std::size_t i = 0; i < owned.size(); ++i) {
+        views[i] = owned[i];
+    }
+    return text::substitute(tr(catalog, key), views);
+}
+
+/// The key naming an asset state.
+///
+/// `assets::to_string(AssetState)` keeps its own words and gains no dependency on this module:
+/// they are log text as well, and routing them through a table would make every integration
+/// case's grep depend on a locale. The mapping lives here, on the side that shows them.
+[[nodiscard]] std::string_view state_key(assets::AssetState state) {
+    switch (state) {
+    case assets::AssetState::Unloaded: return keys::kStateUnloaded;
+    case assets::AssetState::Queued: return keys::kStateQueued;
+    case assets::AssetState::Loading: return keys::kStateLoading;
+    case assets::AssetState::Decoded: return keys::kStateDecoded;
+    case assets::AssetState::Ready: return keys::kStateReady;
+    case assets::AssetState::Failed: return keys::kStateFailed;
+    }
+    return keys::kStateUnloaded;
+}
+
+void draw_tree_node(const text::Catalog* catalog, const scene::Scene& scene, scene::StableId id,
                     std::optional<scene::StableId>& selected) {
     const auto children = scene.children(id);
     const auto raw = static_cast<std::uint64_t>(id);
@@ -335,8 +382,8 @@ void draw_tree_node(const scene::Scene& scene, scene::StableId id,
     }
 
     const std::string_view name = scene.name(id);
-    const std::string label =
-        name.empty() ? std::format("entity {}", raw) : std::format("{}##{}", name, raw);
+    const std::string label = name.empty() ? trf(catalog, keys::kSceneUnnamedEntity, raw)
+                                           : std::format("{}##{}", name, raw);
 
     const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
@@ -345,13 +392,14 @@ void draw_tree_node(const scene::Scene& scene, scene::StableId id,
 
     if (open && !children.empty()) {
         for (const scene::StableId child : children) {
-            draw_tree_node(scene, child, selected);
+            draw_tree_node(catalog, scene, child, selected);
         }
         ImGui::TreePop();
     }
 }
 
-void row(std::string_view label, const std::string& value) {
+void row(const text::Catalog* catalog, std::string_view key, const std::string& value) {
+    const std::string_view label = tr(catalog, key);
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::TextUnformatted(label.data(), label.data() + label.size());
@@ -373,10 +421,11 @@ void row(std::string_view label, const std::string& value) {
 /// A refused edit is logged and dropped. It cannot normally happen — the entity was just
 /// checked to exist — but the return value says it can, and silently discarding an error
 /// because it looks impossible is how it stops looking impossible later.
-void draw_position_editor(edit::History& history, scene::StableId id,
+void draw_position_editor(const text::Catalog* catalog, edit::History& history, scene::StableId id,
                           const scene::LocalTransform& local) {
     std::array<float, 2> position{local.position.x, local.position.y};
-    if (ImGui::DragFloat2("local position", position.data(), 0.25F)) {
+    if (ImGui::DragFloat2(std::string{tr(catalog, keys::kEditorLocalPosition)}.c_str(),
+                          position.data(), 0.25F)) {
         const math::Vec2 edited{.x = position[0], .y = position[1]};
         if (edited != local.position) {
             scene::LocalTransform after = local;
@@ -407,7 +456,7 @@ void draw_position_editor(edit::History& history, scene::StableId id,
 /// typing a path and hashing it, which is a file picker rather than a widget. The clip is shown
 /// as the identifier the component carries so that a mismatch is at least visible, and the
 /// deferral is recorded with what would change it.
-void draw_animator_editor(edit::History& history, scene::StableId id,
+void draw_animator_editor(const text::Catalog* catalog, edit::History& history, scene::StableId id,
                           const scene::Animator& animator) {
     const auto emit = [&](const scene::Animator& edited) {
         if (auto status = history.apply(std::make_unique<edit::SetAnimator>(id, edited),
@@ -418,7 +467,7 @@ void draw_animator_editor(edit::History& history, scene::StableId id,
     };
 
     bool playing = animator.playing;
-    if (ImGui::Checkbox("playing", &playing)) {
+    if (ImGui::Checkbox(std::string{tr(catalog, keys::kEditorPlaying)}.c_str(), &playing)) {
         scene::Animator edited = animator;
         edited.playing = playing;
         emit(edited);
@@ -428,7 +477,7 @@ void draw_animator_editor(edit::History& history, scene::StableId id,
     }
 
     ImGui::SameLine();
-    if (ImGui::Button("remove animator")) {
+    if (ImGui::Button(std::string{tr(catalog, keys::kEditorRemoveAnimator)}.c_str())) {
         if (auto status = history.apply(std::make_unique<edit::RemoveAnimator>(id)); !status) {
             ATLAS_LOG_WARN(kTools, "removing the animator was refused: {}", status.error());
         }
@@ -442,7 +491,8 @@ void draw_animator_editor(edit::History& history, scene::StableId id,
     //
     // An unchanged value emits nothing, for the reason written at the position editor: a drag
     // field reports itself edited on every frame the pointer rests on it.
-    if (ImGui::DragFloat("speed", &speed, 0.01F, 0.0F, scene::kMaxAnimatorSpeed, "%.2f") &&
+    if (ImGui::DragFloat(std::string{tr(catalog, keys::kEditorSpeed)}.c_str(), &speed, 0.01F, 0.0F,
+                         scene::kMaxAnimatorSpeed, "%.2f") &&
         speed != animator.speed) {
         scene::Animator edited = animator;
         edited.speed = std::clamp(speed, 0.0F, scene::kMaxAnimatorSpeed);
@@ -453,7 +503,7 @@ void draw_animator_editor(edit::History& history, scene::StableId id,
     }
 
     auto start = static_cast<int>(animator.start_ms);
-    if (ImGui::DragInt("start (ms)", &start, 10.0F, 0,
+    if (ImGui::DragInt(std::string{tr(catalog, keys::kEditorStart)}.c_str(), &start, 10.0F, 0,
                        static_cast<int>(scene::kMaxAnimatorStartMs))) {
         const auto clamped = static_cast<std::uint32_t>(
             std::clamp(start, 0, static_cast<int>(scene::kMaxAnimatorStartMs)));
@@ -467,16 +517,20 @@ void draw_animator_editor(edit::History& history, scene::StableId id,
         history.break_coalescing();
     }
 
-    // The names come from the scene, which is where the serialiser gets them too. A list
-    // written out here would be a second spelling of the same three words, and the first time
-    // they disagreed the file and the panel would describe different playback.
+    // `scene` keeps the names the serialiser writes into a file; those are not display text
+    // and do not move. What the combo shows is looked up, and the two lists agree by position
+    // exactly as the easing names and the animation module's enumeration do.
+    constexpr std::array<std::string_view, 3> kLoopKeys{keys::kLoopOnce, keys::kLoopLoop,
+                                                        keys::kLoopPingPong};
     const auto names = scene::animation_loop_names();
     const auto current = static_cast<std::size_t>(animator.loop);
-    const std::string shown{scene::animation_loop_name(animator.loop)};
-    if (ImGui::BeginCombo("loop", shown.c_str())) {
+    const std::string shown{current < kLoopKeys.size() ? tr(catalog, kLoopKeys[current])
+                                                       : scene::animation_loop_name(animator.loop)};
+    if (ImGui::BeginCombo(std::string{tr(catalog, keys::kEditorLoop)}.c_str(), shown.c_str())) {
         for (std::size_t i = 0; i < names.size(); ++i) {
             const bool selected = i == current;
-            if (ImGui::Selectable(std::string{names[i]}.c_str(), selected) && !selected) {
+            const std::string item{i < kLoopKeys.size() ? tr(catalog, kLoopKeys[i]) : names[i]};
+            if (ImGui::Selectable(item.c_str(), selected) && !selected) {
                 scene::Animator edited = animator;
                 edited.loop = static_cast<std::uint8_t>(i);
                 emit(edited);
@@ -502,12 +556,12 @@ void draw_animator_editor(edit::History& history, scene::StableId id,
 ///
 /// Commits on Enter or on losing focus, as one undo step. `Rename::merge` exists but is not
 /// asked for: a rename is one act, not a drag.
-void draw_name_editor(edit::History& history, scene::StableId id,
+void draw_name_editor(const text::Catalog* catalog, edit::History& history, scene::StableId id,
                       std::array<char, kNameBufferSize>& buffer, bool& editing,
                       std::optional<PixelRect>& field_rect) {
     const std::string_view current = history.scene().name(id);
     if (current.size() >= buffer.size()) {
-        ImGui::TextUnformatted(std::format("name (too long to edit): {}", current).c_str());
+        ImGui::TextUnformatted(trf(catalog, keys::kEditorNameTooLong, current).c_str());
         return;
     }
 
@@ -538,7 +592,7 @@ void draw_name_editor(edit::History& history, scene::StableId id,
     }
 }
 
-void draw_inspector(edit::History& history, scene::StableId id,
+void draw_inspector(const text::Catalog* catalog, edit::History& history, scene::StableId id,
                     std::array<char, kNameBufferSize>& name_buffer, bool& name_editing,
                     std::optional<PixelRect>& name_field) {
     const scene::Scene& scene = history.scene();
@@ -546,16 +600,16 @@ void draw_inspector(edit::History& history, scene::StableId id,
     // First, because these are the only things here that can be changed. Everything below is a
     // read-only row, and burying the widgets under thirteen of them means scrolling to
     // find the feature this panel exists for.
-    draw_name_editor(history, id, name_buffer, name_editing, name_field);
+    draw_name_editor(catalog, history, id, name_buffer, name_editing, name_field);
 
     const auto* local = scene.local_transform(id);
     if (local != nullptr) {
-        draw_position_editor(history, id, *local);
+        draw_position_editor(catalog, history, id, *local);
         ImGui::Separator();
     }
 
     if (const auto* animator = scene.animator(id)) {
-        draw_animator_editor(history, id, *animator);
+        draw_animator_editor(catalog, history, id, *animator);
         ImGui::Separator();
     }
 
@@ -563,42 +617,47 @@ void draw_inspector(edit::History& history, scene::StableId id,
         return;
     }
 
-    row("id", std::format("{}", static_cast<std::uint64_t>(id)));
+    row(catalog, keys::kRowId, std::format("{}", static_cast<std::uint64_t>(id)));
 
     const scene::StableId parent = scene.parent(id);
-    row("parent", parent == scene::StableId::None
-                      ? std::string{"none"}
-                      : std::format("{}", static_cast<std::uint64_t>(parent)));
-    row("children", std::format("{}", scene.children(id).size()));
+    row(catalog, keys::kRowParent,
+        parent == scene::StableId::None ? std::string{tr(catalog, keys::kNone)}
+                                        : std::format("{}", static_cast<std::uint64_t>(parent)));
+    row(catalog, keys::kRowChildren, std::format("{}", scene.children(id).size()));
 
     if (local != nullptr) {
-        row("local rotation", std::format("{:.3f} rad", local->rotation));
-        row("local scale", std::format("{:.3f}, {:.3f}", local->scale.x, local->scale.y));
+        row(catalog, keys::kRowLocalRotation, std::format("{:.3f} rad", local->rotation));
+        row(catalog, keys::kRowLocalScale,
+            std::format("{:.3f}, {:.3f}", local->scale.x, local->scale.y));
     }
 
     // Shown separately from the local transform rather than instead of it: when a child is
     // in the wrong place on screen, the question is always which of the two disagrees.
     if (const auto* world = scene.world_transform(id)) {
         const auto elements = world->matrix.uniform_elements();
-        row("world translation", std::format("{:.3f}, {:.3f}", elements[12], elements[13]));
+        row(catalog, keys::kRowWorldTranslation,
+            std::format("{:.3f}, {:.3f}", elements[12], elements[13]));
     } else {
-        row("world transform", "not composed yet");
+        row(catalog, keys::kRowWorldTransform, std::string{tr(catalog, keys::kNotComposed)});
     }
 
     if (const auto* sprite = scene.sprite(id)) {
-        row("sprite texture", std::format("{:#018x}", sprite->texture.value()));
-        row("sprite size", std::format("{:.3f}, {:.3f}", sprite->size.x, sprite->size.y));
-        row("sprite tint", std::format("{:.2f}, {:.2f}, {:.2f}, {:.2f}", sprite->tint.r,
-                                       sprite->tint.g, sprite->tint.b, sprite->tint.a));
-        row("sprite layer", std::format("{}", sprite->layer));
-        row("sprite visible", sprite->visible ? "yes" : "no");
+        row(catalog, keys::kRowSpriteTexture, std::format("{:#018x}", sprite->texture.value()));
+        row(catalog, keys::kRowSpriteSize,
+            std::format("{:.3f}, {:.3f}", sprite->size.x, sprite->size.y));
+        row(catalog, keys::kRowSpriteTint,
+            std::format("{:.2f}, {:.2f}, {:.2f}, {:.2f}", sprite->tint.r, sprite->tint.g,
+                        sprite->tint.b, sprite->tint.a));
+        row(catalog, keys::kRowSpriteLayer, std::format("{}", sprite->layer));
+        row(catalog, keys::kRowSpriteVisible,
+            std::string{tr(catalog, sprite->visible ? keys::kYes : keys::kNo)});
     }
 
     // The authored side of animation. The clip is shown as the identifier the component
     // carries rather than as a path: the component holds a hash, and the panel has no way back
     // from one to the file it came from.
     if (const auto* animator = scene.animator(id)) {
-        row("animator clip", std::format("{:#018x}", animator->clip.value()));
+        row(catalog, keys::kRowAnimatorClip, std::format("{:#018x}", animator->clip.value()));
     }
 
     // And the derived side, read only, beside it. These are what the animator wrote this frame
@@ -607,32 +666,38 @@ void draw_inspector(edit::History& history, scene::StableId id,
     // one: when an entity is in the wrong place the question is always which of the two
     // disagrees, and before this milestone the answer was invisible.
     if (const auto* pose = scene.animation_pose(id)) {
-        row("pose time", std::format("{:.3f} s", static_cast<double>(pose->elapsed_ns) / 1e9));
-        row("pose offset",
+        row(catalog, keys::kRowPoseTime,
+            std::format("{:.3f} s", static_cast<double>(pose->elapsed_ns) / 1e9));
+        row(catalog, keys::kRowPoseOffset,
             std::format("{:.3f}, {:.3f}", pose->position_offset.x, pose->position_offset.y));
-        row("pose rotation", std::format("{:.3f} rad", pose->rotation_offset));
-        row("pose scale",
+        row(catalog, keys::kRowPoseRotation, std::format("{:.3f} rad", pose->rotation_offset));
+        row(catalog, keys::kRowPoseScale,
             std::format("{:.3f}, {:.3f}", pose->scale_factor.x, pose->scale_factor.y));
-        row("pose frame", pose->frame_uv.has_value()
-                              ? std::format("{:.3f}, {:.3f} + {:.3f}, {:.3f}",
-                                            pose->frame_uv->position.x, pose->frame_uv->position.y,
-                                            pose->frame_uv->size.x, pose->frame_uv->size.y)
-                              : std::string{"whole texture"});
+        row(catalog, keys::kRowPoseFrame,
+            pose->frame_uv.has_value()
+                ? std::format("{:.3f}, {:.3f} + {:.3f}, {:.3f}", pose->frame_uv->position.x,
+                              pose->frame_uv->position.y, pose->frame_uv->size.x,
+                              pose->frame_uv->size.y)
+                : std::string{tr(catalog, keys::kWholeTexture)});
     }
 
     if (const auto* camera = scene.camera(id)) {
-        row("camera zoom", std::format("{:.3f}", camera->zoom));
-        row("camera active", camera->active ? "yes" : "no");
+        row(catalog, keys::kRowCameraZoom, std::format("{:.3f}", camera->zoom));
+        row(catalog, keys::kRowCameraActive,
+            std::string{tr(catalog, camera->active ? keys::kYes : keys::kNo)});
     }
 
     ImGui::EndTable();
 }
 
 /// Undo and redo, with what they would do written on them.
-void draw_history_controls(edit::History& history) {
+void draw_history_controls(const text::Catalog* catalog, edit::History& history) {
     ImGui::BeginDisabled(!history.can_undo());
-    const std::string undo =
-        history.can_undo() ? std::format("Undo {}", history.undo_label()) : std::string{"Undo"};
+    // Two catalogue entries composed through the substituter, which is why substitution is
+    // positional: whether the verb comes before its object is the translator's to decide.
+    const std::string undo = history.can_undo()
+                                 ? trf(catalog, keys::kUndoWith, tr(catalog, history.undo_label()))
+                                 : std::string{tr(catalog, keys::kUndo)};
     if (ImGui::Button(undo.c_str())) {
         // The return value says whether anything happened. Nothing to do when it did not: the
         // button is disabled in that case, and a failed undo has already logged and cleared
@@ -644,8 +709,9 @@ void draw_history_controls(edit::History& history) {
     ImGui::SameLine();
 
     ImGui::BeginDisabled(!history.can_redo());
-    const std::string redo =
-        history.can_redo() ? std::format("Redo {}", history.redo_label()) : std::string{"Redo"};
+    const std::string redo = history.can_redo()
+                                 ? trf(catalog, keys::kRedoWith, tr(catalog, history.redo_label()))
+                                 : std::string{tr(catalog, keys::kRedo)};
     if (ImGui::Button(redo.c_str())) {
         (void)history.redo();
     }
@@ -653,7 +719,7 @@ void draw_history_controls(edit::History& history) {
 
     ImGui::SameLine();
     ImGui::TextUnformatted(
-        std::format("{} undo, {} redo", history.undo_depth(), history.redo_depth()).c_str());
+        trf(catalog, keys::kHistoryDepth, history.undo_depth(), history.redo_depth()).c_str());
 }
 
 }  // namespace
@@ -713,12 +779,12 @@ ScenePanelReport DebugUi::scene_panel(std::string_view title, edit::History& his
 
     const std::string window_title{title};
     if (ImGui::Begin(window_title.c_str())) {
-        ImGui::TextUnformatted(std::format("{} entities", scene.size()).c_str());
+        ImGui::TextUnformatted(trf(m_impl->catalog, keys::kSceneEntityCount, scene.size()).c_str());
         ImGui::Separator();
 
         if (ImGui::BeginChild("tree", ImVec2(0.0F, 180.0F), ImGuiChildFlags_Borders)) {
             for (const scene::StableId root : scene.roots()) {
-                draw_tree_node(scene, root, selected);
+                draw_tree_node(m_impl->catalog, scene, root, selected);
             }
         }
         ImGui::EndChild();
@@ -730,16 +796,17 @@ ScenePanelReport DebugUi::scene_panel(std::string_view title, edit::History& his
         const float controls_height = ImGui::GetFrameHeightWithSpacing() + 8.0F;
         if (ImGui::BeginChild("inspector", ImVec2(0.0F, -controls_height))) {
             if (selected.has_value()) {
-                draw_inspector(history, *selected, m_impl->name_input, m_impl->name_editing,
-                               report.name_field);
+                draw_inspector(m_impl->catalog, history, *selected, m_impl->name_input,
+                               m_impl->name_editing, report.name_field);
             } else {
-                ImGui::TextUnformatted("No entity selected.");
+                ImGui::TextUnformatted(
+                    std::string{tr(m_impl->catalog, keys::kSceneNoSelection)}.c_str());
             }
         }
         ImGui::EndChild();
 
         ImGui::Separator();
-        draw_history_controls(history);
+        draw_history_controls(m_impl->catalog, history);
     }
     ImGui::End();
 
@@ -771,18 +838,31 @@ LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::L
 
     const std::string window_title{title};
     if (ImGui::Begin(window_title.c_str())) {
-        constexpr std::array<const char*, 6> kSeverities{"trace",   "debug", "info",
-                                                         "warning", "error", "fatal"};
+        // The severity words used to exist three times over: here, in `core`'s
+        // `to_string(Severity)`, and again in its `to_short_string`. Those two stay as they
+        // are, because they are also log text and routing them through a table would make
+        // every integration case's grep depend on a locale. This is the one copy that is
+        // shown to a person, so it is the one that resolves.
+        constexpr std::array<std::string_view, 6> kSeverityKeys{
+            keys::kSeverityTrace,   keys::kSeverityDebug, keys::kSeverityInfo,
+            keys::kSeverityWarning, keys::kSeverityError, keys::kSeverityFatal};
+        std::array<std::string, 6> severity_text{};
+        std::array<const char*, 6> severity_items{};
+        for (std::size_t i = 0; i < kSeverityKeys.size(); ++i) {
+            severity_text[i] = tr(m_impl->catalog, kSeverityKeys[i]);
+            severity_items[i] = severity_text[i].c_str();
+        }
         int severity = static_cast<int>(m_impl->log_filter.min_severity);
         ImGui::SetNextItemWidth(120.0F);
-        if (ImGui::Combo("severity", &severity, kSeverities.data(),
-                         static_cast<int>(kSeverities.size()))) {
+        if (ImGui::Combo(std::string{tr(m_impl->catalog, keys::kLogSeverity)}.c_str(), &severity,
+                         severity_items.data(), static_cast<int>(severity_items.size()))) {
             m_impl->log_filter.min_severity = static_cast<log::Severity>(severity);
         }
 
         ImGui::SameLine();
         ImGui::SetNextItemWidth(160.0F);
-        if (ImGui::InputText("category", m_impl->log_category_input.data(),
+        if (ImGui::InputText(std::string{tr(m_impl->catalog, keys::kLogCategory)}.c_str(),
+                             m_impl->log_category_input.data(),
                              m_impl->log_category_input.size())) {
             m_impl->log_filter.category_substring = m_impl->log_category_input.data();
         }
@@ -794,10 +874,12 @@ LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::L
                                         .height = filter_max.y - filter_min.y};
 
         ImGui::SameLine();
-        ImGui::Checkbox("follow", &m_impl->log_autoscroll);
+        ImGui::Checkbox(std::string{tr(m_impl->catalog, keys::kLogFollow)}.c_str(),
+                        &m_impl->log_autoscroll);
 
         ImGui::SameLine();
-        report.clear_requested = ImGui::Button("Clear");
+        report.clear_requested =
+            ImGui::Button(std::string{tr(m_impl->catalog, keys::kLogClear)}.c_str());
 
         ImGui::Separator();
 
@@ -818,8 +900,8 @@ LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::L
         }
         ImGui::EndChild();
 
-        ImGui::TextUnformatted(std::format("{} shown, {} hidden, {} held of {}", report.shown,
-                                           report.hidden, buffer.size(), buffer.capacity())
+        ImGui::TextUnformatted(trf(m_impl->catalog, keys::kLogCounts, report.shown, report.hidden,
+                                   buffer.size(), buffer.capacity())
                                    .c_str());
     }
     ImGui::End();
@@ -842,31 +924,33 @@ SimulationControlsRequest DebugUi::simulation_controls_panel(std::string_view ti
     const std::string window_title{title};
     if (ImGui::Begin(window_title.c_str())) {
         const bool paused = view.speed.policy == sim::SpeedPolicy::Paused;
-        if (ImGui::Button(paused ? "Resume" : "Pause")) {
+        if (ImGui::Button(
+                std::string{tr(m_impl->catalog, paused ? keys::kSimResume : keys::kSimPause)}
+                    .c_str())) {
             // Resuming to normal speed rather than to whatever it was before: the panel does
             // not know what that was, and the application does. It may substitute.
             request.speed = paused ? sim::Speed::normal() : sim::Speed::paused();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Step")) {
+        if (ImGui::Button(std::string{tr(m_impl->catalog, keys::kSimStep)}.c_str())) {
             request.single_step = true;
         }
 
         ImGui::SameLine();
         for (const std::uint32_t factor : {1U, 2U, 4U, 8U}) {
-            if (ImGui::Button(std::format("{}x", factor).c_str())) {
+            if (ImGui::Button(trf(m_impl->catalog, keys::kSimMultiplier, factor).c_str())) {
                 request.speed = sim::Speed::times(factor);
             }
             ImGui::SameLine();
         }
-        if (ImGui::Button("Unbounded")) {
+        if (ImGui::Button(std::string{tr(m_impl->catalog, keys::kSimUnbounded)}.c_str())) {
             request.speed = sim::Speed::unbounded();
         }
 
         ImGui::Separator();
 
         if (!view.modes.empty()) {
-            ImGui::TextUnformatted("display mode");
+            ImGui::TextUnformatted(std::string{tr(m_impl->catalog, keys::kSimDisplayMode)}.c_str());
             for (std::size_t index = 0; index < view.modes.size(); ++index) {
                 const bool current = index == view.mode_index;
                 ImGui::BeginDisabled(current);
@@ -889,30 +973,32 @@ SimulationControlsRequest DebugUi::simulation_controls_panel(std::string_view ti
             ImGui::Separator();
         }
 
-        if (ImGui::Button("Reset view")) {
+        if (ImGui::Button(std::string{tr(m_impl->catalog, keys::kSimResetView)}.c_str())) {
             request.reset_view = true;
         }
         ImGui::SameLine();
         ImGui::BeginDisabled(!view.can_save);
-        if (ImGui::Button("Save")) {
+        if (ImGui::Button(std::string{tr(m_impl->catalog, keys::kSimSave)}.c_str())) {
             request.save = true;
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!view.can_load);
-        if (ImGui::Button("Load")) {
+        if (ImGui::Button(std::string{tr(m_impl->catalog, keys::kSimLoad)}.c_str())) {
             request.load = true;
         }
         ImGui::EndDisabled();
 
         ImGui::Separator();
-        ImGui::TextUnformatted(
-            std::format("tick {} at {}", view.tick, speed_name(view.speed)).c_str());
+        ImGui::TextUnformatted(trf(m_impl->catalog, keys::kSimTickAt, view.tick,
+                                   tr(m_impl->catalog, speed_name(view.speed)))
+                                   .c_str());
         // Status, not a control. Recording is chosen when the kernel is built, so that a replay
         // always covers a whole run rather than starting from wherever a button was pressed.
         ImGui::TextUnformatted(
-            view.recording ? std::format("recording: {} commands", view.recorded_commands).c_str()
-                           : "not recording");
+            view.recording
+                ? trf(m_impl->catalog, keys::kSimRecording, view.recorded_commands).c_str()
+                : std::string{tr(m_impl->catalog, keys::kSimNotRecording)}.c_str());
     }
     ImGui::End();
     return request;
@@ -930,23 +1016,26 @@ void DebugUi::asset_panel(std::string_view title, const assets::Registry& regist
     const std::string window_title{title};
     if (ImGui::Begin(window_title.c_str())) {
         const auto stats = registry.stats();
+        ImGui::TextUnformatted(trf(m_impl->catalog, keys::kAssetsSummary, stats.total, stats.ready,
+                                   stats.failed, stats.in_progress, stats.awaiting_finalisation)
+                                   .c_str());
         ImGui::TextUnformatted(
-            std::format("{} assets: {} ready, {} failed, {} loading, {} awaiting finalisation",
-                        stats.total, stats.ready, stats.failed, stats.in_progress,
-                        stats.awaiting_finalisation)
-                .c_str());
-        ImGui::TextUnformatted(
-            std::format("cache: {} hits, {} misses", stats.cache_hits, stats.cache_misses).c_str());
+            trf(m_impl->catalog, keys::kAssetsCache, stats.cache_hits, stats.cache_misses).c_str());
         ImGui::Separator();
 
         if (ImGui::BeginTable("assets", 5,
                               ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
                                   ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("path");
-            ImGui::TableSetupColumn("state");
-            ImGui::TableSetupColumn("loads");
-            ImGui::TableSetupColumn("bytes");
-            ImGui::TableSetupColumn("error");
+            ImGui::TableSetupColumn(
+                std::string{tr(m_impl->catalog, keys::kAssetsColumnPath)}.c_str());
+            ImGui::TableSetupColumn(
+                std::string{tr(m_impl->catalog, keys::kAssetsColumnState)}.c_str());
+            ImGui::TableSetupColumn(
+                std::string{tr(m_impl->catalog, keys::kAssetsColumnLoads)}.c_str());
+            ImGui::TableSetupColumn(
+                std::string{tr(m_impl->catalog, keys::kAssetsColumnBytes)}.c_str());
+            ImGui::TableSetupColumn(
+                std::string{tr(m_impl->catalog, keys::kAssetsColumnError)}.c_str());
             ImGui::TableHeadersRow();
 
             // Ordered by path, which the registry guarantees, so rows do not jump about
@@ -956,7 +1045,8 @@ void DebugUi::asset_panel(std::string_view title, const assets::Registry& regist
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted(std::string{info.path.text()}.c_str());
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(std::string{assets::to_string(info.state)}.c_str());
+                ImGui::TextUnformatted(
+                    std::string{tr(m_impl->catalog, state_key(info.state))}.c_str());
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextUnformatted(std::format("{}", info.load_count).c_str());
                 ImGui::TableSetColumnIndex(3);
@@ -978,6 +1068,12 @@ void DebugUi::select_entity(scene::StableId id) noexcept {
         m_impl->selected.reset();
     } else {
         m_impl->selected = id;
+    }
+}
+
+void DebugUi::set_catalog(const text::Catalog* catalog) noexcept {
+    if (m_impl != nullptr) {
+        m_impl->catalog = catalog;
     }
 }
 

@@ -24,6 +24,10 @@
 #include <span>
 #include <string_view>
 
+namespace atlas::text {
+class Catalog;
+}  // namespace atlas::text
+
 namespace atlas::tools {
 
 /// One line in the statistics panel.
@@ -45,6 +49,18 @@ class DebugUi {
     DebugUi& operator=(DebugUi&& other) noexcept;
 
     [[nodiscard]] bool valid() const noexcept { return m_impl != nullptr; }
+
+    /// Where the overlay looks its text up (ADR-0016).
+    ///
+    /// Borrowed and may be null, which is the default and a supported state: with no catalog
+    /// every key resolves to itself, because that is what `Catalog::lookup` does for a key it
+    /// does not have. So a caller that has not loaded a table yet — or a test that never
+    /// will — gets an overlay labelled with keys rather than a crash or a blank panel, and the
+    /// absent-catalog path is the same code as the missing-key path rather than a second one
+    /// nobody exercises.
+    ///
+    /// The catalog must outlive the overlay, or be replaced before it goes.
+    void set_catalog(const text::Catalog* catalog) noexcept;
 
     /// Offer an event to the overlay.
     ///

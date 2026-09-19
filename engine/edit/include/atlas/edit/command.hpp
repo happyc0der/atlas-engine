@@ -69,7 +69,16 @@ class Command {
     /// treats it as an invariant violation rather than as an ordinary error.
     [[nodiscard]] virtual Status revert(scene::Scene& scene) = 0;
 
-    /// For "Undo move", "Redo rename". Never empty.
+    /// A catalogue key naming what this command did, such as `edit.command.rename`.
+    ///
+    /// **A key, not a display string**, since ADR-0016. It was both at once — the overlay put
+    /// it in a button, `History` puts it in a log line, and `merge` distinguishes commands by
+    /// it — and a string doing all three drifts the moment one of them wants different words.
+    /// Now the overlay resolves it through `text::Catalog` and the log prints an identifier,
+    /// which is more greppable than prose was.
+    ///
+    /// `edit` therefore needs no dependency on `atlas::text`: it produces keys and somebody
+    /// else decides what they say. Never empty.
     [[nodiscard]] virtual std::string_view label() const noexcept = 0;
 
     /// Absorb a later command into this one, so a drag becomes one undo step.
@@ -96,7 +105,7 @@ class Rename final : public Command {
     [[nodiscard]] Status apply(scene::Scene& scene) override;
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "rename"; }
+    [[nodiscard]] std::string_view label() const noexcept override { return "edit.command.rename"; }
 
     [[nodiscard]] bool merge(const Command& later) override;
 
@@ -116,7 +125,7 @@ class SetLocalTransform final : public Command {
     [[nodiscard]] Status apply(scene::Scene& scene) override;
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "move"; }
+    [[nodiscard]] std::string_view label() const noexcept override { return "edit.command.move"; }
 
     [[nodiscard]] bool merge(const Command& later) override;
 
@@ -135,7 +144,9 @@ class SetSprite final : public Command {
     [[nodiscard]] Status apply(scene::Scene& scene) override;
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "set sprite"; }
+    [[nodiscard]] std::string_view label() const noexcept override {
+        return "edit.command.set_sprite";
+    }
 
   private:
     scene::StableId m_id;
@@ -156,7 +167,9 @@ class SetAnimator final : public Command {
     [[nodiscard]] Status revert(scene::Scene& scene) override;
     [[nodiscard]] bool merge(const Command& later) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "set animator"; }
+    [[nodiscard]] std::string_view label() const noexcept override {
+        return "edit.command.set_animator";
+    }
 
   private:
     scene::StableId m_id;
@@ -174,7 +187,9 @@ class RemoveAnimator final : public Command {
     [[nodiscard]] Status apply(scene::Scene& scene) override;
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "remove animator"; }
+    [[nodiscard]] std::string_view label() const noexcept override {
+        return "edit.command.remove_animator";
+    }
 
   private:
     scene::StableId m_id;
@@ -191,7 +206,9 @@ class RemoveSprite final : public Command {
     [[nodiscard]] Status apply(scene::Scene& scene) override;
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "remove sprite"; }
+    [[nodiscard]] std::string_view label() const noexcept override {
+        return "edit.command.remove_sprite";
+    }
 
   private:
     scene::StableId m_id;
@@ -207,7 +224,9 @@ class SetCamera final : public Command {
     [[nodiscard]] Status apply(scene::Scene& scene) override;
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "set camera"; }
+    [[nodiscard]] std::string_view label() const noexcept override {
+        return "edit.command.set_camera";
+    }
 
   private:
     scene::StableId m_id;
@@ -224,7 +243,9 @@ class RemoveCamera final : public Command {
     [[nodiscard]] Status apply(scene::Scene& scene) override;
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "remove camera"; }
+    [[nodiscard]] std::string_view label() const noexcept override {
+        return "edit.command.remove_camera";
+    }
 
   private:
     scene::StableId m_id;
@@ -243,7 +264,9 @@ class Reparent final : public Command {
     [[nodiscard]] Status apply(scene::Scene& scene) override;
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "reparent"; }
+    [[nodiscard]] std::string_view label() const noexcept override {
+        return "edit.command.reparent";
+    }
 
   private:
     scene::StableId m_child;
@@ -264,7 +287,7 @@ class Create final : public Command {
     [[nodiscard]] Status apply(scene::Scene& scene) override;
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "create"; }
+    [[nodiscard]] std::string_view label() const noexcept override { return "edit.command.create"; }
 
     /// The entity created, or `StableId::None` before the first apply.
     [[nodiscard]] scene::StableId id() const noexcept { return m_id; }
@@ -297,7 +320,9 @@ class Destroy final : public Command {
     /// itself, because a history that cannot reproduce the scene has no business offering to.
     [[nodiscard]] Status revert(scene::Scene& scene) override;
 
-    [[nodiscard]] std::string_view label() const noexcept override { return "destroy"; }
+    [[nodiscard]] std::string_view label() const noexcept override {
+        return "edit.command.destroy";
+    }
 
   private:
     /// One entity's whole state, in the order it must be restored.

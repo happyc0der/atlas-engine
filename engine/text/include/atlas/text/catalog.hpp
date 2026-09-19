@@ -116,6 +116,18 @@ class Catalog {
     /// Distinct missing keys, which is what `--text-check` reports.
     [[nodiscard]] std::size_t distinct_misses() const noexcept { return m_missing.size(); }
 
+    /// Replace everything in this catalog with an imported table.
+    ///
+    /// The step `finalise_pending` performs, exposed because not every application has an asset
+    /// registry: the lab reads its table through `assets::FileSystem` and `VirtualPath`, which
+    /// is how M15 loads a mod and for the same reason — a validated path to a file is what is
+    /// needed, and a registry is what buys hot reload on top of it.
+    ///
+    /// **Replaces rather than merges**, and on failure leaves the catalog empty rather than
+    /// half-filled. A key removed from the file must disappear; merging would leave the
+    /// interface showing a string that no longer exists anywhere.
+    [[nodiscard]] Status load(const assets::ImportedStringTable& table);
+
     /// Claim every string table that has decoded, and make its entries available.
     ///
     /// The same shape as the texture cache's, the audio device's and the clip cache's own

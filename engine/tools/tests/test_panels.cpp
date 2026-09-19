@@ -3,6 +3,7 @@
 // one; what they decide does not, and this is the half that can be wrong invisibly: a filter
 // that hides errors looks exactly like a system with nothing to report.
 #include <atlas/tools/panels.hpp>
+#include <atlas/tools/text_keys.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -107,17 +108,25 @@ TEST_CASE("a controls request with nothing set is empty", "[tools][panels]") {
 
 TEST_CASE("every speed has a name", "[tools][panels]") {
     using atlas::sim::Speed;
-    CHECK(speed_name(Speed::paused()) == "paused");
-    CHECK(speed_name(Speed::unbounded()) == "unbounded");
-    CHECK(speed_name(Speed::normal()) == "1x");
-    CHECK(speed_name(Speed::times(2)) == "2x");
-    CHECK(speed_name(Speed::times(8)) == "8x");
-    CHECK(speed_name(Speed::times(3)) == "custom");
+    namespace keys = atlas::tools::keys;
+
+    // Keys since M16, not the words themselves. What a key says is the catalogue's business;
+    // what this asserts is that each speed maps to its own key and no two collide.
+    CHECK(speed_name(Speed::paused()) == keys::kSpeedPaused);
+    CHECK(speed_name(Speed::unbounded()) == keys::kSpeedUnbounded);
+    CHECK(speed_name(Speed::normal()) == keys::kSpeed1x);
+    CHECK(speed_name(Speed::times(2)) == keys::kSpeed2x);
+    // 4x was missing until a mutation run pointed it out: making it report as 2x broke
+    // nothing, because every other multiplier was checked and this one was not.
+    CHECK(speed_name(Speed::times(4)) == keys::kSpeed4x);
+    CHECK(speed_name(Speed::times(8)) == keys::kSpeed8x);
+    CHECK(speed_name(Speed::times(3)) == keys::kSpeedCustom);
 
     // A fractional speed is realtime with a denominator, and naming it "1x" because its
-    // numerator is one would be a lie on the one row that says how fast time is running.
+    // numerator is one would be a lie on the one row that says how fast time is running. The
+    // lab carried its own copy of this function without this check until M16.
     const Speed half{.policy = atlas::sim::SpeedPolicy::Realtime, .numerator = 1, .denominator = 2};
-    CHECK(speed_name(half) == "custom");
+    CHECK(speed_name(half) == keys::kSpeedCustom);
 }
 
 TEST_CASE("every action has a key", "[tools][panels]") {

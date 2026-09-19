@@ -18,4 +18,5 @@ atlas_add_app(sandbox
         atlas::scene
         atlas::simulation
         atlas::tools
+        atlas::text
 )

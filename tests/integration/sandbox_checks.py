@@ -269,7 +269,10 @@ def case_audio_clip_loads_and_reloads(binary: str) -> None:
     expect_ordered(text, ["audio ready:", "ambient loop playing", "asset(s) changed on disk",
                           "ambient loop playing"],
                    "the clip loads, plays, is reloaded, and plays again")
-    expect_contains(text, "1 total, 1 ready, 0 failed", "the clip reached ready")
+    # Two, not one: since M16 the sandbox also requests its own string table, which lives
+    # under the same assets/source tree this copies. The count is asserted exactly rather than
+    # loosened, so an asset arriving unnoticed fails here instead of passing quietly.
+    expect_contains(text, "2 total, 2 ready, 0 failed", "the clip and the string table are ready")
 
     # One clip after a reload, not two. A reload creates a new clip and must release the one it
     # displaced; without that the pool grows by one every time a file is touched, which is a leak

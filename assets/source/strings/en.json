@@ -8,24 +8,164 @@
   // somebody bundles a font and configures glyph ranges. docs/DEFERRED.md records that with the
   // trigger.
   //
-  // Keys are identifiers, not prose, and they are what a reader sees when an entry is missing.
-  // So they are written to be legible in that state: `ui.undo` is a usable thing to see in a
-  // button, and `s17` is not.
+  // Keys are identifiers, not prose. They are also what a reader sees when an entry is missing,
+  // so they are written to be legible in that state: `ui.undo` is a usable thing to find in a
+  // button and `s17` is not. Every key here is named in
+  // engine/tools/include/atlas/tools/text_keys.hpp, and `--text-check` resolves that list
+  // against this file.
+  //
+  // Log messages are deliberately absent. A log line is a diagnostic for whoever reads the
+  // build, and routing 157 of them through a table would make every integration case's grep
+  // depend on a locale.
   "format": "atlas-strings",
   "version": 1,
   "locale": "en",
 
   "strings": {
-    // The two composing entries. `ui.undo_with` takes the command's own label as {0}, so the
-    // order of the verb and its object is the translator's to choose rather than English's --
-    // which is the whole reason substitution is positional.
+    // undo and redo
     "ui.undo": "Undo",
     "ui.undo_with": "Undo {0}",
     "ui.redo": "Redo",
     "ui.redo_with": "Redo {0}",
+    "ui.history.depth": "{0} undo, {1} redo",
 
-    // What edit::Command::label() returns. The command reports a key and the overlay resolves
-    // it, so `edit` needs no dependency on this module at all.
+    // values standing in for something absent or trivial
+    "ui.value.none": "none",
+    "ui.value.yes": "yes",
+    "ui.value.no": "no",
+    "ui.value.not_composed": "not composed yet",
+    "ui.value.whole_texture": "whole texture",
+
+    // inspector rows
+    "ui.entity.id": "id",
+    "ui.entity.parent": "parent",
+    "ui.entity.children": "children",
+    "ui.entity.local_rotation": "local rotation",
+    "ui.entity.local_scale": "local scale",
+    "ui.entity.world_translation": "world translation",
+    "ui.entity.world_transform": "world transform",
+    "ui.entity.sprite_texture": "sprite texture",
+    "ui.entity.sprite_size": "sprite size",
+    "ui.entity.sprite_tint": "sprite tint",
+    "ui.entity.sprite_layer": "sprite layer",
+    "ui.entity.sprite_visible": "sprite visible",
+    "ui.entity.animator_clip": "animator clip",
+    "ui.entity.pose_time": "pose time",
+    "ui.entity.pose_offset": "pose offset",
+    "ui.entity.pose_rotation": "pose rotation",
+    "ui.entity.pose_scale": "pose scale",
+    "ui.entity.pose_frame": "pose frame",
+    "ui.entity.camera_zoom": "camera zoom",
+    "ui.entity.camera_active": "camera active",
+
+    // inspector widgets
+    "ui.editor.local_position": "local position",
+    "ui.editor.playing": "playing",
+    "ui.editor.remove_animator": "remove animator",
+    "ui.editor.speed": "speed",
+    "ui.editor.start_ms": "start (ms)",
+    "ui.editor.loop": "loop",
+    "ui.editor.name_too_long": "name (too long to edit): {0}",
+
+    // the scene panel
+    "ui.scene.entity_count": "{0} entities",
+    "ui.scene.unnamed_entity": "entity {0}",
+    "ui.scene.no_selection": "No entity selected.",
+
+    // loop modes, by position against scene::LoopMode
+    "ui.loop.once": "once",
+    "ui.loop.loop": "loop",
+    "ui.loop.ping_pong": "ping-pong",
+
+    // the log console. The records themselves are diagnostics and are not translated.
+    "ui.log.severity": "severity",
+    "ui.log.category": "category",
+    "ui.log.follow": "follow",
+    "ui.log.clear": "Clear",
+    "ui.log.counts": "{0} shown, {1} hidden, {2} held of {3}",
+    "ui.severity.trace": "trace",
+    "ui.severity.debug": "debug",
+    "ui.severity.info": "info",
+    "ui.severity.warning": "warning",
+    "ui.severity.error": "error",
+    "ui.severity.fatal": "fatal",
+
+    // simulation controls
+    "ui.sim.resume": "Resume",
+    "ui.sim.pause": "Pause",
+    "ui.sim.step": "Step",
+    "ui.sim.unbounded": "Unbounded",
+    "ui.sim.display_mode": "display mode",
+    "ui.sim.reset_view": "Reset view",
+    "ui.sim.save": "Save",
+    "ui.sim.load": "Load",
+    "ui.sim.tick_at": "tick {0} at {1}",
+    "ui.sim.recording": "recording: {0} commands",
+    "ui.sim.not_recording": "not recording",
+    "ui.sim.multiplier": "{0}x",
+    "ui.speed.paused": "paused",
+    "ui.speed.step": "step",
+    "ui.speed.unbounded": "unbounded",
+    "ui.speed.1x": "1x",
+    "ui.speed.2x": "2x",
+    "ui.speed.4x": "4x",
+    "ui.speed.8x": "8x",
+    "ui.speed.custom": "custom",
+
+    // the asset panel
+    "ui.assets.summary": "{0} assets: {1} ready, {2} failed, {3} loading, {4} awaiting finalisation",
+    "ui.assets.cache": "cache: {0} hits, {1} misses",
+    "ui.assets.column.path": "path",
+    "ui.assets.column.state": "state",
+    "ui.assets.column.loads": "loads",
+    "ui.assets.column.bytes": "bytes",
+    "ui.assets.column.error": "error",
+    "ui.asset_state.unloaded": "unloaded",
+    "ui.asset_state.queued": "queued",
+    "ui.asset_state.loading": "loading",
+    "ui.asset_state.decoded": "decoded",
+    "ui.asset_state.ready": "ready",
+    "ui.asset_state.failed": "failed",
+
+    // panel titles the applications supply
+    "app.title.lab": "Strategy Lab",
+    "app.title.controls": "Controls",
+    "app.title.log": "Log",
+    "app.title.sandbox": "Atlas",
+    "app.title.scene": "Scene",
+    "app.title.assets": "Assets",
+
+    // statistics rows
+    "app.stat.frame": "frame",
+    "app.stat.tick": "tick",
+    "app.stat.state_hash": "state hash",
+    "app.stat.speed": "speed",
+    "app.stat.map_mode": "map mode",
+    "app.stat.visible_chunks": "visible chunks",
+    "app.stat.batch": "batch",
+    "app.stat.events_cpu": "events (cpu)",
+    "app.stat.simulation_cpu": "simulation (cpu)",
+    "app.stat.snapshot_cpu": "snapshot (cpu)",
+    "app.stat.draw_cpu": "draw (cpu)",
+    "app.stat.acquire_present": "acquire+present",
+    "app.stat.zoom": "zoom",
+    "app.stat.seed": "seed",
+    "app.stat.commands": "commands",
+    "app.stat.hash_version": "hash version",
+    "app.stat.audio": "audio",
+    "app.stat.sprites_drawn": "sprites drawn",
+    "app.stat.quads_visible": "quads visible",
+    "app.stat.draw_calls": "draw calls",
+    "app.stat.uploaded": "uploaded",
+
+    // map modes, by position against the lab's own MapMode
+    "app.map_mode.region_value": "region value",
+    "app.map_mode.owner_index": "owner index",
+    "app.map_mode.population_value": "population value",
+    "app.map_mode.colour_index": "colour index",
+    "app.map_mode.invalid": "invalid",
+
+    // what edit::Command::label() reports
     "edit.command.rename": "rename",
     "edit.command.move": "move",
     "edit.command.set_sprite": "set sprite",
