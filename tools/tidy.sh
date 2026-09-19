@@ -154,4 +154,33 @@ analyse() {
 analyse "" "${PRODUCTION_FILES[@]}"
 analyse "${REPO_ROOT}/tools/clang-tidy-tests.yml" "${TEST_FILES[@]}"
 
-echo "clang-tidy clean"
+# Say what was not analysed, rather than passing quietly.
+#
+# The benchmark sources are always *passed* to clang-tidy, but a preset configured without
+# -DATLAS_BUILD_BENCHMARKS=ON has no compile command for them, so they are skipped — silently,
+# and with the same exit code as a clean run. Continuous integration always configures them on,
+# so a finding in a benchmark would appear there and nowhere else.
+#
+# Added in M15 after a benchmark finding reached continuous integration, though not by this
+# route: that one got through because this script was not run at all before the commit. The gap
+# below is real regardless, and a fresh clone configured with a plain preset has it. This file
+# already argues that a linter which passes by doing nothing is the worst kind of failure; this
+# is the same hole one level up.
+uncovered=0
+for file in "${TEST_FILES[@]}"; do
+    case "${file}" in
+        "${REPO_ROOT}/benchmarks/"*)
+            if ! grep -qF "${file}" "${COMPILE_DB}"; then
+                uncovered=$((uncovered + 1))
+            fi
+            ;;
+    esac
+done
+
+if [[ "${uncovered}" -gt 0 ]]; then
+    echo "clang-tidy clean — but ${uncovered} benchmark source(s) were NOT analysed:"
+    echo "  they have no compile command in this build. Continuous integration analyses them."
+    echo "  To match it: cmake --preset ${PRESET} -DATLAS_BUILD_BENCHMARKS=ON"
+else
+    echo "clang-tidy clean"
+fi

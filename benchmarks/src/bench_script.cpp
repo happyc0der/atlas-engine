@@ -324,7 +324,7 @@ enum class Shape : std::uint8_t { Empty, Submit, ReadView };
     {
         const auto module_bytes = as_bytes(build(Shape::Empty));
         results.push_back(atlas::bench::measure("script/load", "bytes=trivial", 2'000, 200, [&] {
-            auto host = atlas::script::ModHost::create(*runtime, 0, module_bytes, "bench");
+            const auto host = atlas::script::ModHost::create(*runtime, 0, module_bytes, "bench");
             if (!host) {
                 die("load");
             }
