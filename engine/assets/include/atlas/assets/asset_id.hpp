@@ -36,6 +36,8 @@ enum class AssetType : std::uint8_t {
     AudioClip = 3,
     /// An animation clip: keys, timings and a frame grid.
     AnimationClip = 4,
+    /// A string table: the text an interface shows, for one locale (ADR-0016).
+    StringTable = 5,
 };
 
 [[nodiscard]] std::string_view to_string(AssetType type) noexcept;

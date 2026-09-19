@@ -8,8 +8,10 @@ atlas_add_test(text
     SOURCES
         test_substitute.cpp
         test_catalog.cpp
+        test_string_table_asset.cpp
     DEPENDS
         atlas::text
+        atlas::assets
     LABELS
         "unit"
 )

@@ -11,6 +11,8 @@ find_path(STB_INCLUDE_DIR NAMES stb_image.h REQUIRED)
 # The JSON reader, private here as it is in scene. M13 made this its second consumer: an
 # animation clip is a document a person writes, so it is read by the same library the scene file
 # is, rather than by a second bespoke parser in the same milestone that added one for audio.
+# M16 added a third call site, the string table, for the same reason and with no change to the
+# boundary: `atlas::text` receives plain strings and never links this.
 find_package(nlohmann_json CONFIG REQUIRED)
 
 atlas_add_module(assets
@@ -21,6 +23,7 @@ atlas_add_module(assets
         src/wav.cpp
         src/audio_import.cpp
         src/animation_clip.cpp
+        src/string_table.cpp
         src/registry.cpp
         src/artifact_cache.cpp
         src/filesystem.cpp

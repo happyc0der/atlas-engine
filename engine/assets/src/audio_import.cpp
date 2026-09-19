@@ -11,6 +11,7 @@
 // supported, the choosing goes here and the decoding goes beside `wav.cpp`.
 
 #include "animation_clip.hpp"
+#include "string_table.hpp"
 #include "wav.hpp"
 
 #include <algorithm>
@@ -48,6 +49,13 @@ Result<ImportedAnimationClip> import_animation_clip(std::span<const std::byte> b
     // and the parser checks that marker before anything else. A file's extension is a claim
     // made by whoever named it; the marker is a claim the file has to honour to be read at all.
     return detail::parse_animation_clip(bytes, debug_name);
+}
+
+Result<ImportedStringTable> import_string_table(std::span<const std::byte> bytes,
+                                                std::string_view debug_name) {
+    // As above: one format, nothing to choose between, and the marker checked before anything
+    // else rather than the extension trusted.
+    return detail::parse_string_table(bytes, debug_name);
 }
 
 }  // namespace atlas::assets

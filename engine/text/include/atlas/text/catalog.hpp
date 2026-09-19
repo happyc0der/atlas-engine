@@ -14,6 +14,7 @@
 /// still records what it could not find, so two threads calling it at once would race on the
 /// miss bookkeeping. Nothing about a string table wants a worker.
 
+#include <atlas/assets/registry.hpp>
 #include <atlas/core/result.hpp>
 
 #include <cstddef>
@@ -103,11 +104,37 @@ class Catalog {
 
     [[nodiscard]] std::size_t size() const noexcept { return m_strings.size(); }
 
+    /// What the loaded table said it was for: "en". Empty until one is loaded.
+    ///
+    /// Recorded, never interpreted. Nothing in this engine parses a language tag, and ADR-0016
+    /// defers everything that would need to — plural rules, collation, a second atlas.
+    [[nodiscard]] std::string_view locale() const noexcept { return m_locale; }
+
     /// Total misses since construction, including repeats of the same key.
     [[nodiscard]] std::size_t misses() const noexcept { return m_misses; }
 
     /// Distinct missing keys, which is what `--text-check` reports.
     [[nodiscard]] std::size_t distinct_misses() const noexcept { return m_missing.size(); }
+
+    /// Claim every string table that has decoded, and make its entries available.
+    ///
+    /// The same shape as the texture cache's, the audio device's and the clip cache's own
+    /// finalisers, and for the same reason: a worker produces plain strings and stops there,
+    /// and turning them into something the engine can use belongs to whoever owns the thing
+    /// they become. Assets of other types are skipped, so several finalisers share one registry
+    /// without stepping on each other.
+    ///
+    /// Returns how many tables were taken, which for a steady frame is zero.
+    ///
+    /// **This has to exist for the type to be usable at all.** Since M12 the registry reports
+    /// an asset that decodes and is never claimed; a table with no finaliser would sit in that
+    /// state and be reported ten seconds later, exactly as `AssetType::Shader` has since M4.
+    ///
+    /// **A reload replaces the whole table rather than merging into it.** A key removed from
+    /// the file must disappear from the catalog, which merging would never do — the interface
+    /// would go on showing a string that no longer exists anywhere, and hot reload would be a
+    /// way of accumulating stale text rather than of seeing an edit.
+    std::size_t finalise_pending(assets::Registry& registry);
 
     /// Drop every entry, and every memory of what was missing.
     ///
@@ -119,6 +146,10 @@ class Catalog {
     /// Looked up by key and never iterated, which is what makes an unordered container
     /// permitted here: nothing this produces is ordered, hashed, or written down.
     std::unordered_map<std::string, std::string, detail::StringHash, std::equal_to<>> m_strings;
+
+    /// What the loaded table called itself. Cleared with the entries, because a locale with no
+    /// strings behind it would claim the interface was in a language it is not.
+    std::string m_locale;
 
     /// Mutable because `lookup` is const and a caller holding a `const Catalog*` must still be
     /// able to find out what it asked for and did not get. This is the whole reason the class

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace atlas::assets {
@@ -89,6 +90,19 @@ struct ImportedAnimationClip {
     std::vector<ImportedFrameKey> frame_keys;
 };
 
+/// A decoded string table: keys and the strings they name, for one locale.
+///
+/// Plain strings and nothing else, because an importer runs on an asset worker and cannot see
+/// `atlas::text` — the same separation an imported clip has from the animation module. The
+/// pairs arrive in the order the document listed them, which nothing depends on and which is
+/// kept only so an error names the entry a reader would have been looking at.
+struct ImportedStringTable {
+    /// What the document said it was: "en", "fr". Recorded rather than interpreted; nothing in
+    /// this engine parses a language tag, and ADR-0016 defers everything that would need to.
+    std::string locale;
+    std::vector<std::pair<std::string, std::string>> strings;
+};
+
 /// Decode an image.
 ///
 /// Thread-safe and free of engine state, so it can run on a worker.
@@ -116,6 +130,17 @@ struct ImportedAnimationClip {
 /// Thread-safe and free of engine state, so it can run on a worker.
 [[nodiscard]] Result<ImportedAnimationClip> import_animation_clip(std::span<const std::byte> bytes,
                                                                   std::string_view debug_name);
+
+/// Decode a string table.
+///
+/// Like the clip reader: the document names and versions itself, its own length is bounded
+/// before it is parsed at all, and every key and value is bounded after. A duplicate key is
+/// refused rather than resolved, because which of two identical keys should win is not a
+/// question a translator can be expected to answer.
+///
+/// Thread-safe and free of engine state, so it can run on a worker.
+[[nodiscard]] Result<ImportedStringTable> import_string_table(std::span<const std::byte> bytes,
+                                                              std::string_view debug_name);
 
 /// Limits on what will be decoded.
 ///
@@ -156,6 +181,22 @@ struct ImportLimits {
     std::uint32_t max_clip_grid = 4096;
     /// A clip longer than a day is not a clip.
     std::uint64_t max_clip_duration_ms = 86'400'000;
+
+    /// The largest string table document, in bytes, **checked before it is parsed**, for the
+    /// reason written against `max_clip_bytes`.
+    ///
+    /// Four megabytes rather than the clip's one: a table holds every string an interface
+    /// shows, and a translated one holds them in a language whose bytes may be several per
+    /// character. The English table is a few kilobytes.
+    std::uint64_t max_string_table_bytes = 4ULL * 1024 * 1024;
+    /// Entries in one table. `text::Catalog` enforces the same number, because a catalog can
+    /// also be filled in code; they are separate checks of one rule rather than one check
+    /// relied on twice.
+    std::uint32_t max_strings = 16'384;
+    /// A key is an identifier written by a programmer, not prose.
+    std::uint32_t max_string_key_length = 256;
+    /// A value is a label or a sentence, never a document.
+    std::uint32_t max_string_value_length = 4096;
 };
 
 [[nodiscard]] const ImportLimits& import_limits() noexcept;

@@ -50,6 +50,7 @@ struct Entry {
     std::optional<ImportedShader> shader;
     std::optional<ImportedAudio> audio;
     std::optional<ImportedAnimationClip> clip;
+    std::optional<ImportedStringTable> string_table;
     /// When the file was last read, for detecting a change on disk.
     std::optional<std::filesystem::file_time_type> loaded_at;
     /// Pumps this entry has spent decoded and unclaimed. See `kStalledPumps`.
@@ -72,6 +73,7 @@ struct Completion {
     std::optional<ImportedShader> shader;
     std::optional<ImportedAudio> audio;
     std::optional<ImportedAnimationClip> clip;
+    std::optional<ImportedStringTable> string_table;
     std::optional<std::filesystem::file_time_type> modified_at;
     std::string error;
     std::uint64_t bytes = 0;
@@ -214,6 +216,18 @@ struct Registry::Impl {
                 break;
             }
             completion.clip = std::move(*imported);
+            break;
+        }
+        case AssetType::StringTable: {
+            // Not cached, for the same reason audio and clips are not: a table is a few
+            // kilobytes of text that parses faster than a cache entry would read, and the
+            // artifact cache is texture-shaped end to end.
+            auto imported = import_string_table(*bytes, job.path.text());
+            if (!imported) {
+                completion.error = imported.error().to_string();
+                break;
+            }
+            completion.string_table = std::move(*imported);
             break;
         }
         case AssetType::Unknown:
@@ -404,6 +418,19 @@ std::optional<ImportedAnimationClip> Registry::take_animation_clip(AssetId id) {
     return std::nullopt;
 }
 
+std::optional<ImportedStringTable> Registry::take_string_table(AssetId id) {
+    if (m_impl == nullptr) {
+        return std::nullopt;
+    }
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    const std::scoped_lock lock{m_impl->entries_mutex};
+    if (const auto it = m_impl->entries.find(id); it != m_impl->entries.end()) {
+        return std::exchange(it->second.string_table, std::nullopt);
+    }
+    return std::nullopt;
+}
+
 std::size_t Registry::pump() {
     if (m_impl == nullptr) {
         return 0;
@@ -451,6 +478,7 @@ std::size_t Registry::pump() {
         entry.shader = std::move(completion.shader);
         entry.audio = std::move(completion.audio);
         entry.clip = std::move(completion.clip);
+        entry.string_table = std::move(completion.string_table);
 
         // Decoded, not ready: a texture's pixels exist but its graphics resource does not,
         // and only the main thread may create one.

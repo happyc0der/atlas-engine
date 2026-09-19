@@ -6,6 +6,7 @@ atlas_add_test(assets
         test_registry.cpp
         test_wav.cpp
         test_animation_clip.cpp
+        test_string_table.cpp
     DEPENDS
         atlas::assets
     LABELS

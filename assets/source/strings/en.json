@@ -1,0 +1,41 @@
+{
+  // The only string table there is, and the only one M16 ships (ADR-0016).
+  //
+  // A second language is a copy of this file with the values translated -- **for a language the
+  // overlay can draw**. The font atlas is Dear ImGui's default: Basic Latin and Latin-1
+  // Supplement. French, German, Spanish and Italian would render from a file like this one;
+  // Polish, Czech, Turkish, Greek, Russian and every CJK language would show blanks until
+  // somebody bundles a font and configures glyph ranges. docs/DEFERRED.md records that with the
+  // trigger.
+  //
+  // Keys are identifiers, not prose, and they are what a reader sees when an entry is missing.
+  // So they are written to be legible in that state: `ui.undo` is a usable thing to see in a
+  // button, and `s17` is not.
+  "format": "atlas-strings",
+  "version": 1,
+  "locale": "en",
+
+  "strings": {
+    // The two composing entries. `ui.undo_with` takes the command's own label as {0}, so the
+    // order of the verb and its object is the translator's to choose rather than English's --
+    // which is the whole reason substitution is positional.
+    "ui.undo": "Undo",
+    "ui.undo_with": "Undo {0}",
+    "ui.redo": "Redo",
+    "ui.redo_with": "Redo {0}",
+
+    // What edit::Command::label() returns. The command reports a key and the overlay resolves
+    // it, so `edit` needs no dependency on this module at all.
+    "edit.command.rename": "rename",
+    "edit.command.move": "move",
+    "edit.command.set_sprite": "set sprite",
+    "edit.command.remove_sprite": "remove sprite",
+    "edit.command.set_animator": "set animator",
+    "edit.command.remove_animator": "remove animator",
+    "edit.command.set_camera": "set camera",
+    "edit.command.remove_camera": "remove camera",
+    "edit.command.reparent": "reparent",
+    "edit.command.create": "create",
+    "edit.command.destroy": "destroy"
+  }
+}

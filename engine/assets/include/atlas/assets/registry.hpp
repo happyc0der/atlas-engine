@@ -119,6 +119,10 @@ class Registry {
     /// finaliser: the keys are moved out, so a second caller gets nothing.
     [[nodiscard]] std::optional<ImportedAnimationClip> take_animation_clip(AssetId id);
 
+    /// Take the decoded string table, if this asset has one waiting. Main thread only, and only
+    /// from a finaliser: the entries are moved out, so a second caller gets nothing.
+    [[nodiscard]] std::optional<ImportedStringTable> take_string_table(AssetId id);
+
     /// Bring finished work into the registry.
     ///
     /// Called once per frame on the main thread. Returns how many assets changed state,

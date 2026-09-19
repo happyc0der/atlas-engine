@@ -11,6 +11,7 @@ std::string_view to_string(AssetType type) noexcept {
     case AssetType::Shader: return "shader";
     case AssetType::AudioClip: return "audio clip";
     case AssetType::AnimationClip: return "animation clip";
+    case AssetType::StringTable: return "string table";
     }
     return "unrecognised";
 }

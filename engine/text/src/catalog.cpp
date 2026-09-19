@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <atlas/core/assert.hpp>
 #include <atlas/core/log.hpp>
+#include <atlas/core/profile.hpp>
 #include <atlas/text/catalog.hpp>
 
 #include <format>
@@ -69,8 +71,66 @@ std::size_t Catalog::log_new_misses() const {
     return named;
 }
 
+std::size_t Catalog::finalise_pending(assets::Registry& registry) {
+    ATLAS_ASSERT_MAIN_THREAD();
+    ATLAS_ZONE_NAMED("Catalog::finalise_pending");
+
+    std::size_t taken = 0;
+
+    for (const assets::AssetId id : registry.pending_finalisation()) {
+        // Skipped rather than relied on: `take_string_table` returns nothing for an asset with
+        // no string-table payload, so removing this line changes the work done and not the
+        // result. A mutation run confirmed that — it survives, and it is meant to. The same
+        // arrangement the texture cache has had since M4 and the clip cache since M13, and the
+        // same honest caveat the audio device's finaliser records.
+        if (id.type() != assets::AssetType::StringTable) {
+            continue;
+        }
+        auto imported = registry.take_string_table(id);
+        if (!imported) {
+            // Another finaliser claimed it, or it was claimed on an earlier pump. Skipping is
+            // right and silent; the registry's own stall counter is what reports an asset that
+            // nobody claims at all.
+            continue;
+        }
+
+        // Replaced, never merged: see the header. A reload that kept old keys would make hot
+        // reload a way of accumulating stale text.
+        clear();
+
+        Status status;
+        for (const auto& [key, value] : imported->strings) {
+            status = insert(key, value);
+            if (!status) {
+                break;
+            }
+        }
+
+        if (!status) {
+            // The parser already refuses duplicates and oversized entries, so reaching here
+            // means the catalog's own bound was the binding one. Either way the table is not
+            // half-loaded: what was inserted is dropped, and the asset is marked failed so the
+            // registry reports it rather than leaving it looking loaded.
+            clear();
+            ATLAS_LOG_ERROR(kText, "string table {} was refused: {}", id.to_string(),
+                            status.error());
+            registry.mark_failed(id, status.error().to_string());
+            continue;
+        }
+
+        m_locale = std::move(imported->locale);
+        registry.mark_ready(id);
+        ++taken;
+        ATLAS_LOG_INFO(kText, "string table '{}' ready with {} entries", m_locale,
+                       m_strings.size());
+    }
+
+    return taken;
+}
+
 void Catalog::clear() noexcept {
     m_strings.clear();
+    m_locale.clear();
     m_missing.clear();
     m_unlogged.clear();
     m_misses = 0;

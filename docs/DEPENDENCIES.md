@@ -29,7 +29,7 @@ distribution. All current dependencies are permissive and therefore compatible.
 | stb | Image decoding (`stb_image`). The port also installs `stb_vorbis.c` v1.22 on every triplet; Atlas does not compile it, and M12 deferred Ogg support. | 2024-07-29, port-version 1 | MIT / Unlicense | Yes | Private to the assets importer | M4 |
 | Dear ImGui | Debug overlay | 1.92.8, features `docking-experimental`, `sdl3-binding`, `sdlgpu3-binding` | MIT | Yes | Private to `tools` | M3 |
 | EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004; in practice private to `scene/src` | M5 |
-| nlohmann-json | Reading and writing the scene file, and reading animation clips | 3.12.0, port-version 2 | MIT | Yes | Private to `scene/src` and `assets/src`; no JSON type appears in any Atlas header | M5, second consumer M13 |
+| nlohmann-json | Reading and writing the scene file, and reading animation clips and string tables | 3.12.0, port-version 2 | MIT | Yes | Private to `scene/src` and `assets/src`; no JSON type appears in any Atlas header, and `atlas::text` receives plain strings rather than linking this | M5, second consumer M13, third call site M16 |
 | WAMR | The WebAssembly interpreter sandboxed mods run in | WAMR-2.4.5, pinned by REF and SHA512 in `external/vcpkg-overlays/wasm-micro-runtime/portfile.cmake`. **The only overlay port in this project**, because no WebAssembly runtime exists in vcpkg — not at our baseline and not upstream, checked 2026-09-18 | Apache-2.0 WITH LLVM-exception | Yes, one way, the same footing as SPIRV-Cross | Private to `script/src`; no WebAssembly type appears in any Atlas header, which is what keeps ADR-0015's Luau fallback real | M15 |
 
 Dependencies are added in the milestone that first needs them, never in advance.
@@ -106,7 +106,7 @@ order fails to compile rather than aborting at run time.
 | Tracy | Another profiler | Remapping the macros in `core/profile.hpp` |
 | Catch2 | Another test framework | Mechanical test rewrite |
 | stb_image | libpng plus libjpeg-turbo | Rewriting one importer |
-| nlohmann-json | Another JSON library, or a bespoke format | Rewriting `scene/src/serialization.cpp` and `assets/src/animation_clip.cpp`; no caller changes |
+| nlohmann-json | Another JSON library, or a bespoke format | Rewriting `scene/src/serialization.cpp`, `assets/src/animation_clip.cpp` and `assets/src/string_table.cpp`; no caller changes. The last of those also uses the SAX interface, which not every library has an equivalent of |
 
 ## Update policy
 
