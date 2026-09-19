@@ -43,6 +43,28 @@ namespace atlas::sim {
 /// the local source.
 enum class SourceId : std::uint32_t { Local = 0 };
 
+/// The bit that separates a peer from a mod.
+///
+/// A peer's identifier is its index in the session — low, dense, and agreed at the handshake.
+/// A mod's is local to the machine it runs on and is **never sent on the wire**: every peer
+/// runs the same mods and each produces the same commands for itself, and the hash check is
+/// what catches a mod that decided differently (ADR-0014, ADR-0015).
+///
+/// Split by a bit rather than by a range so the two can never be confused by arithmetic, and
+/// so a source that arrives over a link can be recognised as impossible rather than merely
+/// unexpected. ADR-0014 asserted this scheme; until M15 it was prose and nothing else.
+inline constexpr std::uint32_t kModSourceBit = 0x8000'0000U;
+
+/// The identifier of the `index`-th mod on this machine.
+[[nodiscard]] constexpr SourceId mod_source(std::uint32_t index) noexcept {
+    return SourceId{kModSourceBit | index};
+}
+
+/// Whether this identifier belongs to a mod rather than to a peer.
+[[nodiscard]] constexpr bool is_mod_source(SourceId source) noexcept {
+    return (static_cast<std::uint32_t>(source) & kModSourceBit) != 0;
+}
+
 /// What kind of command this is. The application assigns the meanings.
 enum class CommandType : std::uint32_t { Invalid = 0 };
 

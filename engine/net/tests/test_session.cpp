@@ -261,6 +261,28 @@ TEST_CASE("a peer cannot label a command inside its own turn with another peer's
     CHECK(pair.queue_a.pending() == 0);
 }
 
+TEST_CASE("a mod's identifier cannot arrive over a link", "[net][session]") {
+    // ADR-0014: a mod's commands are local to each peer and never sent, because every peer runs
+    // the same mods and produces the same commands for itself. Nothing in the session says the
+    // word "mod" — the property falls out of taking the source from the link a message arrived
+    // on rather than from the message. Written down as a test because that is the kind of
+    // guarantee which survives only as long as somebody remembers it is load-bearing.
+    Pair pair;
+    pair.settle();
+
+    Turn smuggled{
+        .tick = 1, .source = SourceId{1}, .commands = {poke(1, atlas::sim::mod_source(0), 0)}};
+    const auto bytes = encode(Message{std::move(smuggled)});
+    REQUIRE(bytes.has_value());
+    auto end = pair.hub->end(1);
+    REQUIRE(end.send_to(0, *bytes).has_value());
+
+    const auto refused = pair.a->poll(0, pair.queue_a, pair.gate_a);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message().contains("may speak only for itself"));
+    CHECK(pair.queue_a.pending() == 0);
+}
+
 TEST_CASE("a turn for a tick already run ends the session", "[net][session]") {
     // Under lockstep a late command cannot be applied by anybody, so the session is no longer
     // sound. Checked before the queue sees it, so the kernel never counts it late — which is

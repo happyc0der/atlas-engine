@@ -218,6 +218,27 @@ TEST_CASE("two commands sharing a source and sequence still drain in one fixed o
     }
 }
 
+TEST_CASE("a mod's identifier can never be mistaken for a peer's", "[sim][command]") {
+    // ADR-0014 asserted this scheme and nothing implemented it until M15. Split by a bit rather
+    // than by a range so the two cannot be confused by arithmetic, and so a source arriving
+    // over a link can be recognised as impossible rather than merely unexpected.
+    CHECK(atlas::sim::is_mod_source(atlas::sim::mod_source(0)));
+    CHECK(atlas::sim::is_mod_source(atlas::sim::mod_source(7)));
+    CHECK(atlas::sim::mod_source(7) != atlas::sim::mod_source(8));
+
+    // Peers come from link indices, which are small and dense, and `kMaxPeers` is sixteen.
+    CHECK_FALSE(atlas::sim::is_mod_source(SourceId::Local));
+    for (std::uint32_t peer = 0; peer < 64; ++peer) {
+        INFO("peer " << peer);
+        CHECK_FALSE(atlas::sim::is_mod_source(SourceId{peer}));
+    }
+
+    // The two ranges do not overlap anywhere, which is the property the bit buys and the one
+    // worth checking at the boundary rather than in the middle.
+    CHECK_FALSE(atlas::sim::is_mod_source(SourceId{atlas::sim::kModSourceBit - 1}));
+    CHECK(atlas::sim::is_mod_source(SourceId{atlas::sim::kModSourceBit}));
+}
+
 TEST_CASE("sequence numbers are per source and assigned by the queue", "[sim][command]") {
     // Assigned rather than supplied, so a caller cannot reuse one and make the order
     // ambiguous.

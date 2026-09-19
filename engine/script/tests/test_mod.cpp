@@ -139,8 +139,7 @@ TEST_CASE("an import the host does not provide is refused", "[script][mod]") {
         // depend on that — it is the import list that is the authority, not what happens to be
         // compiled in.
         ModuleSpec spec;
-        spec.import_module = "wasi_snapshot_preview1";
-        spec.import_field = "fd_write";
+        spec.imports = {{.module_name = "wasi_snapshot_preview1", .field = "fd_write"}};
         const auto refused = f.load(spec, "wasi");
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().code() == ErrorCode::ModImportRefused);
@@ -149,8 +148,7 @@ TEST_CASE("an import the host does not provide is refused", "[script][mod]") {
 
     SECTION("from inside it, but not offered") {
         ModuleSpec spec;
-        spec.import_module = "atlas";
-        spec.import_field = "atlas_clock_ns";
+        spec.imports = {{.field = "atlas_clock_ns"}};
         const auto refused = f.load(spec, "clock");
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().code() == ErrorCode::ModImportRefused);

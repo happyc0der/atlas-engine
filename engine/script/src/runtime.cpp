@@ -3,6 +3,8 @@
 #include <atlas/core/log.hpp>
 #include <atlas/script/runtime.hpp>
 
+#include "host_imports.hpp"
+
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -163,6 +165,17 @@ Result<Runtime> Runtime::create(std::size_t budget_bytes) {
         return std::unexpected(
             Error(ErrorCode::ScriptRuntimeInitFailed,
                   "the WebAssembly runtime refused to initialise; no mod can be loaded"));
+    }
+
+    // Registered here rather than lazily at the first load, because it is process-wide state
+    // like the runtime itself and belongs to the object that owns the runtime's lifetime. A
+    // failure is a programmer error — the table is a compile-time constant — so it takes the
+    // runtime down with it rather than leaving mods to fail one at a time later.
+    if (!register_host_imports()) {
+        wasm_runtime_destroy();
+        c = Counters{};
+        return std::unexpected(Error(ErrorCode::ScriptRuntimeInitFailed,
+                                     "the WebAssembly runtime refused the host import table"));
     }
 
     c.alive = true;

@@ -17,9 +17,12 @@ atlas_add_module(script
     SOURCES
         src/runtime.cpp
         src/mod.cpp
+        src/mod_host.cpp
     HEADERS
+        include/atlas/script/atlas_mod.h
         include/atlas/script/limits.hpp
         include/atlas/script/mod.hpp
+        include/atlas/script/mod_host.hpp
         include/atlas/script/runtime.hpp
     DEPENDS
         core

@@ -1,0 +1,339 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include <atlas/core/assert.hpp>
+#include <atlas/core/log.hpp>
+#include <atlas/script/atlas_mod.h>
+#include <atlas/script/mod.hpp>
+#include <atlas/script/mod_host.hpp>
+
+#include "host_imports.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <format>
+#include <string>
+#include <vector>
+#include <wasm_export.h>
+
+namespace atlas::script {
+namespace {
+
+constexpr log::Category kScript{"script"};
+
+/// The context for the call in flight, or null outside one.
+[[nodiscard]] HostCall* current(wasm_exec_env_t exec_env) {
+    return static_cast<HostCall*>(wasm_runtime_get_user_data(exec_env));
+}
+
+// The imports themselves. Each one refuses rather than trapping: a mod that asks for something
+// out of range gets a negative number back and carries on, because trapping would turn every
+// mistake in a mod into a disabled mod, and the failure policy is meant for a mod that has gone
+// wrong rather than one that asked a question with the wrong argument.
+
+std::int64_t native_tick(wasm_exec_env_t exec_env) {
+    const auto* call = current(exec_env);
+    return call != nullptr ? static_cast<std::int64_t>(call->tick) : ATLAS_ERR_REFUSED;
+}
+
+std::int32_t native_command_type(wasm_exec_env_t exec_env, const char* name,
+                                 std::uint32_t name_len) {
+    const auto* call = current(exec_env);
+    if (call == nullptr || call->queue == nullptr || name == nullptr) {
+        return ATLAS_ERR_REFUSED;
+    }
+    const auto type = sim::command_type(std::string_view(name, name_len));
+    // Zero for a type nobody handles, so a mod written against a game that is not running
+    // submits nothing rather than something wrong. Checked here as well as at submit because
+    // this is where a mod can do something about the answer.
+    return call->queue->has_handler(type) ? static_cast<std::int32_t>(type) : 0;
+}
+
+std::int32_t native_submit(wasm_exec_env_t exec_env, std::int32_t type, const void* payload,
+                           std::uint32_t payload_len) {
+    auto* call = current(exec_env);
+    if (call == nullptr || call->queue == nullptr) {
+        return ATLAS_ERR_REFUSED;
+    }
+    if (call->commands_left == 0) {
+        ++call->refused;
+        return ATLAS_ERR_EXHAUSTED;
+    }
+    if (payload == nullptr && payload_len != 0) {
+        ++call->refused;
+        return ATLAS_ERR_RANGE;
+    }
+
+    const auto* bytes = static_cast<const std::byte*>(payload);
+    const std::span<const std::byte> span(bytes, payload_len);
+
+    // The identity is the host's, never the guest's: `atlas_submit` has no source parameter, so
+    // there is nothing here to validate and nothing a mod could have got wrong.
+    if (const auto status = call->queue->submit(
+            call->target, call->source, sim::CommandType{static_cast<std::uint32_t>(type)}, span);
+        !status) {
+        ++call->refused;
+        return ATLAS_ERR_REFUSED;
+    }
+
+    --call->commands_left;
+    ++call->submitted;
+    call->highest_target = std::max(call->highest_target, call->target);
+    return 0;
+}
+
+std::int64_t native_random(wasm_exec_env_t exec_env, std::int32_t stream, std::int64_t bound) {
+    auto* call = current(exec_env);
+    if (call == nullptr) {
+        return ATLAS_ERR_REFUSED;
+    }
+    if (bound <= 0) {
+        return ATLAS_ERR_RANGE;
+    }
+
+    const auto key = static_cast<std::uint32_t>(stream);
+    auto at = call->streams.find(key);
+    if (at == call->streams.end()) {
+        // Keyed by the mod's name as well as the guest's stream number, so two mods asking for
+        // stream 0 do not draw the same sequence. The name is identical on every peer, which is
+        // what makes this reproducible rather than merely unique.
+        const auto mixed =
+            sim::StreamId{static_cast<std::uint32_t>(sim::stream_id(call->mod_name)) ^ key};
+        at = call->streams.emplace(key, sim::RngStream{call->seed, mixed, call->tick}).first;
+    }
+    return static_cast<std::int64_t>(at->second.next_below(static_cast<std::uint64_t>(bound)));
+}
+
+void native_log(wasm_exec_env_t exec_env, std::int32_t level, const char* text,
+                std::uint32_t text_len) {
+    auto* call = current(exec_env);
+    if (call == nullptr || text == nullptr) {
+        return;
+    }
+    if (text_len > call->log_bytes_left) {
+        ++call->log_dropped;
+        return;
+    }
+    call->log_bytes_left -= text_len;
+
+    const std::string_view line(text, text_len);
+    switch (level) {
+    case ATLAS_MOD_LOG_DEBUG: ATLAS_LOG_DEBUG(kScript, "[{}] {}", call->mod_name, line); break;
+    case ATLAS_MOD_LOG_WARN: ATLAS_LOG_WARN(kScript, "[{}] {}", call->mod_name, line); break;
+    case ATLAS_MOD_LOG_ERROR: ATLAS_LOG_ERROR(kScript, "[{}] {}", call->mod_name, line); break;
+    case ATLAS_MOD_LOG_INFO:
+    default: ATLAS_LOG_INFO(kScript, "[{}] {}", call->mod_name, line); break;
+    }
+}
+
+std::int32_t native_view_count(wasm_exec_env_t exec_env) {
+    const auto* call = current(exec_env);
+    return call != nullptr ? static_cast<std::int32_t>(call->views.size()) : ATLAS_ERR_REFUSED;
+}
+
+std::int32_t native_view_size(wasm_exec_env_t exec_env, std::int32_t view) {
+    const auto* call = current(exec_env);
+    if (call == nullptr || view < 0 || static_cast<std::size_t>(view) >= call->views.size()) {
+        return ATLAS_ERR_RANGE;
+    }
+    return static_cast<std::int32_t>(call->views[static_cast<std::size_t>(view)].bytes.size());
+}
+
+std::int32_t native_view_read(wasm_exec_env_t exec_env, std::int32_t view, std::int32_t offset,
+                              void* dest, std::uint32_t len) {
+    const auto* call = current(exec_env);
+    if (call == nullptr || dest == nullptr || offset < 0 || view < 0 ||
+        static_cast<std::size_t>(view) >= call->views.size()) {
+        return ATLAS_ERR_RANGE;
+    }
+    const auto bytes = call->views[static_cast<std::size_t>(view)].bytes;
+    const auto start = static_cast<std::size_t>(offset);
+    if (start > bytes.size()) {
+        return ATLAS_ERR_RANGE;
+    }
+    // Short reads at the end rather than a refusal: a mod walking a view to its end should not
+    // have to know the size to the byte, and `dest` is already bounds-checked by the runtime
+    // because the signature declares it as a buffer with a length.
+    const auto count = std::min(static_cast<std::size_t>(len), bytes.size() - start);
+    std::memcpy(dest, bytes.data() + start, count);
+    return static_cast<std::int32_t>(count);
+}
+
+/// The table, in the order `atlas_mod.h` declares them.
+///
+/// Not `constexpr` and not `const`: WAMR takes a mutable pointer and **keeps it** for as long as
+/// the imports are registered, so this has to be an object with a life rather than a temporary
+/// or a copy. The casts are equally unavoidable — `NativeSymbol::func_ptr` is a `void*`, so
+/// there is no conversion from a function pointer that is not a reinterpret_cast. The
+/// alternative to both is a different runtime.
+// NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-type-reinterpret-cast)
+std::array<NativeSymbol, 8> g_imports{{
+    {"atlas_tick", reinterpret_cast<void*>(&native_tick), "()I", nullptr},
+    {"atlas_command_type", reinterpret_cast<void*>(&native_command_type), "(*~)i", nullptr},
+    {"atlas_submit", reinterpret_cast<void*>(&native_submit), "(i*~)i", nullptr},
+    {"atlas_random", reinterpret_cast<void*>(&native_random), "(iI)I", nullptr},
+    {"atlas_log", reinterpret_cast<void*>(&native_log), "(i*~)", nullptr},
+    {"atlas_view_count", reinterpret_cast<void*>(&native_view_count), "()i", nullptr},
+    {"atlas_view_size", reinterpret_cast<void*>(&native_view_size), "(i)i", nullptr},
+    {"atlas_view_read", reinterpret_cast<void*>(&native_view_read), "(ii*~)i", nullptr},
+}};
+// NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-type-reinterpret-cast)
+
+}  // namespace
+
+std::span<const std::string_view> host_import_names() {
+    // Derived from the same table the runtime is given, so the two cannot disagree. Sorted
+    // because `Mod::load` binary-searches it and because a sorted list is a readable one.
+    static const std::vector<std::string_view> kNames = [] {
+        std::vector<std::string_view> out;
+        out.reserve(g_imports.size());
+        for (const auto& symbol : g_imports) {
+            out.emplace_back(symbol.symbol);
+        }
+        std::ranges::sort(out);
+        return out;
+    }();
+    return kNames;
+}
+
+bool register_host_imports() {
+    // The literal, not `std::string(kImportModule).c_str()`, which is what this was first and
+    // is a dangling pointer: WAMR **keeps** the module-name pointer for as long as the imports
+    // are registered, and a temporary string dies at the end of the statement. The symptom was
+    // every import failing to link with the registration reporting success, which is a long way
+    // from the cause.
+    return wasm_runtime_register_natives(ATLAS_IMPORT_MODULE, g_imports.data(),
+                                         static_cast<std::uint32_t>(g_imports.size()));
+}
+
+struct ModHost::Impl {
+    Mod mod;
+    sim::SourceId source = sim::SourceId::Local;
+    ModHostConfig config;
+    std::vector<ModView> views;
+    ModHostStats stats;
+    bool started = false;
+
+    explicit Impl(Mod loaded) : mod(std::move(loaded)) {}
+};
+
+ModHost::ModHost() = default;
+
+ModHost::~ModHost() = default;
+
+Result<std::unique_ptr<ModHost>> ModHost::create(Runtime& runtime, std::uint32_t mod_index,
+                                                 std::span<const std::byte> bytes,
+                                                 std::string_view name, const ModHostConfig& config,
+                                                 const ModLimits& limits) {
+    ATLAS_ASSERT_MAIN_THREAD();
+
+    if (config.input_delay == 0) {
+        // A command stamped for the tick being decided would be drained before the mod that
+        // produced it had finished producing, so it would apply on some peers and not others
+        // depending on nothing at all. Refused rather than clamped: a caller asking for zero
+        // has misunderstood something, and silently giving it one would hide that.
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("mod '{}' was given an input delay of zero; a mod's commands must be "
+                              "stamped for a later tick than the one it is deciding",
+                              name)));
+    }
+    if ((mod_index & sim::kModSourceBit) != 0) {
+        return std::unexpected(
+            Error(ErrorCode::OutOfRange,
+                  std::format("mod index {} for '{}' overlaps the bit that marks a mod source",
+                              mod_index, name)));
+    }
+
+    auto loaded = Mod::load(runtime, bytes, name, limits);
+    if (!loaded) {
+        return std::unexpected(std::move(loaded).error());
+    }
+
+    auto host = std::unique_ptr<ModHost>(new ModHost());
+    host->m_impl = std::make_unique<Impl>(*std::move(loaded));
+    host->m_impl->source = sim::mod_source(mod_index);
+    host->m_impl->config = config;
+    return host;
+}
+
+void ModHost::set_views(std::span<const ModView> views) {
+    m_impl->views.assign(views.begin(), views.end());
+}
+
+sim::SourceId ModHost::id() const noexcept {
+    return m_impl->source;
+}
+
+Status ModHost::start() {
+    ATLAS_ASSERT_MAIN_THREAD();
+    m_impl->started = true;
+    return m_impl->mod.init();
+}
+
+Result<sim::PollReport> ModHost::poll(Tick now, sim::CommandQueue& queue, sim::TurnGate& turns) {
+    ATLAS_ASSERT_MAIN_THREAD();
+    ATLAS_ASSERT_MSG(m_impl->started, "a mod host polled before start()");
+
+    // Deliberately untouched. A mod takes no turns: every peer runs the same mods and each
+    // produces the same commands locally, so there is nothing to announce and nothing to wait
+    // for. Named rather than left as an unused parameter, because "did somebody forget to mark
+    // the gate?" is exactly the question a reader will have here.
+    (void)turns;
+
+    sim::PollReport report;
+    if (m_impl->mod.disabled()) {
+        return report;
+    }
+
+    HostCall call;
+    call.tick = now;
+    call.target = now + m_impl->config.input_delay;
+    call.source = m_impl->source;
+    call.queue = &queue;
+    call.views = m_impl->views;
+    call.seed = m_impl->config.seed;
+    call.mod_name = m_impl->mod.name();
+    call.commands_left = m_impl->config.max_commands_per_tick;
+    call.log_bytes_left = m_impl->config.max_log_bytes_per_tick;
+
+    m_impl->mod.set_call_context(&call);
+    const auto ran = m_impl->mod.tick(static_cast<std::int64_t>(now));
+    m_impl->mod.set_call_context(nullptr);
+
+    report.commands_submitted = static_cast<std::size_t>(call.submitted);
+    report.commands_refused = static_cast<std::size_t>(call.refused);
+    report.highest_target = call.highest_target;
+    m_impl->stats.commands_submitted += call.submitted;
+    m_impl->stats.commands_refused += call.refused;
+    m_impl->stats.log_lines_dropped += call.log_dropped;
+    ++m_impl->stats.ticks_run;
+
+    if (!ran) {
+        // The mod is already disabled by the time this returns, and that is the whole of the
+        // consequence. Reported as a closed source rather than as an error, because an error
+        // here would stop the driver polling everything else — which is exactly what one bad
+        // mod must not be able to do.
+        ATLAS_LOG_WARN(kScript, "mod '{}' produced nothing further: {}", m_impl->mod.name(),
+                       ran.error());
+        report.closed = true;
+    }
+    return report;
+}
+
+bool ModHost::disabled() const noexcept {
+    return m_impl->mod.disabled();
+}
+
+std::string_view ModHost::disabled_because() const noexcept {
+    return m_impl->mod.disabled_because();
+}
+
+std::string_view ModHost::name() const noexcept {
+    return m_impl->mod.name();
+}
+
+ModHostStats ModHost::stats() const noexcept {
+    return m_impl->stats;
+}
+
+}  // namespace atlas::script

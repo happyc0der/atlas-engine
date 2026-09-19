@@ -7,6 +7,7 @@ atlas_add_test(script
     SOURCES
         test_runtime.cpp
         test_mod.cpp
+        test_mod_host.cpp
     DEPENDS
         atlas::script
     LABELS

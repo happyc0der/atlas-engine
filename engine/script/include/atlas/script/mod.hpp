@@ -25,6 +25,7 @@
 
 #include <atlas/core/error.hpp>
 #include <atlas/core/result.hpp>
+#include <atlas/script/atlas_mod.h>
 #include <atlas/script/limits.hpp>
 #include <atlas/script/runtime.hpp>
 
@@ -41,7 +42,10 @@ namespace atlas::script {
 ///
 /// A module importing from anywhere else is refused outright rather than having that one import
 /// left unresolved, because "unresolved" is a state a guest can probe and "refused" is not.
-inline constexpr std::string_view kImportModule = "atlas";
+///
+/// Taken from `atlas_mod.h` rather than spelled again, so the name the loader checks and the
+/// name a mod author writes cannot drift apart.
+inline constexpr std::string_view kImportModule = ATLAS_IMPORT_MODULE;
 
 /// What a mod must export, or it is not a mod.
 ///
@@ -94,6 +98,15 @@ class Mod {
 
   private:
     Mod();
+
+    /// Install the context the host imports read, for the duration of one call into the guest.
+    ///
+    /// Private, and reachable only by `ModHost`, because it is the mechanism behind the rule
+    /// rather than part of the mod interface: a caller who could set this could give a mod
+    /// another mod's identity and command budget, which is the whole thing the boundary exists
+    /// to make impossible.
+    friend class ModHost;
+    void set_call_context(void* context) noexcept;
 
     struct Impl;
     std::unique_ptr<Impl> m_impl;
