@@ -26,3 +26,4 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0013](0013-animation-clip-format.md) | Animation clip file format | Accepted |
 | [0014](0014-deterministic-lockstep.md) | Deterministic lockstep over the command queue | Accepted |
 | [0015](0015-sandboxed-mods.md) | Sandboxed mods: WebAssembly, behind the command queue | Accepted |
+| [0016](0016-string-tables.md) | String tables: one lookup, one substituter, English only | Proposed |
