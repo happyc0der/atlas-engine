@@ -8,7 +8,7 @@ records, and a reason nobody can find is a reason nobody can challenge.
 A deferral is not a to-do. Each entry says what would have to become true for the work to be
 worth doing; several will never become true, and that is a fine outcome.
 
-Last reviewed 2026-09-17, after M9.
+Last reviewed 2026-09-19, while planning M16.
 
 ## Open gaps in the infrastructure
 
@@ -453,6 +453,37 @@ integration ran for the first time. What it found is recorded in
   proofs need. Trigger: anything that needs two mods to interact.
 - **A large-module load measurement.** `script/load` is 5 µs for a 295-byte module, which says
   nothing about a real one. Trigger: the first mod big enough to notice.
+
+### M16 — localisation
+
+Recorded on 2026-09-19 while M16 was being planned, before any of it was built, because it is a
+fact about the tree today rather than a consequence of the milestone.
+
+- **Glyphs outside Latin-1, and the font that would carry them.** The overlay renders Dear
+  ImGui's default baked atlas: Basic Latin and Latin-1 Supplement, and nothing else. Atlas never
+  touches `io.Fonts` — there is no `AddFont*` call, no `ImFontAtlas`, no glyph range anywhere in
+  the tree — and `vcpkg.json` pins `imgui` with `docking-experimental`, `sdl3-binding` and
+  `sdlgpu3-binding` but **no `freetype` feature**, so even ImGui's own path is the stb_truetype
+  fallback.
+
+  The consequence is worth stating plainly, because a string table invites the opposite
+  conclusion: **a second language is a data change only if it is Western European.** French,
+  German, Spanish and Italian would render from a table alone. Polish, Czech, Turkish, Greek,
+  Russian, Hebrew, Arabic and every CJK language would show blanks or boxes, because the glyphs
+  are not in the atlas. For those, a string table is necessary and not sufficient.
+
+  Not built: configuring the atlas from the loaded table's locale, and bundling a font with
+  wider coverage. Trigger: the first language outside Latin-1. The cost is a font file, its
+  licence and provenance, its size — a CJK face is megabytes against the current atlas's
+  kilobytes — and a decision about whether the atlas is rebuilt when the locale changes or
+  fixed at startup.
+
+- **Anything that measures or folds text.** One place in the repository interprets UTF-8 at all:
+  `engine/platform/src/text_split.hpp`, which backs a cut off a continuation byte so M11's text
+  events split on character boundaries. Everywhere else a string is opaque bytes, and the two
+  case-folding sites — `assets/src/virtual_path.cpp:135` and `rhi/src/device_loss.cpp:30` — are
+  byte-wise ASCII and would be wrong for anything else. Nothing measures display width, walks
+  grapheme clusters, or normalises. Trigger: the same one, and it arrives first.
 
 ## Decided by ADR-0010, planned as milestones
 
