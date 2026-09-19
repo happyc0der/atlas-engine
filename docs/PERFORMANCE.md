@@ -893,6 +893,57 @@ does not need optimising, and now that is measured rather than assumed. The trig
 revisiting it is a session above sixteen peers, where the N² broadcast would begin to matter, or
 a per-command payload large enough that its allocation shows.
 
+## Sandboxed mods, M15: the boundary is far cheaper than predicted
+
+Four scenarios, measured in `macos-release` on an idle machine, stable across three consecutive
+runs.
+
+### The prediction, written before the first run
+
+Committed in `c7695f5`, before any number existed. One to four microseconds **per mod per tick**
+for a guest whose `mod_tick` returns immediately; one to three microseconds more for a guest
+that submits one command; `script/tick_views` within a microsecond of the empty case; and twenty
+to two hundred microseconds to load a module. Above fifty microseconds for the empty case,
+something allocates per call and that is the thing to go and find.
+
+### The result
+
+| Scenario | Median | Predicted |
+|---|---|---|
+| `script/tick_empty` | **0.21 µs** | 1–4 µs |
+| `script/tick_submit` | 0.29 µs | +1–3 µs over empty |
+| `script/tick_views` | 0.25 µs | within 1 µs of empty |
+| `script/load` | 5.1–5.8 µs | 20–200 µs |
+
+**Three of the four predictions were wrong, all in the same direction, and they are recorded as
+wrong rather than widened after the fact.** The empty boundary is five times faster than the
+bottom of its range, and loading is four times faster than the bottom of its.
+
+**Why the guess was high.** It assumed WAMR sets up an execution frame per call costing on the
+order of a microsecond. It does not: the execution environment is created once at load and
+reused for the life of the mod, so a call is argument marshalling and a frame push. The load
+estimate made the same kind of error in the other direction — it assumed allocating one 64 KiB
+page of linear memory would dominate, and allocating 64 KiB is not expensive.
+
+**A caveat that matters more than the individual numbers.** Every figure above is a multiple of
+about 42 ns, which is this harness's timer resolution on this machine. The differences between
+the three per-tick scenarios are one or two ticks of that clock, so they must not be read as
+"a view read costs 42 ns". What can be read is the total, and a separate check: a guest making
+**ten** submits instead of one measures 0.71 µs, so one command costs roughly 50 ns and the cost
+is linear in the number of them. That check is also what proves these numbers are not measuring
+an empty call — a guest that was never entered would show no difference at all.
+
+### What this supports
+
+**Mod hosting does not need optimising, by a wider margin than the milestone expected.** Eight
+mods at 60 ticks a second cost about 0.1 ms per second, which is 0.01% of a 16.6 ms frame. The
+budget that exists to stop a runaway — ten million instructions a tick — is four orders of
+magnitude above anything measured here, which is the right relationship: it is a ceiling that
+disables a mod that has gone wrong, not a budget anybody is expected to spend.
+
+The one number worth watching is `script/load`, because it is paid per mod per run and a real
+mod is larger than 295 bytes. Nothing here measures a large module, and the report says so.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.

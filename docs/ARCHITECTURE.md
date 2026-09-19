@@ -539,6 +539,60 @@ table above is unchanged. `net::CommandInbox` is nevertheless safe to push into 
 because that is where a transport's receive thread would hand work across, and it is bounded
 because its producer would then be a peer rather than something this process controls.
 
+## Scripting
+
+Mods are untrusted WebAssembly, run in a sandbox, reaching simulation state only through the
+command queue. Decided by [ADR-0015](adr/0015-sandboxed-mods.md); the boundary they respect was
+fixed by [ADR-0009](adr/0009-scripting-decision.md) decision 2 in M9 and has not moved since.
+
+**The import list is the whole of a guest's authority.** WebAssembly has no ambient anything: a
+module can touch its own linear memory and the functions it imports, and nothing else. So
+`engine/script/include/atlas/script/atlas_mod.h` is not a summary of what a mod can do, it *is*
+what a mod can do, and the loader refuses any import not in it. What is missing from that header
+is the design:
+
+| Not offered | Because |
+|---|---|
+| A clock | A mod that reads one decides differently on a slower machine, which under lockstep is a divergence. `atlas_tick` gives the simulation's tick, identical everywhere. |
+| A filesystem, a network, an environment | A mod is untrusted input from a mounted directory. It reads views and submits commands. |
+| An allocator or a libc | WASI and WAMR's built-in libc are compiled out of the port. A guest that wants a heap brings one inside its own memory. |
+| A generator of its own | `atlas_random` is keyed by seed, tick and the mod's identity, so two peers draw the same numbers and a recording replays them. |
+
+**A mod never says who it is.** `atlas_submit` has no source parameter: the host stamps the
+mod's own identifier and the target tick. Claiming to be another peer is unrepresentable rather
+than forbidden — M14 first put that restriction in the interface every command source shares,
+found it wrong for a lockstep session, and removed it; it belongs with the untrusted producer,
+which is `script::ModHost`.
+
+**A mod's identifier has bit 31 set** (`sim::kModSourceBit`), so it can never be confused with a
+peer, whose index comes from its position in the session. Mod commands are **never sent on the
+wire**: every peer runs the same mods and each produces the same commands locally, and the hash
+check is what catches one that decided differently.
+
+**A mod is called once per kernel tick, before that tick** — never once per frame. Peers run
+different numbers of frames per tick, so a per-frame call would make a mod's output depend on
+frame rate.
+
+**What a mod reads is the application's, not the engine's.** Views are flat runs of bytes,
+recomputed from the world at the tick boundary, whose meaning the application defines: the
+engine has no game state to describe, since `sim::Table` exposes a row count and how to hash
+itself and no accessor at all. They are deliberately not the presentation snapshot, which is
+latest-wins, published once a frame, and absent headless.
+
+**Failure is device loss, not recovery.** A trap, an exhausted instruction budget, a refused
+allocation or a non-zero `mod_init` disables that mod for the session and logs once. Other mods
+continue and the engine never stops because a mod did. Nothing is ever re-enabled or retried,
+because under lockstep "try it again" is a decision one peer might take and another might not.
+
+**The one place a rule bends.** `script::Runtime` is the second process-wide object in Atlas
+beside the log sink registry, because WAMR's initialisation is process-global. It is an RAII
+object the composition root creates once and asserts is unique, exactly as `Platform` wraps
+SDL's, and ADR-0015 names it rather than letting the rule widen quietly.
+
+The threading table above is unchanged: everything here runs on the main thread, with the
+kernel. A mod thread is deferred.
+
+
 ## Simulation contract
 
 Implemented in M6, parallelised in M8.

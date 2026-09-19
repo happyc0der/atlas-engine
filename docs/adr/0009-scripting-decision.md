@@ -21,7 +21,7 @@ stand**, and decision 2 — the command-queue boundary — is inherited unchange
 in the M10 to M16 series.
 
 **2026-09-18:** [ADR-0015](0015-sandboxed-mods.md) is written and proposes superseding decision
-6; it takes effect when M15 closes, not now. It chooses WebAssembly over Lua, which is the
+6. **It was accepted on 2026-09-19 when M15 closed, and is in force.** It chooses WebAssembly over Lua, which is the
 comparison this record asked for and on the grounds this record named. Decision 2 is inherited
 unchanged. **Decisions 3, 4 and 5 are amended in part**,
 and the amendments are worth following the pointer for rather than assuming: decision 3's

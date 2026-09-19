@@ -3,13 +3,17 @@
 
 ## Status
 
-**Proposed**, 2026-09-18, to be implemented across the rest of M15.
+**Accepted**, 2026-09-19, implemented in M15.
 
-Proposed rather than Accepted, by this index's own legend: a milestone still has to build it,
-which is why ADR-0003 and ADR-0004 were Proposed and why ADR-0009 was not — a deferral has no
-implementation step and this has five. It becomes Accepted when M15 closes, and if D2's
-fallback trigger fires before then, what becomes Accepted will be a different record rather
-than this one quietly re-scoped.
+Proposed when it was written, on 2026-09-18, because a milestone still had to build it — the
+legend in this index reserves Accepted for a record that is in force, which is why ADR-0003 and
+ADR-0004 were Proposed and why ADR-0009 was not.
+
+**D2's fallback trigger did not fire.** The WAMR overlay port builds and links on macOS arm64,
+Linux x86_64 with clang, and Windows x64 with MSVC, so Luau stays a recorded alternative rather
+than the answer. What the port cost is recorded in `docs/reports/M15.md` and was higher than
+this record implied: three continuous-integration failures before the dependency did anything
+useful, all of them in the port and none reproducible on the machine that wrote it.
 
 Authorised by
 [ADR-0010](0010-charter-amendment.md) D1, which fixed "plugin support" as *sandboxed mods:

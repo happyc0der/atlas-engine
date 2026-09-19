@@ -435,6 +435,31 @@ integration ran for the first time. What it found is recorded in
   when a scene is authored in the editor rather than built in code, which is the first time
   somebody needs to attach a clip they did not compile in.
 
+### M15 — sandboxed mods
+
+- **A thread for mods.** Everything runs on the main thread with the kernel. A mod costs about
+  0.2 µs a tick, so eight of them are 0.01% of a frame; the trigger is a mod expensive enough to
+  measure, and the cost of moving is that a mod would then need its own copy of the views, since
+  a span into the world is only valid between ticks.
+- **Hot reload of mods.** A mod is loaded once at startup. Reloading one mid-session would change
+  what every peer must agree on, so it needs a session-wide agreement first — which means it is
+  really a networking feature. Trigger: a mod author asking, and a design for announcing it.
+- **A mod manager panel.** The lab takes one mod from `--mod` and reports what it did in a log
+  line. A panel needs somewhere to put it and more than one mod to list.
+- **Lua compiled to WebAssembly as an authoring route.** ADR-0015's answer to the authoring cost
+  it accepted: a Lua interpreter compiled to wasm32 runs inside this sandbox, where even its
+  address-dependent behaviour is deterministic because linear memory is. A committed artefact
+  like a cooked shader. Trigger: a mod author who will not write AssemblyScript or C.
+- **Mod signing, and per-mod persistent storage.** Neither has a consumer. Storage in particular
+  would be state outside the command queue, so it needs its own record before it needs code.
+- **Typed snapshot views in the engine.** Views are bytes on purpose: the engine has no game
+  state to describe (ADR-0010 D7). The game's repository types them.
+- **More than one mod in the lab.** `ModHost` is one mod each and the identifier is a
+  constructor argument, so the mechanism is there; the lab takes one because one is what the
+  proofs need. Trigger: anything that needs two mods to interact.
+- **A large-module load measurement.** `script/load` is 5 µs for a 295-byte module, which says
+  nothing about a real one. Trigger: the first mod big enough to notice.
+
 ## Decided by ADR-0010, planned as milestones
 
 Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.

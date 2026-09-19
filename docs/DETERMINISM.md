@@ -130,6 +130,27 @@ Authoritative state is written in canonical order. Loading validates counts, len
 versions, and bounds before any allocation or indexing, because a save file is untrusted
 input. Migration support is written when the first real schema change happens, not before.
 
+## Mods
+
+A mod is a command source and never a system: it runs outside the tick, reaches state only by
+submitting, and cannot execute during one ([ADR-0009](adr/0009-scripting-decision.md) decision 2,
+[ADR-0015](adr/0015-sandboxed-mods.md)).
+
+Under replay that is all the protection needed — a mod's output is commands, commands are
+recorded, and a recording made with a mod plays back on a build that never loads one.
+
+**Under lockstep it is not**, and this is the part M14 changed. Every peer runs the same mods and
+each produces its own commands without sending them, so a mod must reach the same decision on
+every machine or the peers diverge in their *inputs*. That is why the guest interface has no
+clock, no host generator and no floating-point host calls, why `atlas_random` is keyed by seed,
+tick and the mod's identity, and why WebAssembly was chosen over a scripting language whose
+`math.sin` is the host's libm — which the rule above forbids in authoritative code.
+
+The instruction budget is counted in **instructions and never in wall time**, for the same
+reason: a wall-clock watchdog fires after a different amount of work on a fast machine than on a
+slow one, so two peers would disable a mod at different ticks. That would be a safety mechanism
+causing the failure it exists to prevent.
+
 ## Known sources of nondeterminism
 
 Each is either eliminated by the rules above or explicitly out of authoritative state:

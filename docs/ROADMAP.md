@@ -23,8 +23,8 @@ Status legend: **done**, *in progress*, planned.
 | M12 | Audio | M | **done** |
 | M13 | Animation | M–L | **done** |
 | M14 | Networking: lockstep design and loopback proof | M | **done** |
-| M15 | Sandboxed mods | L | next |
-| M16 | Localisation: string tables, English | S | planned |
+| M15 | Sandboxed mods | L | **done** |
+| M16 | Localisation: string tables, English | S | next |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1124,6 +1124,44 @@ to one identifier, so that "mark only your own turn" was unrepresentable rather 
 The first real implementation wanted the opposite: a session speaks for every peer it is
 connected to. It was built for a consumer that did not exist, removed three slices later, and
 recorded in `DEFERRED.md` with M15's mod host as the trigger.
+
+## M15 — Sandboxed mods
+
+Full report: [reports/M15.md](reports/M15.md).
+
+Slices: a sweep; [ADR-0015](adr/0015-sandboxed-mods.md) and the runtime evaluation; the overlay
+port, the runtime and the loader; the guest interface and the mod host; the lab consumer and the
+demonstration mod; the three proofs; the benchmark and the documents.
+
+**Exit criteria**
+- A runtime chosen against evidence, at a gate, before anything reached `vcpkg.json`.
+- A sandbox that survives modules written to break it, under the address sanitiser.
+- A mod that reaches simulation state only through the command queue, under its own identifier,
+  with no way to claim another.
+- A recording made with a mod replaying on a build that never loads one.
+- Two peers running the same mod agreeing hash for hash without exchanging its commands.
+- A mod that reads a clock refused, and divergent when it is not.
+
+| Criterion | Status |
+|---|---|
+| A record accepted before the dependency | **Met.** ADR-0015 written and stopped at, then the port at a second gate. The evaluation became three-way when the baseline turned out to hold `luau`, which the planning conversation had not known. |
+| A sandbox that holds | **Met.** Sixteen hostile modules including a truncation sweep over every prefix of a valid one, all under ASan. Two WAMR APIs that report memory limits wrongly are bypassed by reading the module's own bytes, because a limit that silently does not apply is worse than none. |
+| A mod cannot be another source | **Met, and unrepresentable rather than forbidden.** `atlas_submit` has no source parameter. Mod identifiers carry bit 31 and cannot arrive over a link. |
+| Replay needs no sandbox | **Met.** ADR-0009 decision 2 paying off with no code: a recording made with a mod replays to the same hash on a run that starts no runtime. |
+| Peers agree | **Met.** Two peers under latency and reordering, with the anti-vacuity half in the same case — the run without the mod must end somewhere else. |
+| No clock, enforced | **Met.** Refused without `--unsafe-debug-imports`; with it, divergence at tick 16 attributed to a system. That case fails if a clock is ever added for real. |
+| Measured against a prediction written first | **Met, and the prediction was wrong.** 0.21 µs per mod per tick against a predicted 1–4, and loading four times faster than its lower bound. Recorded as wrong rather than widened. |
+
+### What the dependency actually cost
+
+The only milestone in the series to add one, and the cost was not where the record expected it.
+Three continuous-integration failures before the dependency did anything useful — a configure
+race on a source tree vcpkg builds twice in parallel, `dllimport` on a static library, and an
+unreachable loop MSVC was right about — **all but one in the port, and none reproducible on the
+machine that wrote them**. Then nothing: four slices of work on top of it, every lane green first
+try. The tax looks per-version rather than per-change, which is the shape worth knowing before
+the next WAMR bump.
+
 
 ## First continuous integration
 

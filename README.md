@@ -9,9 +9,9 @@ configure, build, test run, and a runnable demonstration before the next one sta
 
 ## Current status
 
-**Fifteen milestones are done, M0 through M14.** Engine v0.1 was declared at M7 against the
+**Sixteen milestones are done, M0 through M15.** Engine v0.1 was declared at M7 against the
 charter item by item. M10 amended the charter to plan seven subsystems it had excluded; M11
-through M14 built the first four.
+through M15 built the first five.
 
 What exists: a windowing and input layer; a renderer over SDL_GPU with offscreen targets,
 integer-identifier picking and non-stalling streaming uploads; an asset pipeline with virtual
@@ -22,7 +22,9 @@ load; a worker pool the simulation's compute phase runs on; an undoable edit lay
 and gamepad input; audio with a mixer, voices and loadable clips; animation from clip files,
 composed on top of what a person authored rather than into it; deterministic lockstep over the
 command queue, proved by several simulations in one process agreeing hash for hash through the
-real peer interface; and an engineering overlay with scene, log, asset, timing and control panels
+real peer interface; sandboxed mods as untrusted WebAssembly that reaches simulation state only
+by submitting commands, with a guest interface that has no clock, no filesystem and no generator
+of its own; and an engineering overlay with scene, log, asset, timing and control panels
 that can be typed into.
 
 Two applications drive it. `atlas_sandbox` is the lifecycle and scene demonstration.
@@ -33,9 +35,10 @@ time controls and replay, which exists to test the architecture rather than to b
 rasteriser; Direct3D 12 and non-Apple hardware are unverified, and that is the largest untested
 surface in the project. **There is no network transport** — M14 designed lockstep and proved it
 over an in-memory link, by decision, and choosing a transport is a separate change with recorded
-criteria. There is no scripting yet either; it is
-a planned milestone under [ADR-0010](docs/adr/0010-charter-amendment.md), and
-[ADR-0009](docs/adr/0009-scripting-decision.md) records why scripting waited. Everything
+criteria. Mods exist but nothing large has been written as one: the demonstration mod is under three
+hundred bytes, so what loading a real one costs is unmeasured, and the lab runs one mod at a
+time. [ADR-0015](docs/adr/0015-sandboxed-mods.md) chose WebAssembly over Lua and Luau, and
+records what the overlay port it needed has cost so far. Everything
 consciously not built is listed with its reason in [docs/DEFERRED.md](docs/DEFERRED.md).
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for what each milestone did and what it cost.

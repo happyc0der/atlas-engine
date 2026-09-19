@@ -102,6 +102,27 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   ambient generator, no state carried between ticks.
 - The golden-scenario hashes are written down. If a change makes that test fail, decide
   whether the change was meant to alter simulation results, and say so.
+- A mod is untrusted WebAssembly and reaches simulation state only through the command queue
+  (ADR-0015). Its whole authority is the imports it was given: `atlas_mod.h` is not a summary of
+  the guest interface, it is the interface, and the loader refuses any import not in it.
+- **No host import may expose a clock, the filesystem, the network, or the world.** A mod that
+  can read a clock decides differently on a slower machine, which under lockstep is a
+  divergence. `assets/mods/clock.wasm` exists to prove it and an integration case asserts both
+  halves — refused without `--unsafe-debug-imports`, divergent with it. That case fails if a
+  clock is ever added for real, which is the point of keeping it.
+- A mod never supplies a source: the host stamps its own identifier, so claiming to be another
+  peer is unrepresentable rather than forbidden. Mod identifiers have bit 31 set and are never
+  sent on the wire; every peer runs the same mods and produces the same commands itself.
+- A mod is called once per kernel tick, **before** that tick, never once per frame. Peers run
+  different numbers of frames per tick.
+- What a mod reads is a view taken from the world at the tick boundary, never the presentation
+  snapshot, which is latest-wins and absent headless. A view is bytes: what they mean is the
+  application's, because the engine has no game state to describe.
+- A trap, an exhausted budget or a refused allocation disables that mod for the session and logs
+  once. Other mods continue; nothing is retried. Device loss is the model.
+- An instruction budget is counted in instructions, never in wall time. A wall-clock watchdog
+  fires after different amounts of work on different machines, which is the divergence it exists
+  to prevent.
 - Applications are composition roots. Reusable logic belongs in a module.
 - Cyclic module dependencies are forbidden.
 
@@ -143,6 +164,8 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   they cannot drift apart.
 - SDL types stay in the module implementations named above. The native window handle reaches
   the renderer only through `atlas::platform_internal`.
+- WebAssembly types stay in `engine/script/src`. No runtime type appears in any header, which
+  is what keeps ADR-0015's fallback runtime a real option rather than a sentence.
 - **The platform brings SDL subsystems up; nothing else does.** Its destructor shuts all of
   them down at once, so a second module starting one would share a lifetime it cannot see.
   A module that needs a device opens one on a subsystem the platform started (ADR-0011).
