@@ -703,6 +703,21 @@ stored baseline, which is what says the variation is the machine rather than a c
 in M12 touches the renderer, and the audio module has no edge to it. Recording an audio
 baseline is left until the machine is quiet.
 
+**Recorded on 2026-09-19**, and not by waiting for a quiet machine. The paragraph above
+identified the wrong blocker: the machine has never been quiet, and the real obstacle was that
+`bench_baseline.py record` wrote the whole file, so a stable scenario could not be stored without
+storing an unstable one beside it. `--only` fixes that, and the mixer was recorded from a run at
+load 3 in which the renderer was still varying — which is the point, because the mixer is float
+arithmetic over a buffer and touches no device. Measured spread across three consecutive runs:
+audio 1.08x, net 1.08x, both well inside the 1.15x the threshold was set from.
+
+**`script` is deliberately still unrecorded**, and this is a different reason rather than the
+same one again. `script/load` varies **2.06x** between consecutive runs on an idle-ish machine:
+it allocates a 64 KiB page of linear memory per iteration and takes about five microseconds, so
+allocator behaviour dominates it. A baseline for that would report a regression most times it
+ran. Recording it needs the scenario changed — amortising the allocation across iterations, or
+measuring validation separately from instantiation — not a quieter machine.
+
 ### Why there is no importer cache
 
 A decode is a copy of the samples with one conversion each, and the artifact cache is
