@@ -15,6 +15,7 @@
 #include <nlohmann/json.hpp>
 
 #include <format>
+#include <functional>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -31,92 +32,68 @@ constexpr std::string_view kFormatMarker = "atlas-strings";
 constexpr std::uint32_t kStringTableVersion = 1;
 constexpr std::uint32_t kMinStringTableVersion = 1;
 
-/// Finds a key listed twice, which the parsed document can no longer show.
+/// Reports a key listed twice, which the parsed document can no longer show.
 ///
-/// **This exists because checking after the parse does not work, and the first version of this
-/// file tried to.** `nlohmann`'s object types collapse a repeated key while parsing — one entry
-/// survives and the other is gone — so by the time there is a document to inspect, the evidence
-/// has been discarded. A test asserting the refusal is what found that; the check had been
-/// written, looked right, and could never fire.
+/// **Checking after the parse does not work, and the first version of this file tried to.**
+/// `nlohmann`'s object types collapse a repeated key while parsing — one entry survives and the
+/// other is gone — so by the time there is a document to inspect, the evidence has been
+/// discarded. A test asserting the refusal is what found that; the check had been written,
+/// looked right, and could never fire.
 ///
-/// So the detection happens during the parse instead, through the SAX interface, which reports
-/// every key the text actually contained. It is a separate pass over the same bytes: a table is
-/// kilobytes, and keeping it separate leaves the real parser reading a document rather than
-/// also policing one.
+/// So detection happens *during* the parse, through the callback `parse` accepts, which is
+/// handed every key the text actually contained.
+///
+/// **Deliberately the callback and not the SAX interface**, which was the second thing tried.
+/// `sax_parse` goes through the entry point that dispatches on `input_format_t`, and that
+/// instantiates `binary_reader` — nlohmann's CBOR, MessagePack and BSON readers — which MSVC
+/// reports unreachable code inside. `/external:W0` does not cover a template instantiated from
+/// this translation unit, so the warning lands here and `/WX` makes it an error. Windows Debug
+/// found that and no other lane did. The callback touches none of it, and it reads better: one
+/// pass rather than two.
 ///
 /// The rule is deliberately stronger than "no duplicate string key": **no object in the
 /// document may list a key twice.** That is simpler to state, simpler to implement, and there
 /// is no place in this format where a repeat means anything.
-// The whole class is shaped by nlohmann's SAX interface rather than by this project's
-// conventions: the member type names and the method names are what the library looks for, and
-// the handlers cannot be static because it calls them on an instance. Renaming any of them
-// stops the parse from compiling, so the checks are turned off here and nowhere else.
-// NOLINTBEGIN(readability-identifier-naming,readability-convert-member-functions-to-static)
 class DuplicateKeyFinder {
   public:
-    using number_integer_t = Json::number_integer_t;
-    using number_unsigned_t = Json::number_unsigned_t;
-    using number_float_t = Json::number_float_t;
-    using string_t = Json::string_t;
-    using binary_t = Json::binary_t;
-
     [[nodiscard]] bool found() const noexcept { return !m_duplicate.empty(); }
 
     [[nodiscard]] const std::string& duplicate() const noexcept { return m_duplicate; }
 
-    bool key(string_t& value) {
-        if (!m_scopes.empty() && !m_scopes.back().insert(value).second) {
-            m_duplicate = value;
-            return false;  // Stop the parse: the document is already refused.
+    /// Every element the parser reads, in document order.
+    ///
+    /// Returns whether to keep it, which is always true: this observes and never edits. A
+    /// duplicate is recorded rather than thrown, and the caller refuses the document after the
+    /// parse returns.
+    bool operator()(int /*depth*/, Json::parse_event_t event, Json& parsed) {
+        switch (event) {
+        case Json::parse_event_t::object_start: m_scopes.emplace_back(); break;
+        case Json::parse_event_t::object_end:
+            if (!m_scopes.empty()) {
+                m_scopes.pop_back();
+            }
+            break;
+        case Json::parse_event_t::key: {
+            // `parsed` is the key itself at this event, and it is a JSON string.
+            auto key = parsed.get<std::string>();
+            if (!m_scopes.empty() && !m_scopes.back().insert(key).second && m_duplicate.empty()) {
+                // The first one found is the one reported. Carrying on costs nothing and
+                // avoids a second exit path through a parser that is about to finish anyway.
+                m_duplicate = std::move(key);
+            }
+            break;
+        }
+        case Json::parse_event_t::array_start:
+        case Json::parse_event_t::array_end:
+        case Json::parse_event_t::value: break;
         }
         return true;
-    }
-
-    bool start_object(std::size_t /*elements*/) {
-        m_scopes.emplace_back();
-        return true;
-    }
-
-    bool end_object() {
-        if (!m_scopes.empty()) {
-            m_scopes.pop_back();
-        }
-        return true;
-    }
-
-    // Everything else is a value this pass does not care about. They exist because the SAX
-    // interface requires them, and each simply says "carry on".
-    bool null() { return true; }
-
-    bool boolean(bool /*value*/) { return true; }
-
-    bool number_integer(number_integer_t /*value*/) { return true; }
-
-    bool number_unsigned(number_unsigned_t /*value*/) { return true; }
-
-    bool number_float(number_float_t /*value*/, const string_t& /*raw*/) { return true; }
-
-    bool string(string_t& /*value*/) { return true; }
-
-    bool binary(binary_t& /*value*/) { return true; }
-
-    bool start_array(std::size_t /*elements*/) { return true; }
-
-    bool end_array() { return true; }
-
-    /// Malformed JSON is not this pass's business: the real parser reports it, with its own
-    /// message. Returning false here simply stops.
-    bool parse_error(std::size_t /*position*/, const std::string& /*last_token*/,
-                     const Json::exception& /*ex*/) {
-        return false;
     }
 
   private:
     std::vector<std::unordered_set<std::string>> m_scopes;
     std::string m_duplicate;
 };
-
-// NOLINTEND(readability-identifier-naming,readability-convert-member-functions-to-static)
 
 }  // namespace
 
@@ -142,23 +119,26 @@ Result<ImportedStringTable> parse_string_table(std::span<const std::byte> bytes,
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
     const std::string_view text{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
 
-    // Before the document is built, because building it is what destroys the evidence. See
-    // DuplicateKeyFinder.
-    DuplicateKeyFinder finder;
-    Json::sax_parse(text, &finder, nlohmann::detail::input_format_t::json, false, true);
-    if (finder.found()) {
-        return refuse(std::format("lists the key '{}' more than once", finder.duplicate()));
-    }
-
     // Non-throwing, because ADR-0005 forbids exceptions crossing a module boundary. Comments
     // are permitted, matching the scene and clip readers: a table is a file somebody edits by
     // hand, and a note beside an entry is exactly what they would write.
-    const Json root = Json::parse(text, nullptr, false, true);
+    //
+    // The callback watches for a key listed twice as the text is read, because the document
+    // this returns can no longer show one. See DuplicateKeyFinder.
+    DuplicateKeyFinder finder;
+    const Json root = Json::parse(text, std::ref(finder), false, true);
     if (root.is_discarded()) {
         return refuse("is not valid JSON");
     }
     if (!root.is_object()) {
         return refuse("is not a JSON object");
+    }
+
+    // After the parse rather than before it, because the callback runs during it. Checked here,
+    // ahead of the format marker, so that a document which disagrees with itself is refused for
+    // that reason rather than for whichever field the disagreement happened to hide.
+    if (finder.found()) {
+        return refuse(std::format("lists the key '{}' more than once", finder.duplicate()));
     }
 
     if (!root.contains("format") || !root["format"].is_string() ||
