@@ -32,6 +32,7 @@
 #include <atlas/scene/serialization.hpp>
 #include <atlas/simulation/tick_accumulator.hpp>
 #include <atlas/text/catalog.hpp>
+#include <atlas/text/substitute.hpp>
 #include <atlas/tools/debug_ui.hpp>
 #include <atlas/tools/text_keys.hpp>
 
@@ -127,6 +128,7 @@ Options:
   --edit-check           Apply and undo edits to the demo scene headlessly, then exit.
   --scene-check          Check the demo scene's shape and composition headlessly, then exit.
   --anim-check           Play the demo scene's clips headlessly and check the poses, then exit.
+  --text-check           Resolve every interface string against the table, then exit.
   --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
   --hot-reload           Re-read assets whose files change while running.
   --cache-dir PATH       Keep decoded assets here between runs, so a repeated import is a
@@ -427,6 +429,81 @@ void step_simulation(atlas::Tick tick) {
 /// changes the last bits. Comparing bytes here would make a check that passes on one machine
 /// and fails on another for no reason anybody could act on. The clock itself is integer and so
 /// *is* compared exactly, because it can be.
+/// Resolve every key the interface can ask for against the shipped table, and say what is
+/// missing.
+///
+/// **This is what makes "everything the overlay shows goes through the table" a fact rather
+/// than a claim.** A missing key is not an error at runtime — it renders as itself, which is
+/// legible and deliberate — so nothing in an ordinary run would ever notice one. Without this,
+/// the milestone's exit criterion would rest on having looked carefully.
+///
+/// It checks the keys rather than the call sites, which is the one weakness worth naming: a
+/// key used somewhere and never added to `text_keys.hpp` escapes both this and the reader,
+/// because it renders as itself and nothing complains. What stops that is the rule that a call
+/// site names a constant and never a string, and a grep of the overlay for a literal at an
+/// ImGui call, which finds only widget identifiers.
+[[nodiscard]] atlas::Status run_text_check(std::string_view assets_dir) {
+    atlas::mark_main_thread();
+
+    atlas::assets::FileSystem filesystem;
+    if (auto status = filesystem.mount("assets", std::filesystem::path{assets_dir}); !status) {
+        return std::unexpected(std::move(status).error().context("mounting the asset root"));
+    }
+
+    const auto path = atlas::assets::VirtualPath::parse("strings/en.json");
+    if (!path) {
+        return std::unexpected(atlas::Error(path.error()));
+    }
+    auto bytes = filesystem.read(*path);
+    if (!bytes) {
+        return std::unexpected(std::move(bytes).error().context("reading the string table"));
+    }
+    auto imported = atlas::assets::import_string_table(*bytes, path->text());
+    if (!imported) {
+        return std::unexpected(std::move(imported).error().context("parsing the string table"));
+    }
+
+    atlas::text::Catalog catalog;
+    if (auto status = catalog.load(*imported); !status) {
+        return std::unexpected(std::move(status).error().context("loading the string table"));
+    }
+
+    std::vector<std::string_view> missing;
+    for (const std::string_view key : atlas::tools::keys::kAllKeys) {
+        if (catalog.lookup(key) == key) {
+            // A key whose value happens to equal the key would report here too. None does, and
+            // one would be a table entry written by somebody who had misunderstood the format,
+            // so saying so is right rather than a false positive to suppress.
+            missing.push_back(key);
+        }
+    }
+
+    for (const std::string_view key : missing) {
+        std::printf("text check: no entry for '%s'\n", std::string{key}.c_str());
+    }
+    if (!missing.empty()) {
+        return std::unexpected(atlas::Error(
+            atlas::ErrorCode::MalformedData,
+            std::format("{} of {} keys have no entry in the '{}' table", missing.size(),
+                        atlas::tools::keys::kAllKeys.size(), catalog.locale())));
+    }
+
+    // The substituter, through the strings that actually carry arguments, so the check covers
+    // the shipped patterns rather than only the ones a unit test invented.
+    const std::array<std::string_view, 1> one{"7"};
+    const std::string undo =
+        atlas::text::substitute(catalog.lookup(atlas::tools::keys::kUndoWith), one);
+    if (!undo.contains('7')) {
+        return std::unexpected(atlas::Error(atlas::ErrorCode::MalformedData,
+                                            "'ui.undo_with' does not use its argument"));
+    }
+
+    std::printf("text check: %zu keys, all resolved in '%s', %zu entries in the table\n",
+                atlas::tools::keys::kAllKeys.size(), std::string{catalog.locale()}.c_str(),
+                catalog.size());
+    return atlas::ok();
+}
+
 [[nodiscard]] atlas::Status run_anim_check(std::string_view assets_dir) {
     atlas::mark_main_thread();
 
@@ -770,6 +847,10 @@ void step_simulation(atlas::Tick tick) {
 
     if (args->has("anim-check")) {
         return run_anim_check(args->value_or("assets-dir", std::string_view{"assets/source"}));
+    }
+
+    if (args->has("text-check")) {
+        return run_text_check(args->value_or("assets-dir", std::string_view{"assets/source"}));
     }
 
     const auto options = read_options(*args);

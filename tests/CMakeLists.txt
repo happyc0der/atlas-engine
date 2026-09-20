@@ -80,6 +80,28 @@ set_tests_properties("sandbox_audio_clip_loads_and_reloads" PROPERTIES
     LABELS "display;integration"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
+# Every key the interface can ask for, resolved against the shipped table -- and the same check
+# against a table with one entry removed, because a missing key deliberately renders as itself
+# and a check that could not fail would look exactly like one that was working.
+add_test(NAME "sandbox_text_check"
+         COMMAND "${Python3_EXECUTABLE}" "${_atlas_sandbox_checks}"
+                 --binary "$<TARGET_FILE:atlas_sandbox>"
+                 --case text_check)
+set_tests_properties("sandbox_text_check" PROPERTIES
+    LABELS "integration"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
+# The interface's own text through the asset path, including a reload. A table that decoded and
+# was never claimed would sit in Decoded and change nothing on screen, which is what the third
+# finaliser exists to prevent.
+add_test(NAME "sandbox_text_hot_reload"
+         COMMAND "${Python3_EXECUTABLE}" "${_atlas_sandbox_checks}"
+                 --binary "$<TARGET_FILE:atlas_sandbox>"
+                 --case text_hot_reload)
+set_tests_properties("sandbox_text_hot_reload" PROPERTIES
+    LABELS "display;integration"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
 # ----------------------------------------------------------------------------- the lab
 # The Strategy Lab is a second composition root and carries the milestone's determinism
 # claims, which only whole-program runs can test: a second run, a save, a replay.

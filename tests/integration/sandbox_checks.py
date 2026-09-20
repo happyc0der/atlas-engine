@@ -332,6 +332,68 @@ def case_animation_plays(binary: str) -> None:
                     "an edit lands while a clip plays, and undo takes back only the edit")
 
 
+def case_text_check(binary: str) -> None:
+    """Every interface string resolves, and a missing one is found rather than drawn."""
+    # The point of this check is not that the strings look right -- nothing here can see a
+    # pixel. It is that the list of keys the interface can ask for and the table that answers
+    # them agree, which is the only part of "everything goes through the table" that a machine
+    # can settle.
+    result = run(binary, ["--text-check"])
+    expect_exit(result, 0, "the text check")
+    expect_contains(output_of(result), "all resolved in 'en'",
+                    "every key the interface uses has an entry")
+
+    # The anti-vacuity half, and it matters more here than usual: a missing key is deliberately
+    # not an error at runtime -- it renders as itself, which is legible -- so a check that
+    # could not fail would be indistinguishable from one that was working.
+    with tempfile.TemporaryDirectory() as directory:
+        assets = pathlib.Path(directory) / "assets"
+        shutil.copytree("assets/source", assets)
+        table = assets / "strings" / "en.json"
+        text = table.read_text(encoding="utf-8")
+        removed = '    "ui.sim.pause": "Pause",\n'
+        if removed not in text:
+            raise CheckFailed("the entry this case removes is no longer in the table; "
+                              "pick another and say so here")
+        table.write_text(text.replace(removed, ""), encoding="utf-8")
+
+        result = run(binary, ["--text-check", "--assets-dir", str(assets)])
+        expect_exit(result, 1, "a table with a key missing")
+        expect_contains(output_of(result), "no entry for 'ui.sim.pause'",
+                        "the missing key is named rather than merely counted")
+
+
+def case_text_hot_reload(binary: str) -> None:
+    """Editing a caption in the table changes the panel on the next frame."""
+    # The interface's own text is an asset, so it goes through the same finaliser path a
+    # texture or a clip does. What this proves is that the third finaliser really is walking
+    # the same registry as the other two: a table that decoded and was never claimed would sit
+    # in `Decoded`, be reported as stalled ten seconds later, and change nothing on screen.
+    with tempfile.TemporaryDirectory() as directory:
+        assets = pathlib.Path(directory) / "assets"
+        shutil.copytree("assets/source", assets)
+        table = assets / "strings" / "en.json"
+
+        def edit_later() -> None:
+            time.sleep(2.0)
+            text = table.read_text(encoding="utf-8")
+            table.write_text(text.replace('"ui.sim.save": "Save"',
+                                          '"ui.sim.save": "Store"'), encoding="utf-8")
+
+        editor = threading.Thread(target=edit_later, daemon=True)
+        editor.start()
+        result = run(binary, ["--video-driver", "dummy", "--no-render",
+                              "--assets-dir", str(assets), "--hot-reload", "--ticks", "300"])
+        editor.join(timeout=5)
+
+    expect_exit(result, 0, "a run with a string table")
+    text = output_of(result)
+    expect_ordered(text, ["string table 'en' ready with 130 entries",
+                          "asset(s) changed on disk",
+                          "string table 'en' ready with 130 entries"],
+                   "the table loads, is reloaded, and is claimed both times")
+
+
 CASES = {
     "version": case_version,
     "help": case_help,
@@ -349,6 +411,8 @@ CASES = {
     "window_under_dummy_driver": case_window_under_dummy_driver,
     "gamepad_follows_the_window": case_gamepad_follows_the_window,
     "audio_clip_loads_and_reloads": case_audio_clip_loads_and_reloads,
+    "text_check": case_text_check,
+    "text_hot_reload": case_text_hot_reload,
 }
 
 
