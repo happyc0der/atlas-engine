@@ -103,6 +103,30 @@ std::vector<Result> run() {
         }));
     }
 
+    // Batched, and added after the first run rather than before it, which is worth saying
+    // plainly. The three scenarios above all came out at the timer's own resolution — about
+    // 42 ns on this machine, the same floor M15 measured — so they say "faster than this
+    // harness can see" and nothing more. A batch of sixty-four divided back down resolves it.
+    //
+    // This is not the prediction being moved after the fact: the prediction stands as written
+    // and is reported against as written in docs/PERFORMANCE.md. This is the measurement being
+    // made capable of testing it, which the first version was not.
+    {
+        constexpr std::size_t kBatch = 64;
+        std::size_t index = 0;
+        results.push_back(atlas::bench::measure(
+            "text/lookup_hit_x64", std::format("keys={}", catalog.size()), 20'000, 2'000, [&] {
+                std::size_t total = 0;
+                for (std::size_t i = 0; i < kBatch; ++i) {
+                    const std::string_view key =
+                        atlas::tools::keys::kAllKeys[index++ % atlas::tools::keys::kAllKeys.size()];
+                    total += catalog.lookup(key).size();
+                }
+                const volatile std::size_t sink = total;
+                (void)sink;
+            }));
+    }
+
     {
         const std::string_view pattern = "{0} shown, {1} hidden";
         const std::array<std::string_view, 2> args{"128", "12"};
@@ -111,6 +135,17 @@ std::vector<Result> run() {
             const volatile std::size_t sink = out.size();
             (void)sink;
         }));
+
+        constexpr std::size_t kBatch = 64;
+        results.push_back(
+            atlas::bench::measure("text/substitute_x64", "args=2", 20'000, 2'000, [&] {
+                std::size_t total = 0;
+                for (std::size_t i = 0; i < kBatch; ++i) {
+                    total += atlas::text::substitute(pattern, args).size();
+                }
+                const volatile std::size_t sink = total;
+                (void)sink;
+            }));
     }
 
     return results;

@@ -959,6 +959,71 @@ disables a mod that has gone wrong, not a budget anybody is expected to spend.
 The one number worth watching is `script/load`, because it is paid per mod per run and a real
 mod is larger than 295 bytes. Nothing here measures a large module, and the report says so.
 
+## String tables, M16: two more predictions that were too pessimistic
+
+Five scenarios, measured in `macos-release` on an idle machine.
+
+### The prediction, written before the first run
+
+Committed in `cd92326`, before any number existed. Twenty to sixty nanoseconds for a lookup that
+hits; a miss within twice that; one hundred to three hundred nanoseconds for a two-argument
+substitution. **Above five hundred nanoseconds for a hit, something allocates per call** — which
+would mean the transparent hasher is not being used and every lookup is building a `std::string`
+to throw away, the single mistake the design exists to avoid.
+
+The prediction also said, of the lookups: *"if this lands at the floor, the honest report is
+'below what this harness can resolve' rather than a number."* It did.
+
+### The first run could not test the prediction
+
+| Scenario | Median |
+|---|---|
+| `text/lookup_hit` | 0 ns |
+| `text/lookup_miss` | 0 ns |
+| `text/substitute` | 42 ns |
+
+Forty-two nanoseconds is this machine's timer resolution, the same floor M15 measured. Three
+scenarios reporting at or below it say "faster than this harness can see" and nothing more.
+
+**So two batched scenarios were added after that run, and that ordering is stated rather than
+hidden.** The prediction is not moved: it stands as committed and is reported against as
+committed. What changed is that the measurement became capable of testing it, which the first
+version was not. This is the gap M15 recorded against `script/load` and left open; here it is
+closed instead.
+
+### The result
+
+| Scenario | Median | Per operation | Predicted |
+|---|---|---|---|
+| `text/lookup_hit_x64` | 458 ns | **7.2 ns** | 20–60 ns |
+| `text/substitute_x64` | 3.67 µs | **57 ns** | 100–300 ns |
+
+**Both predictions were wrong, both in the same direction, and they are recorded as wrong rather
+than widened after the fact.** A lookup is about three times faster than the bottom of its range
+and a substitution about twice.
+
+**Why the guess was high.** It costed a lookup as a hash plus a bucket probe plus a string
+comparison, which is right, and then assumed each of those was a few nanoseconds. On an M4 Pro a
+short-string hash and one cache-resident probe are under two. The substitution estimate made the
+same error and added an allocation that a small returned string mostly does not pay, because
+`std::string`'s small-buffer optimisation covers a twenty-character result.
+
+### What it means
+
+**The claim holds with room to spare.** The overlay asks for about a hundred and forty strings a
+frame. At 7.2 nanoseconds that is roughly one microsecond, which is **0.006% of a 16.6 ms
+frame** — three orders of magnitude below anything worth reclaiming. Routing the interface
+through a table costs nothing.
+
+**And the failure mode the prediction named did not happen.** Nothing is near five hundred
+nanoseconds, so the transparent hasher is doing its job and a `string_view` finds a
+`std::string` key without building one. That was the only outcome here that would have needed
+action, which is why the scenario exists at all.
+
+**A miss is not the expensive case**, which matters more than the figure: a miss is the normal
+state of an interface somebody is still writing, and the `contains`-before-`emplace` guard is
+what keeps a repeatedly-missed key from allocating on every frame that draws it.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.
