@@ -478,6 +478,26 @@ fact about the tree today rather than a consequence of the milestone.
   kilobytes — and a decision about whether the atlas is rebuilt when the locale changes or
   fixed at startup.
 
+- **A string API for mods.** M16's justification was supposed to be a mod that adds strings;
+  M15's ABI has eight imports and none of them touches a table, so the consumer named in the
+  series plan does not exist. Building it would mean a ninth import, a host implementation,
+  a bump of `kSafeImportCount`, tests that call it through a real guest, and a wider untrusted
+  surface that ADR-0015 governs. Trigger: a mod that has something to say to a person —
+  a panel, a command name, a message. Recorded in ADR-0016's alternatives with the accounting.
+
+- **Plural rules, gender, and everything an internationalisation library does.** English needs
+  none of them, and ICU would be the largest dependency in the project by an order of magnitude
+  for one locale and a hundred and forty engineer-facing strings. Trigger: a second language
+  whose plurals or gender the positional substituter cannot express.
+
+- **Switching locale without restarting.** One locale exists. `Catalog` takes what it is given
+  and switching is a reload. Trigger: more than one table worth switching between.
+
+- **Localising the two command-line usage blocks.** They are 102 lines and about 990 words —
+  seven times the prose of the whole interface — column-aligned at 25 characters and printed to
+  standard output. A catalogue would hold them as two untranslatable blobs or split them per
+  line and destroy the alignment. Trigger: a user-facing command line, which this is not.
+
 - **Anything that measures or folds text.** One place in the repository interprets UTF-8 at all:
   `engine/platform/src/text_split.hpp`, which backs a cut off a continuation byte so M11's text
   events split on character boundaries. Everywhere else a string is opaque bytes, and the two

@@ -3,8 +3,16 @@
 
 ## Status
 
-**Proposed**, 2026-09-19. M16 builds it; this record becomes Accepted when it is in force, as
-the legend in this index requires.
+**Accepted**, 2026-09-19, implemented in M16.
+
+Proposed when it was written, earlier the same day, because a milestone still had to build it —
+the legend in this index reserves Accepted for a record that is in force.
+
+**One decision did not survive contact with the implementation, and D7 is corrected below rather
+than quietly outgrown.** Refusing a duplicate key cannot be done after the parse: `nlohmann`'s
+object types collapse a repeated key while parsing, so the evidence is gone before any check
+could run. The refusal is implemented during a SAX pass over the same bytes, and the rule is
+stronger than this record first asked for — no object in the document may list a key twice.
 
 Authorised by [ADR-0010](0010-charter-amendment.md), which lifted localisation out of the
 charter's v0.1 exclusions and made it a scheduled milestone. Its decision 6 is the reason the
@@ -153,7 +161,15 @@ The finaliser is not a nicety to follow later. Since M12 the registry counts an 
 decodes and is never claimed and reports it after about ten seconds, and `AssetType::Shader` has
 been sitting in that state since M4 as the standing example of what omitting one costs.
 
-**7. The bound that matters is on the document's own length, checked before the parse**, with
+**7. A duplicate key is refused, and the refusal happens during the parse rather than after
+it.** This record first said only that it is refused; implementing it showed that where matters.
+`nlohmann`'s object types collapse a repeated key while parsing, so a post-parse check is dead
+code that looks correct — one entry survives, the other is gone, and nothing can tell. The
+detection is a SAX pass over the same bytes before the document is built, and the rule it
+enforces is the simpler and stronger one: **no object in the document may list a key twice.**
+There is no place in this format where a repeat means anything.
+
+**7a. The bound that matters is on the document's own length, checked before the parse**, with
 [ADR-0013](0013-animation-clip-format.md)'s reasoning inherited rather than re-derived: a
 document parser cannot check a declared size against the bytes present, because by the time any
 count is readable the whole document is in memory. After the parse: a key count, a key length, a

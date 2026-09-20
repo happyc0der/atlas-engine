@@ -90,8 +90,10 @@ Atlas will not contain game rules or content of any kind. It is not a universal 
 there is no plan for a physics engine, a plugin ABI for native code, or a custom scripting
 language. Networking means deterministic lockstep over the command queue; mods are sandboxed
 scripts behind that same boundary; gamepad input and input methods arrived in M11, audio in M12,
-animation in M13 and lockstep networking in M14; and localisation is a planned milestone under
-[ADR-0010](docs/adr/0010-charter-amendment.md). Animation is presentation: it writes a derived
+animation in M13, lockstep networking in M14, sandboxed mods in M15 and localisation in M16.
+Localisation is string tables and nothing more: one lookup, one substituter, English as the only
+table, and a second language is a data change for any language the font atlas can draw
+([ADR-0016](docs/adr/0016-string-tables.md)). Animation is presentation: it writes a derived
 pose, reaches no authoritative state, and is hashed nowhere.
 
 Sub-systems are added when a real call site needs them, never in anticipation.

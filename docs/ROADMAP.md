@@ -24,7 +24,7 @@ Status legend: **done**, *in progress*, planned.
 | M13 | Animation | M–L | **done** |
 | M14 | Networking: lockstep design and loopback proof | M | **done** |
 | M15 | Sandboxed mods | L | **done** |
-| M16 | Localisation: string tables, English | S | next |
+| M16 | Localisation: string tables, English | S | **done** |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1162,6 +1162,48 @@ machine that wrote them**. Then nothing: four slices of work on top of it, every
 try. The tax looks per-version rather than per-change, which is the shape worth knowing before
 the next WAMR bump.
 
+
+## M16 — Localisation: string tables, English only
+
+Full report: [reports/M16.md](reports/M16.md).
+
+Slices: correcting the record; [ADR-0016](adr/0016-string-tables.md) at a gate; the `text`
+module; the asset type, its parser and its finaliser; routing everything the overlay shows;
+the proofs, the benchmark and the documents.
+
+**Exit criteria**
+- The record corrected, because the consumer this milestone was scheduled against did not exist.
+- A record accepted at a gate, answering ADR-0010 D6 rather than inheriting a justification.
+- A module with one lookup and one substituter, and no exception allow-list entry.
+- An asset type that cannot sit unclaimed, because its finaliser landed with it.
+- Every key the interface can ask for resolving against the shipped table, proved rather than
+  asserted.
+- Measured against a prediction written first.
+
+| Criterion | Status |
+|---|---|
+| The record corrected | **Met, and this was the milestone's first finding.** M15's report claimed it supplied this milestone's consumer; its ABI has eight imports and none touches a string table. ADR-0010 D6 makes "drop it" a legitimate outcome, so the accounting went to the owner before anything was built. |
+| A record at a gate | **Met.** ADR-0016 written and stopped at, carrying the D6 accounting, the refusal of `std::vformat` with its enforcement, and the glyph limit. |
+| One lookup, one substituter | **Met.** `engine/text` has one module consumer, `tools`, and needs no allow-list entry: the substituter is hand-written precisely so it cannot throw. |
+| A type that cannot sit unclaimed | **Met.** `AssetType::StringTable = 5` and `Catalog::finalise_pending` in one commit, with an integration case asserting `awaiting_finalisation` is zero. |
+| Every key resolves | **Met.** `--text-check` walks all 130 keys; the integration case removes an entry and asserts it fails and names it, because a missing key deliberately renders as itself and a check that could not fail would look identical to one that worked. |
+| Measured against a prediction written first | **Met, and both predictions were wrong.** 7.2 ns a lookup against 20–60, and 57 ns a substitution against 100–300. Recorded as wrong rather than widened. |
+
+### What the milestone was actually for
+
+Its stated consumer did not exist, and the owner chose to build with that known. What replaced
+the justification was duplication that did: **three copies of the log severity words and two of
+`speed_name`**. The second `speed_name` was not a copy — it was missing the fractional-speed
+check, so the lab reported a half-speed run as "1x" on the one row that says how fast time is
+running. That bug had been there since M7 and nothing had noticed, because a second spelling of
+a rule is exactly where a discrepancy hides.
+
+### The honest limit
+
+**A second language is a data change only for Latin-1.** The overlay renders Dear ImGui's
+default atlas, so French, German, Spanish and Italian would work from a translated file and
+Polish, Greek, Russian and every CJK language would show blanks. Recorded before any of the
+milestone was built, rather than discovered after somebody shipped a Polish table.
 
 ## First continuous integration
 

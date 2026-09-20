@@ -600,6 +600,40 @@ The threading table above is unchanged: everything here runs on the main thread,
 kernel. A mod thread is deferred.
 
 
+## Text
+
+Implemented in M16, decided by [ADR-0016](adr/0016-string-tables.md).
+
+`atlas::text` is a string table asset, a catalog that answers a key, and a substituter. It has
+exactly one module consumer, `tools`, and that is a constraint on the design rather than an
+observation about it: `core::to_string(Severity)` and `assets::to_string(AssetState)` keep their
+own words and gain no dependency, because those words are log text as well, and routing them
+through a table would make every integration case's grep depend on a locale. The overlay maps
+enumeration to key on its own side.
+
+**A missing key returns the key.** Never an empty string, never an error — the same instinct as
+a missing asset resolving to a fallback rather than stopping the engine. It also means the
+catalog may be absent: the overlay takes a `const Catalog*` and null resolves every key to
+itself, so the absent-catalog path is the same code as the missing-key path rather than a second
+one nobody exercises.
+
+**Substitution is hand-written, positional, and cannot throw.** `std::format` type-checks its
+format string at compile time, which is right everywhere else and a wall here: a pattern loaded
+from a file will not convert. `std::vformat` throws `std::format_error`, which ADR-0005 forbids
+crossing a module boundary and which `tools/check_module_deps.py` enforces mechanically. Forty
+lines that cannot throw need no allow-list entry, and positional indices are needed anyway,
+because word order differs between languages and `{}` in sequence cannot express that.
+
+**English is the only table, and a second language is a data change only for Latin-1.** The
+overlay renders Dear ImGui's default baked atlas — Basic Latin and Latin-1 Supplement. French,
+German, Spanish and Italian would render from a translated file; Polish, Greek, Russian and
+every CJK language would show blanks until somebody bundles a font and configures glyph ranges.
+`DEFERRED.md` records that with its trigger.
+
+The threading table above is unchanged: a catalog is main-thread only, and `lookup` is `const`
+while still recording what it could not find.
+
+
 ## Simulation contract
 
 Implemented in M6, parallelised in M8.
