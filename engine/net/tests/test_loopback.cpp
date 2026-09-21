@@ -46,6 +46,30 @@ const bool kMainThreadMarkedForLoopback = [] {
 
 }  // namespace
 
+TEST_CASE("the hub counts the polls it measures latency in", "[net][loopback]") {
+    // `polls` lived on `LinkEnd` until M17 with no caller and no test, which is how a method
+    // whose comment described the in-memory link ended up on the type every transport is about
+    // to implement. It is on the hub now, and tested, because the alternative to testing it was
+    // deleting it.
+    auto hub = LoopbackHub::create({.peer_count = 2});
+    REQUIRE(hub.has_value());
+
+    auto first_end = (*hub)->end(0);
+    CHECK((*hub)->polls(0) == 0);
+
+    for (int i = 0; i < 5; ++i) {
+        first_end.pump();
+    }
+    CHECK((*hub)->polls(0) == 5);
+
+    // The other end has not polled, which is the whole reason latency is counted per end: a
+    // stalled peer still polls and still receives, and a peer that never polls receives nothing.
+    CHECK((*hub)->polls(1) == 0);
+
+    // An index this hub does not have is zero rather than undefined behaviour.
+    CHECK((*hub)->polls(99) == 0);
+}
+
 TEST_CASE("a link needs two ends", "[net][loopback]") {
     CHECK_FALSE(LoopbackHub::create({.peer_count = 1}).has_value());
     CHECK_FALSE(LoopbackHub::create({.peer_count = 0}).has_value());

@@ -112,8 +112,6 @@ class LinkEnd {
     [[nodiscard]] std::size_t index() const noexcept { return m_index; }
 
     [[nodiscard]] std::size_t peer_count() const noexcept;
-    /// Polls this end has made, which is what latency is measured in.
-    [[nodiscard]] std::uint64_t polls() const noexcept;
 
   private:
     friend class LoopbackHub;
@@ -152,6 +150,17 @@ class LoopbackHub {
     /// Messages currently parked by a hold, so a test can prove one is actually parked rather
     /// than merely absent.
     [[nodiscard]] std::size_t held_count() const noexcept;
+
+    /// Polls one end has made, which is what this link measures latency in.
+    ///
+    /// **Moved off `LinkEnd` in M17, where it did not belong.** A poll count is how the
+    /// in-memory link decides a message is due; a socket has no such notion, and `LinkEnd` is
+    /// about to become the type every transport implements. Leaving it there would have handed
+    /// the socket implementation a method with no meaning and a comment describing the other
+    /// one. It had no callers, which is the only reason this is a move rather than a migration.
+    ///
+    /// Returns zero for an index this hub does not have.
+    [[nodiscard]] std::uint64_t polls(std::size_t peer) const noexcept;
 
     [[nodiscard]] const LinkStats& stats() const noexcept { return m_stats; }
 

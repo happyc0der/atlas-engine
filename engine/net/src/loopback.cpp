@@ -67,6 +67,10 @@ void LoopbackHub::release_held() noexcept {
     }
 }
 
+std::uint64_t LoopbackHub::polls(std::size_t peer) const noexcept {
+    return peer < m_peers.size() ? m_peers[peer].polls : 0;
+}
+
 std::size_t LoopbackHub::held_count() const noexcept {
     std::size_t held = 0;
     for (const Pipe& p : m_pipes) {
@@ -207,10 +211,6 @@ CommandInbox& LinkEnd::inbox(std::size_t peer) {
 
 std::size_t LinkEnd::peer_count() const noexcept {
     return m_hub->peer_count();
-}
-
-std::uint64_t LinkEnd::polls() const noexcept {
-    return m_hub->m_peers[m_index].polls;
 }
 
 }  // namespace atlas::net

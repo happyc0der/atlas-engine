@@ -505,6 +505,23 @@ fact about the tree today rather than a consequence of the milestone.
   byte-wise ASCII and would be wrong for anything else. Nothing measures display width, walks
   grapheme clusters, or normalises. Trigger: the same one, and it arrives first.
 
+### M17 — a transport for lockstep
+
+- **Closing the submodule-versus-baseline gap in the continuous-integration cache key.** The
+  three build workflows key their vcpkg binary cache on
+  `hashFiles('vcpkg.json', '.gitmodules', 'external/vcpkg-overlays/**')`. None of those is the
+  pinned vcpkg commit: `.gitmodules` holds a path and a URL, and the commit lives in the gitlink
+  and in `vcpkg.json`'s `builtin-baseline`. In practice the key tracks the baseline through
+  `vcpkg.json`, so the gap only opens if somebody bumps the submodule **without** bumping
+  `builtin-baseline` — at which point every lane would restore a cache built against a different
+  port tree and nothing would say so.
+
+  Found while planning M17 and not fixed there, because the fix is a change to how every
+  workflow computes a key and belongs with whoever next touches the build's caching rather than
+  with a networking milestone. Trigger: the first submodule bump, or any evidence of a stale
+  cache. The cheap version is to hash the submodule's resolved commit; the honest version is to
+  stop having two places that record a pin.
+
 ## Decided by ADR-0010, planned as milestones
 
 Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.

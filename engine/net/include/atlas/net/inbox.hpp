@@ -26,6 +26,7 @@
 /// later, which is what the command queue's "main thread only" contract has always required.
 
 #include <atlas/core/result.hpp>
+#include <atlas/net/protocol.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -49,7 +50,22 @@ class CommandInbox {
     ///
     /// A message count alone bounds memory at "256 times whatever a message may be", and a turn
     /// may legitimately carry thousands of commands. Either limit alone is not a limit.
+    ///
+    /// **This is a total across every message waiting, so a single message this size overflows
+    /// an empty inbox.** That is what makes the relationship with `kMaxMessageBytes` load
+    /// bearing rather than incidental, and it is asserted below rather than left to two
+    /// comments agreeing by luck.
     static constexpr std::size_t kMaxBytes = std::size_t{1024} * 1024;
+
+    /// The largest message the encoder will produce must fit in an empty inbox.
+    ///
+    /// **A bound that cannot admit a legal message is not a bound; it is a bug with a limit's
+    /// name on it.** Before M17 these two numbers disagreed by a factor of eight and nothing
+    /// said so, because they live in different headers and each looked reasonable alone. This
+    /// is the check that makes the next disagreement a build failure instead of a session that
+    /// ends on a peer's first large turn.
+    static_assert(kMaxMessageBytes <= kMaxBytes,
+                  "a message the encoder accepts must fit in an empty inbox");
 
     enum class Push : std::uint8_t {
         Accepted,

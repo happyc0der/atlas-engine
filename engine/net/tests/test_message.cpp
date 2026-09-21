@@ -5,7 +5,9 @@
 // encoder never produces something the decoder refuses, which a round trip does not show and
 // which is the failure the replay format actually had: ceilings where only the reader could see
 // them, so a large enough recording was written successfully and never read again.
+#include <atlas/net/inbox.hpp>
 #include <atlas/net/message.hpp>
+#include <atlas/simulation/command.hpp>
 #include <atlas/simulation/rng.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -93,6 +95,58 @@ namespace {
 }
 
 }  // namespace
+
+TEST_CASE("a message at the protocol's ceiling survives the whole path", "[net][message]") {
+    // **This is the case M17 exists to make possible, and it could not pass before it.**
+    // `kMaxMessageBytes` was eight mebibytes against a `CommandInbox` budget of one, so every
+    // message between the two encoded successfully, sent successfully, and was refused at the
+    // far end by an overflow that ends the session and never clears. Nothing covered it because
+    // the in-memory link is never asked for messages that size.
+    //
+    // So the path here is deliberately the whole one -- encode, push into an inbox, drain,
+    // decode -- rather than a round trip through the codec alone, which is what would have kept
+    // passing while the defect was live.
+    Turn turn{.tick = 7, .source = SourceId{2}, .commands = {}};
+
+    // **Derived from the constants rather than written down**, so this case keeps testing the
+    // bound if the bound moves. A fixed payload would stop being near the ceiling the moment
+    // somebody changed either number, and would then pass while proving nothing.
+    //
+    // The command count is capped first, because the two ceilings constrain each other: a
+    // message may be `kMaxMessageBytes` and a turn may be `kMaxCommandsPerTurn` commands, so
+    // the payload that fills one without breaching the other is what is solved for here.
+    constexpr std::size_t kFraming = 32;  // target, source, sequence, type, payload length
+    constexpr std::size_t kSlack = 1024;  // the envelope, and room to stay under rather than on
+    const std::size_t count = atlas::net::kMaxCommandsPerTurn;
+    const std::size_t payload = ((atlas::net::kMaxMessageBytes - kSlack) / count) - kFraming;
+    REQUIRE(payload > 0);
+    REQUIRE(payload <= atlas::sim::CommandQueue::kMaxPayload);
+
+    turn.commands.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        turn.commands.push_back(command_with(payload, static_cast<std::uint64_t>(i)));
+    }
+
+    const auto bytes = encode(Message{turn});
+    REQUIRE(bytes.has_value());
+    CHECK(bytes->size() <= atlas::net::kMaxMessageBytes);
+    CHECK(bytes->size() > atlas::net::kMaxMessageBytes / 2);
+
+    atlas::net::CommandInbox inbox;
+    REQUIRE(inbox.push(*bytes) == atlas::net::CommandInbox::Push::Accepted);
+    CHECK_FALSE(inbox.overflowed());
+
+    std::vector<std::vector<std::byte>> drained;
+    inbox.drain(drained);
+    REQUIRE(drained.size() == 1);
+
+    const auto restored = decode(drained.front());
+    REQUIRE(restored.has_value());
+    const auto* received = std::get_if<Turn>(&*restored);
+    REQUIRE(received != nullptr);
+    CHECK(received->commands.size() == count);
+    CHECK(received->commands.back().payload.size() == payload);
+}
 
 TEST_CASE("every message survives a round trip, field by field", "[net][message]") {
     // Field by field rather than by variant index. An earlier version of this case compared

@@ -79,8 +79,14 @@ jobs:
         run: choco install ninja --no-progress --yes
 
       # The binary cache is what keeps this from rebuilding every dependency from source on
-      # every push. Keyed on the manifest and the pinned vcpkg commit, so a dependency
-      # change invalidates it and nothing else does.
+      # every push. Keyed on the manifest, the submodule declaration and the overlay ports, so
+      # a dependency change invalidates it and nothing else does.
+      #
+      # It does NOT hash the pinned vcpkg commit, which this comment claimed until M17.
+      # `.gitmodules` holds a path and a URL; the commit lives in the gitlink and, separately,
+      # in vcpkg.json's `builtin-baseline`. The key tracks the baseline in practice, through
+      # vcpkg.json — so bumping the submodule without bumping `builtin-baseline` would reuse a
+      # cache built against different port trees. See docs/DEFERRED.md.
       - name: Cache vcpkg binaries
         uses: actions/cache@v4
         with:

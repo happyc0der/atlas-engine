@@ -95,7 +95,12 @@ class Session final : public sim::CommandSource {
     /// Never blocks. The session is `Handshaking` when this returns, and reaches `Running` in a
     /// later `poll` once every peer has been heard from.
     ///
-    /// The link end is borrowed and must outlive the session.
+    /// **The link end is taken by value; what must outlive the session is the link behind it.**
+    /// This sentence used to read "the link end is borrowed and must outlive the session",
+    /// which was true of the hub the end points at and false of the parameter it sits above.
+    /// A `LinkEnd` is a handle — an index and a pointer to its backend — so copying one is
+    /// cheap and keeping one is meaningless once the backend is gone. M17 corrected the wording
+    /// before widening this interface, because it is the sentence a transport author reads.
     ///
     /// Handed out by pointer because a `CommandSource` is deliberately neither copyable nor
     /// movable: something holding a reference to one must be able to rely on it staying put.

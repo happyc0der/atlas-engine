@@ -82,10 +82,26 @@ inline constexpr std::size_t kMaxSystemHashesPerCheck = 4096;
 
 /// Most bytes one encoded message may occupy.
 ///
-/// Checked when a message is written as well as when it is read. A turn of four thousand
-/// commands at the queue's 64 KiB payload limit would be far larger than this; the cap is what
-/// makes "a peer cannot make me allocate arbitrarily" true rather than hoped for.
-inline constexpr std::size_t kMaxMessageBytes = std::size_t{8} * 1024 * 1024;
+/// Checked when a message is written as well as when it is read, so the cap is what makes
+/// "a peer cannot make me allocate arbitrarily" true rather than hoped for.
+///
+/// **This number is not free to choose: it must fit in an empty `CommandInbox`.** Until M17 it
+/// was eight mebibytes against an inbox budget of one, so every message between the two was
+/// legal to encode, legal to send, and impossible to receive — it tripped the inbox's sticky,
+/// session-fatal overflow at the far end. The loopback never built messages that large, so
+/// nothing covered it, and it would have become reachable on the first real socket.
+/// `inbox.hpp` carries the assertion that ties the two together; this comment and that one are
+/// one rule written twice on purpose, because the numbers live in different files.
+///
+/// **What it does *not* equal is the largest turn the other ceilings permit**, and saying so
+/// matters. A command costs thirty-two bytes of framing plus its payload, so four thousand of
+/// them at the queue's 64 KiB payload ceiling would be about 256 MiB — two orders of magnitude
+/// past this. **So the binding constraint on a turn is this cap and not
+/// `kMaxCommandsPerTurn`**, and a producer that fills the command count with large payloads is
+/// refused by the encoder rather than by the counter it would expect. For scale in the other
+/// direction: four thousand commands with the lab's five-byte payloads encode to about 148 KiB,
+/// which is a seventh of this.
+inline constexpr std::size_t kMaxMessageBytes = std::size_t{1024} * 1024;
 
 /// Longest build identifier a handshake may carry, and longest human-readable detail a farewell
 /// may carry. Neither is parsed; both are for a person reading a log.
