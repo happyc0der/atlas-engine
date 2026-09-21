@@ -13,12 +13,14 @@
 atlas_add_module(net
     SOURCES
         src/inbox.cpp
+        src/link.cpp
         src/loopback.cpp
         src/session.cpp
         src/message.cpp
         src/protocol.cpp
     HEADERS
         include/atlas/net/inbox.hpp
+        include/atlas/net/link.hpp
         include/atlas/net/loopback.hpp
         include/atlas/net/message.hpp
         include/atlas/net/protocol.hpp

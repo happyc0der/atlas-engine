@@ -42,11 +42,6 @@ Result<std::unique_ptr<LoopbackHub>> LoopbackHub::create(const LoopbackConfig& c
     return std::unique_ptr<LoopbackHub>(new LoopbackHub(config));
 }
 
-LinkEnd LoopbackHub::end(std::size_t peer) {
-    ATLAS_ASSERT_MSG(peer < m_peers.size(), "no such peer");
-    return {*this, peer};
-}
-
 LoopbackHub::Pipe& LoopbackHub::pipe(std::size_t from, std::size_t to) {
     return m_pipes[(from * m_peers.size()) + to];
 }
@@ -69,6 +64,10 @@ void LoopbackHub::release_held() noexcept {
 
 std::uint64_t LoopbackHub::polls(std::size_t peer) const noexcept {
     return peer < m_peers.size() ? m_peers[peer].polls : 0;
+}
+
+CommandInbox& LoopbackHub::inbox(std::size_t peer, std::size_t from) {
+    return *m_peers[peer].inboxes[from];
 }
 
 std::size_t LoopbackHub::held_count() const noexcept {
@@ -182,35 +181,6 @@ void LoopbackHub::pump(std::size_t peer) {
             (void)bytes;
         }
     }
-}
-
-Status LinkEnd::send_to(std::size_t peer, std::span<const std::byte> message) {
-    return m_hub->send(m_index, peer, message);
-}
-
-Status LinkEnd::broadcast(std::span<const std::byte> message) {
-    for (std::size_t peer = 0; peer < m_hub->peer_count(); ++peer) {
-        if (peer == m_index) {
-            continue;
-        }
-        if (auto status = m_hub->send(m_index, peer, message); !status) {
-            return status;
-        }
-    }
-    return {};
-}
-
-void LinkEnd::pump() {
-    m_hub->pump(m_index);
-}
-
-CommandInbox& LinkEnd::inbox(std::size_t peer) {
-    ATLAS_ASSERT_MSG(peer < m_hub->peer_count(), "no such peer");
-    return *m_hub->m_peers[m_index].inboxes[peer];
-}
-
-std::size_t LinkEnd::peer_count() const noexcept {
-    return m_hub->peer_count();
 }
 
 }  // namespace atlas::net

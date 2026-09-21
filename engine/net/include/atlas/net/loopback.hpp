@@ -35,6 +35,7 @@
 
 #include <atlas/core/result.hpp>
 #include <atlas/net/inbox.hpp>
+#include <atlas/net/link.hpp>
 #include <atlas/net/protocol.hpp>
 
 #include <cstddef>
@@ -86,44 +87,8 @@ struct LinkStats {
     std::uint64_t refused = 0;
 };
 
-class LoopbackHub;
-
-/// One peer's end of the link.
-class LinkEnd {
-  public:
-    /// Send to one other peer. Fails for a peer index this hub does not have, or for sending to
-    /// oneself — a peer that needs its own turn has it already and does not need the network to
-    /// tell it.
-    [[nodiscard]] Status send_to(std::size_t peer, std::span<const std::byte> message);
-
-    /// Send to every peer but this one.
-    [[nodiscard]] Status broadcast(std::span<const std::byte> message);
-
-    /// Advance this peer's poll counter and deliver whatever is now due.
-    ///
-    /// Called once per frame whether or not a tick ran, which is what makes poll-based latency
-    /// work: a stalled peer still polls, so the turn it is waiting for still arrives.
-    void pump();
-
-    /// This peer's mailbox for messages from `peer`. One per sender, so a peer sending faster
-    /// than it can be read fills its own and starves nobody else's.
-    [[nodiscard]] CommandInbox& inbox(std::size_t peer);
-
-    [[nodiscard]] std::size_t index() const noexcept { return m_index; }
-
-    [[nodiscard]] std::size_t peer_count() const noexcept;
-
-  private:
-    friend class LoopbackHub;
-
-    LinkEnd(LoopbackHub& hub, std::size_t index) noexcept : m_hub(&hub), m_index(index) {}
-
-    LoopbackHub* m_hub;
-    std::size_t m_index;
-};
-
 /// Every peer's link, and the messages in flight between them.
-class LoopbackHub {
+class LoopbackHub final : public Link {
   public:
     /// Fails for fewer than two peers — a link with one end is not a link — or for more than
     /// `kMaxPeers`.
@@ -133,11 +98,18 @@ class LoopbackHub {
     LoopbackHub& operator=(const LoopbackHub&) = delete;
     LoopbackHub(LoopbackHub&&) = delete;
     LoopbackHub& operator=(LoopbackHub&&) = delete;
-    ~LoopbackHub() = default;
+    ~LoopbackHub() override = default;
 
-    [[nodiscard]] LinkEnd end(std::size_t peer);
+    [[nodiscard]] std::size_t peer_count() const noexcept override { return m_peers.size(); }
 
-    [[nodiscard]] std::size_t peer_count() const noexcept { return m_peers.size(); }
+    /// Move one message, subject to whatever this link has been told to do to it.
+    [[nodiscard]] Status send(std::size_t from, std::size_t to,
+                              std::span<const std::byte> message) override;
+
+    /// Advance one peer's poll counter and deliver whatever is now due.
+    void pump(std::size_t peer) override;
+
+    [[nodiscard]] CommandInbox& inbox(std::size_t peer, std::size_t from) override;
 
     /// Arm a one-shot fault on the next message sent from `from` to `to`.
     ///
@@ -165,8 +137,6 @@ class LoopbackHub {
     [[nodiscard]] const LinkStats& stats() const noexcept { return m_stats; }
 
   private:
-    friend class LinkEnd;
-
     struct Pending {
         std::vector<std::byte> bytes;
         std::uint64_t release_at_poll = 0;
@@ -191,9 +161,6 @@ class LoopbackHub {
     explicit LoopbackHub(const LoopbackConfig& config);
 
     [[nodiscard]] Pipe& pipe(std::size_t from, std::size_t to);
-
-    [[nodiscard]] Status send(std::size_t from, std::size_t to, std::span<const std::byte> message);
-    void pump(std::size_t peer);
 
     LoopbackConfig m_config;
     std::vector<Peer> m_peers;

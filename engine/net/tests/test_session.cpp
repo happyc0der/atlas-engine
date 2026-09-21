@@ -5,6 +5,7 @@
 // here is what the session does with what arrives, not whether two simulations agree. That is
 // proved separately, and keeping them apart is what makes a failure in either one legible.
 #include <atlas/core/assert.hpp>
+#include <atlas/net/loopback.hpp>
 #include <atlas/net/session.hpp>
 #include <atlas/simulation/golden.hpp>
 #include <atlas/simulation/replay.hpp>

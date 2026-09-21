@@ -33,7 +33,7 @@
 /// Thread affinity: the main thread, with the kernel and the command queue.
 
 #include <atlas/core/result.hpp>
-#include <atlas/net/loopback.hpp>
+#include <atlas/net/link.hpp>
 #include <atlas/net/message.hpp>
 #include <atlas/simulation/command_source.hpp>
 #include <atlas/simulation/divergence.hpp>

@@ -8,6 +8,7 @@ atlas_add_test(net
     SOURCES
         test_inbox.cpp
         test_inbox_threads.cpp
+        test_link.cpp
         test_loopback.cpp
         test_message.cpp
         test_protocol.cpp
