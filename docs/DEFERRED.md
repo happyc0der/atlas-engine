@@ -365,11 +365,15 @@ integration ran for the first time. What it found is recorded in
   host**, which is that boundary: it can hand a mod a restricted handle without the interface
   itself being restricted. Recorded rather than left implicit because building it early was a
   mistake worth being able to find again.
-- **A transport.** No socket, by decision (ADR-0014). The criteria are recorded there rather than
-  resolved: a reliable ordered channel, because lockstep tolerates no loss and raw datagrams
-  would mean writing reliability; Windows support in the pinned baseline; licence compatibility;
-  whether encryption and traversal are wanted; and whether it may own a thread. Picked up when
-  two machines need to play, which no consumer needs today.
+- **A transport.** ~~No socket, by decision (ADR-0014)… Picked up when two machines need to
+  play, which no consumer needs today.~~ **Closed on 2026-09-20 by
+  [ADR-0017](adr/0017-lockstep-transport.md), which chooses ENet and answers all five of
+  ADR-0014's criteria.** The trigger as written never fired — no consumer needs two machines
+  today and none did when M17 was scheduled. What the milestone is built against instead is its
+  own proof: an in-memory link cannot show what the design does when a packet is late or a
+  process dies, and that is the thing ADR-0014 designed and could not test. Recorded this way
+  rather than struck through silently, because the gap between a trigger and what actually
+  fired it is the part worth being able to find later.
 - **Resynchronisation after a divergence.** Detected, attributed and stopped, the same treatment
   device loss gets. Recovering would mean shipping state, which is the thing lockstep exists not
   to do. Picked up if a consumer would rather continue wrongly than stop.
@@ -506,6 +510,26 @@ fact about the tree today rather than a consequence of the milestone.
   grapheme clusters, or normalises. Trigger: the same one, and it arrives first.
 
 ### M17 — a transport for lockstep
+
+- **Dropping a peer and playing on.** A quiet peer ends the session (ADR-0017 D5). Continuing
+  without it sounds like what a session is for, and it is **simulation-visible**: the dropped
+  peer's commands stop arriving, so every remaining peer must apply the drop at the identical
+  tick or compute different states and diverge. Agreeing that tick is a protocol of its own — a
+  declaration, an acknowledgement, and a rule for when the declaration is itself lost — and
+  getting it subtly wrong produces the exact failure lockstep exists to prevent, rarely, on one
+  person's bad network. Trigger: a consumer for whom one person's connection ending everyone's
+  session is worse than the risk of getting that agreement wrong.
+
+- **Encryption, and NAT traversal.** Direct address only, by owner decision (ADR-0017 D4).
+  GameNetworkingSockets offers both and was ruled out on other grounds; adopting it later would
+  mean openssl, protobuf and abseil, and a Windows-arm64 exclusion. Triggers: a session between
+  people who do not trust the network between them, and two peers who cannot reach each other
+  directly — which is most of the internet and none of a local network.
+
+- **A lobby, matchmaking, and a relay topology.** Connecting means being told a host and a port.
+  Anything that has to *find* a peer is out. A relay costs nothing later, because a turn is
+  addressed by `SourceId` rather than by a socket. Trigger: a consumer that cannot exchange an
+  address out of band.
 
 - **Closing the submodule-versus-baseline gap in the continuous-integration cache key.** The
   three build workflows key their vcpkg binary cache on

@@ -14,6 +14,19 @@ and narrows it in one respect recorded below. The numeric policy this rests on i
 record decides is the shape a transport would later plug into, and the criteria for choosing
 one are written down rather than resolved.
 
+**2026-09-20:** [ADR-0017](0017-lockstep-transport.md) is written and proposes superseding
+**decision 9 only** — it chooses ENet, and a dependency does now reach `vcpkg.json`, so the two
+sentences above stop describing the tree when M17 lands. They are left standing rather than
+edited, because what this record decided without a transport is the part worth being able to
+read later. **Decisions 1 to 8 stand unchanged**, and decision 3 — readiness depends on who has
+reported and never on elapsed time — is the invariant 0017 is answerable to: the deadline for a
+silent peer lives in the transport, and the gate still reads no clock.
+
+0017 also answers, rather than supersedes, the question this record left open at decision 3:
+what to do about a peer that has stopped reporting. The answer is that it ends the session,
+because dropping it and continuing is simulation-visible and would need every remaining peer to
+agree the drop tick or diverge.
+
 ## Context
 
 The engine was not built for networking and is unusually ready for it, because determinism
