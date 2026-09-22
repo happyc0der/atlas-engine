@@ -26,6 +26,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 TIMEOUT_SECONDS = 240
 SMALL = ["--grid", "32", "--chunk", "8"]
@@ -41,6 +42,112 @@ def run(binary: str, args: list[str], cwd: str | None = None) -> subprocess.Comp
                               timeout=TIMEOUT_SECONDS, cwd=cwd, check=False)
     except subprocess.TimeoutExpired as expired:
         raise CheckFailed(f"{' '.join(args)} did not finish within {TIMEOUT_SECONDS}s") from expired
+
+
+class Session:
+    """Two lab processes talking over a socket, and the cleanup that makes them safe to run.
+
+    **Nothing else in this harness manages two processes at once**, and the reasons it is worth
+    writing carefully rather than inline are all failure modes rather than features:
+
+    - The listener chooses its own port and prints it. Asking for a constant would make two
+      cases running concurrently fight over it, and the only thing worse than a flaky network
+      test is a flaky network test that is flaky because of another test.
+    - Either process can fail before the other starts, so the port is waited for with a
+      deadline rather than a sleep, and a listener that dies is noticed instead of waited on.
+    - **Both are killed on any exit path.** A test that raises while a peer is still running
+      leaves an orphan holding a port, and the next run of the same case then fails for a
+      reason that has nothing to do with the code under test.
+    """
+
+    #: Long enough for a loaded continuous-integration runner, short enough that a hung pair
+    #: fails inside the harness rather than at its outer timeout with nothing to read.
+    START_SECONDS = 60.0
+    RUN_SECONDS = 180.0
+
+    PORT_LINE = re.compile(r"^listening on port (\d+)$", re.MULTILINE)
+
+    def __init__(self, binary: str, shared: list[str]):
+        self.binary = binary
+        self.shared = shared
+        self.listener: subprocess.Popen | None = None
+        self.connector: subprocess.Popen | None = None
+        self.listener_log = tempfile.NamedTemporaryFile(mode="w+", suffix=".listener",
+                                                        delete=False)
+        self.connector_log = tempfile.NamedTemporaryFile(mode="w+", suffix=".connector",
+                                                         delete=False)
+        self._listener_final = ""
+        self._connector_final = ""
+
+    def __enter__(self) -> "Session":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        for process in (self.listener, self.connector):
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+        # Cached before the files go, because a caller naturally reads the output *after* the
+        # block that guaranteed the processes were cleaned up -- and every assertion worth
+        # writing is about what they said.
+        self._listener_final = self._text(self.listener_log)
+        self._connector_final = self._text(self.connector_log)
+        for handle in (self.listener_log, self.connector_log):
+            handle.close()
+            pathlib.Path(handle.name).unlink(missing_ok=True)
+
+    def start(self, listener_extra: list[str] | None = None,
+              connector_extra: list[str] | None = None) -> None:
+        """Start the listener, learn its port, then start the connector."""
+        self.listener = subprocess.Popen(
+            [self.binary, "--headless", "--listen", *self.shared, *(listener_extra or [])],
+            stdout=self.listener_log, stderr=subprocess.STDOUT, text=True)
+
+        port = self._await_port()
+        self.connector = subprocess.Popen(
+            [self.binary, "--headless", "--connect", f"127.0.0.1:{port}", *self.shared,
+             *(connector_extra or [])],
+            stdout=self.connector_log, stderr=subprocess.STDOUT, text=True)
+
+    def _await_port(self) -> int:
+        deadline = time.monotonic() + self.START_SECONDS
+        while time.monotonic() < deadline:
+            # Checked before the log, so a listener that failed to bind is reported as having
+            # exited rather than waited on until the deadline.
+            if self.listener is not None and self.listener.poll() is not None:
+                raise CheckFailed(f"the listener exited before binding:\n{self.listener_text()}")
+            match = self.PORT_LINE.search(self.listener_text())
+            if match:
+                return int(match.group(1))
+            time.sleep(0.1)
+        raise CheckFailed(f"the listener never printed a port:\n{self.listener_text()}")
+
+    def wait(self) -> tuple[int, int]:
+        """Collect both, and return their exit codes as (listener, connector)."""
+        deadline = time.monotonic() + self.RUN_SECONDS
+        codes: list[int | None] = [None, None]
+        while time.monotonic() < deadline and None in codes:
+            for index, process in enumerate((self.listener, self.connector)):
+                if codes[index] is None and process is not None:
+                    codes[index] = process.poll()
+            time.sleep(0.05)
+        if None in codes:
+            raise CheckFailed(
+                f"a peer did not finish within {self.RUN_SECONDS}s\n"
+                f"listener:\n{self.listener_text()}\nconnector:\n{self.connector_text()}")
+        return (codes[0], codes[1])
+
+    def _text(self, handle) -> str:
+        if handle.closed:
+            return ""
+        handle.flush()
+        return pathlib.Path(handle.name).read_text(encoding="utf-8", errors="replace")
+
+    def listener_text(self) -> str:
+        return self._listener_final or self._text(self.listener_log)
+
+    def connector_text(self) -> str:
+        return self._connector_final or self._text(self.connector_log)
 
 
 def output_of(result: subprocess.CompletedProcess) -> str:
@@ -637,6 +744,106 @@ def check_mod_clock_diverges(binary: str) -> None:
     expect_contains(text, "UNSAFE debug imports", "the run said what it was doing")
 
 
+def check_socket_peers_agree(binary: str) -> None:
+    """Two processes, one socket, the same final hash."""
+    # **This is the only case in the repository where two operating-system processes talk to
+    # each other**, and it is what the in-memory link cannot prove: a loopback never loses a
+    # packet, never refuses a connection, and never has a process die on the other end.
+    shared = [*SMALL, "--ticks", "120", "--commands-per-tick", "2"]
+    with Session(binary, shared) as session:
+        session.start()
+        listener_code, connector_code = session.wait()
+
+    listener = session.listener_text()
+    connector = session.connector_text()
+    if listener_code != 0 or connector_code != 0:
+        raise CheckFailed(
+            f"a peer exited non-zero (listener {listener_code}, connector {connector_code})\n"
+            f"listener:\n{listener}\nconnector:\n{connector}")
+
+    listener_hashes = peer_hashes(listener)
+    connector_hashes = peer_hashes(connector)
+    if len(listener_hashes) != 1 or len(connector_hashes) != 1:
+        raise CheckFailed("each process should print exactly one peer line\n"
+                          f"listener:\n{listener}\nconnector:\n{connector}")
+    if listener_hashes[0] != connector_hashes[0]:
+        raise CheckFailed(f"the two processes finished at different hashes: "
+                          f"{listener_hashes[0]} and {connector_hashes[0]}")
+
+    # They are different peers, not the same one twice. Without this the case would pass on a
+    # bug where both processes somehow took index 0 and agreed with themselves.
+    if "source=0" not in listener or "source=1" not in connector:
+        raise CheckFailed("the listener should be source 0 and the connector source 1\n"
+                          f"listener:\n{listener}\nconnector:\n{connector}")
+
+    # And turns actually crossed the socket. An agreement reached by nobody sending anything is
+    # not an agreement about anything.
+    for name, text in (("listener", listener), ("connector", connector)):
+        if not re.search(r"turns received=[1-9]", text):
+            raise CheckFailed(f"the {name} received no turns, so the agreement proves nothing")
+        if not re.search(r"agreed hashes=[1-9]", text):
+            raise CheckFailed(f"the {name} agreed no hash checks")
+
+
+def check_socket_differs_from_solo(binary: str) -> None:
+    """The anti-vacuity half: two peers must not reach a solo run's hash."""
+    # Two peers submit two command streams and a solo run submits one, so the states must
+    # differ. If they did not, the case above would be satisfied by a session that ignored
+    # everything it received -- which is exactly the bug it exists to catch.
+    shared = [*SMALL, "--ticks", "120", "--commands-per-tick", "2"]
+    with Session(binary, shared) as session:
+        session.start()
+        listener_code, connector_code = session.wait()
+    if listener_code != 0 or connector_code != 0:
+        raise CheckFailed("the socket pair did not finish cleanly")
+    paired = peer_hashes(session.listener_text())
+
+    solo = run(binary, ["--headless", *shared])
+    expect_exit(solo, 0, "a solo run")
+    solo_hashes = peer_hashes(output_of(solo)) or re.findall(r"state hash=(0x[0-9a-f]+)",
+                                                             output_of(solo))
+    if solo_hashes and paired and solo_hashes[0] == paired[0]:
+        raise CheckFailed("a two-peer session reached the same hash as a solo run, so the "
+                          "second peer's commands changed nothing")
+
+
+def check_socket_killed_peer_ends_the_session(binary: str) -> None:
+    """A peer that dies ends the session rather than hanging the other one."""
+    # ADR-0017 D5. The connector is killed outright, so it never says goodbye -- which is the
+    # case the destructor's graceful close cannot cover and the transport's deadline must.
+    shared = [*SMALL, "--ticks", "100000", "--commands-per-tick", "1"]
+    with Session(binary, shared) as session:
+        session.start()
+
+        # Let the handshake finish, so this kills a running session rather than a starting one.
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            if "socket handshake agreed" in session.listener_text():
+                break
+            time.sleep(0.1)
+        else:
+            raise CheckFailed(f"the handshake never completed:\n{session.listener_text()}")
+
+        session.connector.kill()
+        session.connector.wait(timeout=10)
+
+        # The listener must notice and stop. A transport that waited for ever would hang here
+        # until the harness killed it, which is the failure this asserts against.
+        deadline = time.monotonic() + 90.0
+        while time.monotonic() < deadline and session.listener.poll() is None:
+            time.sleep(0.1)
+        code = session.listener.poll()
+
+    if code is None:
+        raise CheckFailed("the listener never noticed its peer had gone\n"
+                          f"{session.listener_text()}")
+    if code == 0:
+        raise CheckFailed("the listener exited zero after losing its peer; a session that lost "
+                          "a participant did not succeed")
+    expect_contains(session.listener_text(), "disconnected",
+                    "the listener said which peer went")
+
+
 CASES = {
     "version": check_version,
     "help": check_help,
@@ -659,6 +866,9 @@ CASES = {
     "refuses_truncated_save": check_refuses_truncated_save,
     "refuses_mismatched_grid": check_refuses_mismatched_grid,
     "loopback_peers_agree": check_loopback_peers_agree,
+    "socket_peers_agree": check_socket_peers_agree,
+    "socket_differs_from_solo": check_socket_differs_from_solo,
+    "socket_killed_peer_ends_the_session": check_socket_killed_peer_ends_the_session,
     "loopback_differs_from_solo": check_loopback_differs_from_solo,
     "loopback_held_turn_stalls_then_completes": check_loopback_held_turn_stalls_then_completes,
     "loopback_unreleased_hold_fails_fast": check_loopback_unreleased_hold_fails_fast,

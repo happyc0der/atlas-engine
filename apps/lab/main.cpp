@@ -31,6 +31,7 @@
 #include <atlas/lab/mod_views.hpp>
 #include <atlas/lab/snapshot.hpp>
 #include <atlas/lab/systems.hpp>
+#include <atlas/net/enet_hub.hpp>
 #include <atlas/net/loopback.hpp>
 #include <atlas/net/session.hpp>
 #include <atlas/platform/platform.hpp>
@@ -53,6 +54,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -109,6 +111,13 @@ struct Options {
     std::uint32_t commands_per_tick = 0;
     /// Zero means no loopback session; two or more runs that many peers in this process.
     std::uint32_t loopback_peers = 0;
+    /// Listen for peers on this port, or 0 with --listen to let the operating system choose.
+    bool listen = false;
+    std::uint32_t listen_port = 0;
+    /// How many peers the session has, this one included. Only meaningful with --listen.
+    std::uint32_t expect_peers = 2;
+    /// host:port of a listener to join.
+    std::string_view connect;
     std::uint32_t input_delay = 2;
     std::uint32_t link_latency = 0;
     std::uint64_t link_reorder = 0;
@@ -136,6 +145,11 @@ Options:
   --paused               Start paused.
   --loopback-peers N     Run N peers in this process over an in-memory link and check that
                          they agree hash for hash. 2..8. Default 0, meaning off.
+  --listen [PORT]        Host a session over a socket. 0, or omitted, lets the operating
+                         system choose a port; the port is printed before waiting.
+  --expect N             How many peers the session has, this one included. 2..16.
+                         Only with --listen. Default 2.
+  --connect HOST:PORT    Join a session someone else is hosting.
   --input-delay N        Ticks between stamping a command and running it. 1..16. Default 2.
   --link-latency N       Delivery delay, in receiver polls rather than ticks. 0..16.
   --link-reorder SEED    Reorder messages within a poll, driven by SEED. 0 is off.
@@ -297,6 +311,46 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
             "option; use 2 or more, or leave it out"));
     }
     options.loopback_peers = static_cast<std::uint32_t>(*peers);
+
+    options.listen = args.has("listen");
+    if (options.listen) {
+        // Read as text rather than through `bounded`, because the port is optional: `--listen`
+        // on its own means "choose one for me", which is what a harness running several cases
+        // at once needs and what a person hosting once does not care about.
+        const auto port_text = args.value_or("listen", std::string_view{"0"});
+        std::uint32_t port = 0;
+        if (!port_text.empty()) {
+            const auto* first = port_text.data();
+            const auto* last = first + port_text.size();
+            if (std::from_chars(first, last, port).ec != std::errc{} || port > 65535) {
+                return std::unexpected(atlas::Error(
+                    atlas::ErrorCode::InvalidArgument,
+                    std::format("--listen wants a port in 0..65535, got '{}'", port_text)));
+            }
+        }
+        options.listen_port = port;
+
+        const auto expect = bounded(args, "expect", 2, 2, 16);
+        if (!expect) {
+            return std::unexpected(expect.error());
+        }
+        options.expect_peers = static_cast<std::uint32_t>(*expect);
+    }
+    options.connect = args.value_or("connect", std::string_view{});
+
+    // Both at once would be one process trying to be two ends of the same session, which is
+    // what --loopback-peers already does properly and in one process.
+    if (options.listen && !options.connect.empty()) {
+        return std::unexpected(atlas::Error(atlas::ErrorCode::InvalidArgument,
+                                            "--listen and --connect are two ends of a session "
+                                            "and one process is one end; use --loopback-peers "
+                                            "to be several"));
+    }
+    if ((options.listen || !options.connect.empty()) && options.loopback_peers > 0) {
+        return std::unexpected(atlas::Error(atlas::ErrorCode::InvalidArgument,
+                                            "--loopback-peers runs a session in this process; "
+                                            "--listen and --connect join one over a socket"));
+    }
 
     const auto delay = bounded(args, "input-delay", 2, 1, 16);
     if (!delay) {
@@ -610,6 +664,233 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
     }
     ATLAS_LOG_INFO(kApp, "loaded '{}': tick {} hash {:#018x}", path.string(),
                    simulation.kernel->current_tick(), simulation.lab.world.hash());
+    return atlas::ok();
+}
+
+/// Run one peer of a session carried over a real socket.
+///
+/// **This is M17's whole-program proof, and it is one peer rather than several.** The loopback
+/// runs every participant in one process, which proves the design and cannot prove the
+/// transport: an in-memory link never loses a packet, never refuses a connection, and never
+/// has a process die on the other end of it. Here each peer is its own operating-system
+/// process, and the two agree hash for hash or this binary refuses to exit zero.
+///
+/// The listener prints the port it bound before it waits, which is how a harness can ask for
+/// port zero and still tell the connector where to go. Without that the two sides would have
+/// to agree a constant, and two test cases running at once would fight over it.
+[[nodiscard]] atlas::Status run_socket_peer(const Options& options) {
+    auto runtime = atlas::net::EnetRuntime::create();
+    if (!runtime) {
+        return std::unexpected(std::move(runtime).error().context("the socket library"));
+    }
+
+    // Generous, because a continuous-integration runner under load is slow rather than broken,
+    // and bounded, because a proof that hangs is a job that times out with nothing to read.
+    constexpr auto kConnectTimeout = std::chrono::seconds{30};
+
+    std::unique_ptr<atlas::net::EnetHub> hub;
+    if (options.listen) {
+        auto made = atlas::net::EnetHub::listen(
+            *runtime, static_cast<std::uint16_t>(options.listen_port), options.expect_peers);
+        if (!made) {
+            return std::unexpected(std::move(made).error().context("listening"));
+        }
+        hub = *std::move(made);
+
+        // Printed and flushed before the wait, not after it. A harness that asked for port zero
+        // reads this line to learn where to send the other process, so it has to appear while
+        // this one is still waiting rather than once it has given up.
+        std::printf("listening on port %u\n", static_cast<unsigned>(hub->port()));
+        std::fflush(stdout);
+
+        if (auto status = hub->accept(kConnectTimeout); !status) {
+            return std::unexpected(std::move(status).error().context("waiting for peers"));
+        }
+    } else {
+        const auto colon = options.connect.rfind(':');
+        if (colon == std::string_view::npos) {
+            return atlas::fail(atlas::ErrorCode::InvalidArgument, "--connect wants HOST:PORT");
+        }
+        const std::string_view host = options.connect.substr(0, colon);
+        const std::string_view port_text = options.connect.substr(colon + 1);
+        std::uint32_t port = 0;
+        const auto* first = port_text.data();
+        const auto* last = first + port_text.size();
+        if (std::from_chars(first, last, port).ec != std::errc{} || port == 0 || port > 65535) {
+            return atlas::fail(atlas::ErrorCode::InvalidArgument,
+                               std::format("'{}' is not a port", port_text));
+        }
+
+        auto made = atlas::net::EnetHub::connect(*runtime, host, static_cast<std::uint16_t>(port),
+                                                 kConnectTimeout);
+        if (!made) {
+            return std::unexpected(std::move(made).error().context("connecting"));
+        }
+        hub = *std::move(made);
+    }
+
+    const std::size_t self = hub->local_index();
+
+    auto mod_runtime = open_mod_runtime(options);
+    if (!mod_runtime) {
+        return std::unexpected(std::move(mod_runtime).error());
+    }
+
+    atlas::sim::TurnGate gate;
+    auto made = make_simulation(options, nullptr, &gate);
+    if (!made) {
+        return std::unexpected(std::move(made).error());
+    }
+    auto sim = *std::move(made);
+
+    auto mod = attach_mod(*mod_runtime, options, *sim);
+    if (!mod) {
+        return std::unexpected(std::move(mod).error());
+    }
+    auto player = *std::move(mod);
+
+    const std::uint64_t initial_hash = sim->lab.world.hash();
+
+    auto session = atlas::net::Session::create(
+        hub->end(self), {
+                            .input_delay = options.input_delay,
+                            .hash_check_interval = 16,
+                            .seed = options.seed,
+                            .start_tick = 0,
+                            .initial_state_hash = initial_hash,
+                            .tick_rate = options.ticks_per_second,
+                            .build_id = std::string{atlas::build_info::summary()},
+                        });
+    if (!session) {
+        return std::unexpected(std::move(session).error());
+    }
+    (*session)->set_schedule(&sim->schedule);
+
+    ATLAS_LOG_INFO(kApp, "socket peer {} of {}: initial hash {:#018x}", self, hub->peer_count(),
+                   initial_hash);
+
+    // The handshake is bounded in wall time rather than in polls, unlike the loopback's. A
+    // loopback poll does a fixed amount of work, so counting them is a proxy for progress; over
+    // a socket a poll can do nothing at all while the other process is still starting up, and
+    // counting those would fail a session that was merely waiting for a slower machine.
+    {
+        const auto deadline = std::chrono::steady_clock::now() + kConnectTimeout;
+        while (!(*session)->running()) {
+            if (std::chrono::steady_clock::now() > deadline) {
+                return atlas::fail(atlas::ErrorCode::Unavailable,
+                                   "the handshake did not complete before the deadline");
+            }
+            auto report = (*session)->poll(0, sim->commands, gate);
+            if (!report) {
+                return std::unexpected(std::move(report).error().context("the handshake"));
+            }
+            if (hub->status().ended) {
+                return atlas::fail(
+                    atlas::ErrorCode::Unavailable,
+                    std::format("the link ended during the handshake: {}", hub->status().reason));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
+        ATLAS_LOG_INFO(kApp, "socket handshake agreed, input delay {}", (*session)->agreed_delay());
+    }
+
+    atlas::Tick next_turn = 0;
+    std::uint64_t last_hash = initial_hash;
+    std::size_t applied = 0;
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{120};
+    while (options.max_ticks == 0 || sim->kernel->current_tick() < options.max_ticks) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            return atlas::fail(
+                atlas::ErrorCode::Unavailable,
+                std::format("stopped making progress at tick {}", sim->kernel->current_tick()));
+        }
+        if (hub->status().ended) {
+            // ADR-0017 D5: a peer that goes, ends the session. Reported as the reason the link
+            // gave rather than as a stall, so a killed peer and a hung one read differently.
+            return atlas::fail(atlas::ErrorCode::Unavailable, hub->status().reason);
+        }
+
+        auto report = (*session)->poll(sim->kernel->current_tick(), sim->commands, gate);
+        if (!report) {
+            if ((*session)->divergence().has_value()) {
+                ATLAS_LOG_ERROR(kApp, "socket peer {} {}", self,
+                                (*session)->divergence()->description);
+            }
+            return std::unexpected(std::move(report).error().context("a socket peer"));
+        }
+
+        const atlas::Tick horizon = sim->kernel->current_tick() + options.input_delay;
+        while (next_turn <= horizon) {
+            std::vector<atlas::sim::Command> turn;
+            if (options.commands_per_tick > 0 && next_turn >= options.input_delay) {
+                const auto source = (*session)->self();
+                for (auto& payload : atlas::lab::synthetic_payloads(
+                         next_turn, options.commands_per_tick, options.seed + self,
+                         sim->lab.layout.cell_count())) {
+                    atlas::sim::Command command{
+                        .target = next_turn,
+                        .source = source,
+                        .sequence = sim->commands.next_sequence(source),
+                        .type = atlas::lab::kSetColorIndex,
+                        .payload = std::move(payload),
+                    };
+                    if (auto status = sim->commands.submit_stamped(command); !status) {
+                        return std::unexpected(std::move(status).error());
+                    }
+                    turn.push_back(std::move(command));
+                }
+            }
+            if (auto status = (*session)->send_turn(next_turn, turn, gate); !status) {
+                return std::unexpected(std::move(status).error());
+            }
+            ++next_turn;
+        }
+
+        auto second = (*session)->poll(sim->kernel->current_tick(), sim->commands, gate);
+        if (!second) {
+            return std::unexpected(std::move(second).error().context("a socket peer"));
+        }
+
+        while (sim->kernel->ready()) {
+            run_mod_for_tick(player, *sim, sim->kernel->current_tick(), gate);
+            auto stepped = sim->kernel->step();
+            if (!stepped) {
+                return std::unexpected(std::move(stepped).error());
+            }
+            last_hash = stepped->state_hash;
+            applied += stepped->commands_applied;
+            gate.retire_before(stepped->tick);
+            if (auto status = (*session)->send_hash_check(stepped->tick, stepped->state_hash,
+                                                          stepped->system_hashes);
+                !status) {
+                return std::unexpected(std::move(status).error());
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+
+    // One line per process, in the same shape the loopback prints, so one expression reads both
+    // and a harness comparing two runs compares like with like.
+    std::printf("peer %zu: final tick=%llu state hash=%#018llx commands applied=%zu source=%u "
+                "turns sent=%llu turns received=%llu\n",
+                self, static_cast<unsigned long long>(sim->kernel->current_tick()),
+                static_cast<unsigned long long>(last_hash), applied,
+                static_cast<unsigned>((*session)->self()),
+                static_cast<unsigned long long>((*session)->stats().turns_sent),
+                static_cast<unsigned long long>((*session)->stats().turns_received));
+    report_mod(player, std::format("peer {} ", self));
+    std::printf("socket: peers=%zu agreed hashes=%llu\n", hub->peer_count(),
+                static_cast<unsigned long long>((*session)->stats().hash_checks_agreed));
+    std::fflush(stdout);
+
+    // The binary asserts it rather than leaving it to whoever reads the output. A session that
+    // agreed nothing agreed nothing, however many ticks it ran.
+    if ((*session)->stats().hash_checks_agreed == 0) {
+        return atlas::fail(atlas::ErrorCode::IntegrityCheckFailed,
+                           "the session ran without agreeing a single hash check");
+    }
     return atlas::ok();
 }
 
@@ -1145,6 +1426,10 @@ void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
 
     if (options->loopback_peers > 0) {
         return run_loopback(*options);
+    }
+
+    if (options->listen || !options->connect.empty()) {
+        return run_socket_peer(*options);
     }
 
     if (!options->play_path.empty()) {

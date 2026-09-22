@@ -133,6 +133,13 @@ set(_atlas_lab_headless_cases
     loopback_held_turn_stalls_then_completes
     loopback_unreleased_hold_fails_fast
     loopback_corrupt_turn_is_caught
+    # Two operating-system processes over a real socket. Plain "integration", by decision:
+    # a proof that does not run on the platforms it claims to work on is not a proof, and
+    # these bound their own waits so a hung pair fails inside the harness rather than at the
+    # job's outer timeout.
+    socket_peers_agree
+    socket_differs_from_solo
+    socket_killed_peer_ends_the_session
     replay_detects_tampering
     replay_refuses_wrong_seed
     rejects_unknown_option
