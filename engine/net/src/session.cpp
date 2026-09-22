@@ -25,6 +25,14 @@ constexpr std::size_t kMaxMessagesPerPeerPerPoll = 64;
 /// ticks of tolerance, far more than any input delay.
 constexpr std::size_t kCheckpointsKept = 64;
 
+/// Remote checks held for ticks this peer has not reached yet.
+///
+/// Small on purpose. Under lockstep a peer may only run a tick every participant has reported
+/// for, so it can lead by at most the input delay — a couple of checks at any sane interval.
+/// A peer with more outstanding than this is not merely ahead, it is running a different
+/// session, and saying so is better than growing a queue on its behalf.
+constexpr std::size_t kMaxPendingChecks = 8;
+
 }  // namespace
 
 Session::Session(LinkEnd link, SessionConfig config)
@@ -182,6 +190,78 @@ Status Session::send_turn(Tick tick, std::span<const sim::Command> commands, sim
     return turns.mark_complete(m_self, tick);
 }
 
+/// Compare a remote check against this peer's own, or hold it until there is one.
+///
+/// **The two failure cases are not the same failure, and treating them alike is what M17
+/// found.** A check for a tick older than anything held is a peer on a different schedule, or a
+/// ring too small for the lag — either way there is nothing to compare against and never will
+/// be. A check for a tick this peer has *not reached yet* is ordinary: peers check the same
+/// ticks and arrive at them at different moments, which the in-memory link hid because every
+/// peer there is driven from one loop.
+Status Session::compare_or_hold(std::size_t peer, const HashCheck& check) {
+    // First, and before anything about timing: is this a tick anybody here checks at all? Every
+    // peer checks on the same interval from the same start tick, so one naming a tick off that
+    // interval is on a different schedule and no amount of waiting will produce a counterpart.
+    // Refusing it is what stops the divergence detector being quietly vacuous, and it is a
+    // separate question from whether this peer has got there yet.
+    if (check.tick % m_config.hash_check_interval != 0) {
+        return std::unexpected(Error(
+            ErrorCode::InvalidArgument,
+            std::format("peer {} sent a hash check for tick {}, which this peer did not check "
+                        "because it is not on the check interval of {}; the two are not "
+                        "comparing the same ticks",
+                        peer, check.tick, m_config.hash_check_interval)));
+    }
+
+    const auto mine = std::ranges::find(m_checkpoints, check.tick, &Checkpoint::tick);
+    if (mine != m_checkpoints.end()) {
+        return compare_check(peer, check, *mine);
+    }
+
+    // On the interval but not reached yet: hold it. Not "ignore it" — ignoring is the thing
+    // that would make the detector vacuous, and holding answers it a few ticks later instead.
+    const bool ahead = m_checkpoints.empty() || check.tick > m_checkpoints.back().tick;
+    if (ahead) {
+        if (m_pending_checks.size() >= kMaxPendingChecks) {
+            return std::unexpected(Error(
+                ErrorCode::Exhausted,
+                std::format("peer {} has {} hash checks outstanding for ticks this peer has not "
+                            "reached; under lockstep it cannot legitimately be that far ahead",
+                            peer, m_pending_checks.size())));
+        }
+        m_pending_checks.push_back(check);
+        return {};
+    }
+
+    // On the interval, and older than anything still held. Either this peer lagged far enough
+    // that the ring retired the counterpart, or the two are genuinely out of step. Both are
+    // worth stopping for, and neither is fixable by waiting.
+    return std::unexpected(
+        Error(ErrorCode::InvalidArgument,
+              std::format("peer {} sent a hash check for tick {}, which this peer has already "
+                          "passed and no longer holds; the two are not comparing the same ticks",
+                          peer, check.tick)));
+}
+
+/// The comparison itself, once both halves exist.
+Status Session::compare_check(std::size_t peer, const HashCheck& check, const Checkpoint& mine) {
+    if (mine.state_hash == check.state_hash) {
+        ++m_stats.hash_checks_agreed;
+        return {};
+    }
+
+    static const sim::Schedule kNoSchedule;
+    m_divergence = sim::attribute_divergence(check.tick, mine.state_hash, check.state_hash,
+                                             mine.system_hashes, check.system_hashes,
+                                             m_schedule != nullptr ? *m_schedule : kNoSchedule);
+    // Named with the peer as well as the system: in a three-peer session "system X differs"
+    // without "between me and peer 2" is not a starting point for anybody.
+    m_divergence->description =
+        std::format("{} (between source {} and peer {})", m_divergence->description,
+                    static_cast<std::uint32_t>(m_self), peer);
+    return std::unexpected(Error(ErrorCode::IntegrityCheckFailed, m_divergence->description));
+}
+
 Status Session::send_hash_check(Tick tick, std::uint64_t state_hash,
                                 std::span<const sim::SystemHash> system_hashes) {
     if (m_state != SessionState::Running) {
@@ -198,6 +278,22 @@ Status Session::send_hash_check(Tick tick, std::uint64_t state_hash,
     });
     while (m_checkpoints.size() > kCheckpointsKept) {
         m_checkpoints.pop_front();
+    }
+
+    // Anything that arrived early for this tick can now be answered. Done here rather than in
+    // `poll`, because this is the moment the missing half appears and nowhere else.
+    for (auto pending = m_pending_checks.begin(); pending != m_pending_checks.end();) {
+        if (pending->tick != tick) {
+            ++pending;
+            continue;
+        }
+        const auto held = *pending;
+        pending = m_pending_checks.erase(pending);
+        if (auto status =
+                compare_check(static_cast<std::size_t>(held.source), held, m_checkpoints.back());
+            !status) {
+            return status;
+        }
     }
 
     HashCheck check{
@@ -322,32 +418,7 @@ Status Session::handle(std::size_t peer, const Message& message, Tick now, sim::
                 ErrorCode::InvalidArgument,
                 std::format("peer {} sent a hash check claiming to be another source", peer)));
         }
-        const auto mine = std::ranges::find(m_checkpoints, check->tick, &Checkpoint::tick);
-        if (mine == m_checkpoints.end()) {
-            // Not skipped. Every peer checks on the same interval from the same start tick, so a
-            // check this peer cannot match is a peer checking on a different schedule — and
-            // ignoring it would make the whole divergence detector quietly vacuous.
-            return std::unexpected(
-                Error(ErrorCode::InvalidArgument,
-                      std::format("peer {} sent a hash check for tick {}, which this peer did not "
-                                  "check; the two are not comparing the same ticks",
-                                  peer, check->tick)));
-        }
-        if (mine->state_hash == check->state_hash) {
-            ++m_stats.hash_checks_agreed;
-            return {};
-        }
-
-        static const sim::Schedule kNoSchedule;
-        m_divergence = sim::attribute_divergence(check->tick, mine->state_hash, check->state_hash,
-                                                 mine->system_hashes, check->system_hashes,
-                                                 m_schedule != nullptr ? *m_schedule : kNoSchedule);
-        // Named with the peer as well as the system: in a three-peer session "system X differs"
-        // without "between me and peer 2" is not a starting point for anybody.
-        m_divergence->description =
-            std::format("{} (between source {} and peer {})", m_divergence->description,
-                        static_cast<std::uint32_t>(m_self), peer);
-        return std::unexpected(Error(ErrorCode::IntegrityCheckFailed, m_divergence->description));
+        return compare_or_hold(peer, *check);
     }
 
     if (const auto* bye = std::get_if<Bye>(&message)) {

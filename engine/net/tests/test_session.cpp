@@ -375,6 +375,78 @@ TEST_CASE("a hash check for a tick this peer never checked ends the session", "[
     CHECK(refused.error().message().contains("did not check"));
 }
 
+TEST_CASE("a hash check that arrives before this peer reaches the tick is held", "[net][session]") {
+    // **This is the bug M17 found, and it should not have needed a socket to find it.** Peers
+    // check the same ticks and do not reach them at the same moment; over the in-memory link
+    // every peer is driven from one loop, so a check practically always arrived after the
+    // receiver had computed its own. Over a socket the two processes drift and it arrives
+    // first — constantly, on macOS and Windows, and not on Linux, which is exactly the shape of
+    // a bug that hides.
+    //
+    // Refusing it ended the session on ordinary timing. Ignoring it would make the detector
+    // vacuous. So it is held until the tick arrives, and answered then.
+    Pair pair;
+    pair.settle();
+
+    const std::array<SystemHash, 1> systems{SystemHash{SystemId{7}, 42}};
+
+    // B has reached tick 16 and A has not.
+    REQUIRE(pair.b->send_hash_check(16, 0xABCD, systems).has_value());
+    REQUIRE(pair.a->poll(0, pair.queue_a, pair.gate_a).has_value());
+
+    // Held rather than compared: nothing has agreed and nothing has failed.
+    CHECK(pair.a->stats().hash_checks_agreed == 0);
+    CHECK(pair.a->running());
+    CHECK_FALSE(pair.a->divergence().has_value());
+
+    // A gets there, and the held check is answered at that moment.
+    REQUIRE(pair.a->send_hash_check(16, 0xABCD, systems).has_value());
+    CHECK(pair.a->stats().hash_checks_agreed == 1);
+    CHECK(pair.a->running());
+}
+
+TEST_CASE("a held check that disagrees still stops the session", "[net][session]") {
+    // Holding must not become forgiving. A check that arrives early and turns out to disagree
+    // is a divergence like any other; if this passed, the fix for the timing bug would have
+    // disabled the detector for every early-arriving check, which is most of them over a real
+    // transport.
+    Pair pair;
+    pair.settle();
+
+    const std::array<SystemHash, 1> mine{SystemHash{SystemId{7}, 42}};
+    const std::array<SystemHash, 1> theirs{SystemHash{SystemId{7}, 99}};
+
+    REQUIRE(pair.b->send_hash_check(16, 0x1234, theirs).has_value());
+    REQUIRE(pair.a->poll(0, pair.queue_a, pair.gate_a).has_value());
+    CHECK_FALSE(pair.a->divergence().has_value());
+
+    const auto refused = pair.a->send_hash_check(16, 0xABCD, mine);
+    REQUIRE_FALSE(refused.has_value());
+    REQUIRE(pair.a->divergence().has_value());
+    CHECK(pair.a->divergence()->description.contains("system"));
+}
+
+TEST_CASE("a peer cannot get arbitrarily far ahead with held checks", "[net][session]") {
+    // The producer is a peer, so the queue is bounded. Under lockstep one may only run a tick
+    // every participant has reported for, so it cannot legitimately lead by more than the input
+    // delay -- anything beyond that is a peer running a different session.
+    Pair pair;
+    pair.settle();
+
+    const std::array<SystemHash, 1> systems{SystemHash{SystemId{7}, 42}};
+    atlas::Status last;
+    for (int i = 1; i <= 20; ++i) {
+        REQUIRE(
+            pair.b->send_hash_check(static_cast<atlas::Tick>(16 * i), 0xABCD, systems).has_value());
+        last = pair.a->poll(0, pair.queue_a, pair.gate_a).transform([](auto&&) {});
+        if (!last) {
+            break;
+        }
+    }
+    REQUIRE_FALSE(last.has_value());
+    CHECK(last.error().message().contains("outstanding"));
+}
+
 TEST_CASE("agreeing hashes are counted and disagreeing ones stop the session", "[net][session]") {
     Pair pair;
     pair.settle();

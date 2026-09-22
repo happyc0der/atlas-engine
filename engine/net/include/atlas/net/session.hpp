@@ -210,7 +210,12 @@ class Session final : public sim::CommandSource {
 
     /// The last few hashes this peer computed, so a remote check has something to compare
     /// against. Checkpoints rather than ticks: every peer checks on the same interval from the
-    /// same start tick, so a remote check always names a tick this peer also checked.
+    /// same start tick, so a remote check always names a tick this peer *will* also check.
+    ///
+    /// **"Will", not "did", and M17 is the milestone that found the difference.** Peers check
+    /// the same ticks but do not reach them at the same moment, so a check can arrive before
+    /// this peer has computed the tick it names. Over the in-memory link that almost never
+    /// happened — every peer is driven from one loop — and over a socket it happens constantly.
     struct Checkpoint {
         Tick tick = 0;
         std::uint64_t state_hash = 0;
@@ -218,6 +223,17 @@ class Session final : public sim::CommandSource {
     };
 
     std::deque<Checkpoint> m_checkpoints;
+
+    /// Checks that arrived for ticks this peer has not reached, held until it does.
+    ///
+    /// Bounded, because the producer is a peer. Under lockstep one cannot get far ahead — it
+    /// may only run a tick every participant has reported for — so anything beyond a couple of
+    /// checks outstanding is a peer that is not playing the same game, and is refused as such.
+    std::deque<HashCheck> m_pending_checks;
+
+    [[nodiscard]] Status compare_or_hold(std::size_t peer, const HashCheck& check);
+    [[nodiscard]] Status compare_check(std::size_t peer, const HashCheck& check,
+                                       const Checkpoint& mine);
 
     std::optional<sim::Divergence> m_divergence;
     const sim::Schedule* m_schedule = nullptr;
