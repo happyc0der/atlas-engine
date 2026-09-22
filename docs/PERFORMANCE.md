@@ -1024,6 +1024,47 @@ action, which is why the scenario exists at all.
 state of an interface somebody is still writing, and the `contains`-before-`emplace` guard is
 what keeps a repeatedly-missed key from allocating on every frame that draws it.
 
+## A socket transport, M17: the first prediction in a while that held
+
+Measured in `macos-release` on an idle machine, both hubs in one process over the loopback
+interface.
+
+### The prediction, written before the first run
+
+Committed in `d6587f3`, before any number existed. **Twenty to a hundred microseconds** for a
+round trip, with the uncertainty named rather than hidden: ENet paces its own queues, and if the
+answer landed in *milliseconds* the cause would be that pacing rather than the socket — the fix
+being a flush after every send, which the hub does not do outside the handshake.
+
+### The result
+
+| Scenario | Median | p90 | p99 | Predicted |
+|---|---|---|---|---|
+| `net/socket_roundtrip` | **22.4 µs** | 39.9 µs | 41.9 µs | 20–100 µs |
+
+**The prediction was right, and after four wrong ones in three milestones that is worth saying
+as plainly as the misses were.** M15's mod boundary came in five times faster than predicted,
+and M16's lookup and substitution were both too pessimistic by two to three times. This one
+landed at the low end of its stated range, and the failure mode it named — ENet's own pacing
+pushing the answer into milliseconds — did not happen.
+
+The reason it held where the others did not is worth a line: this prediction was dominated by
+**system calls**, whose cost is a property of the kernel and well known, while the others were
+dominated by guesses about how long arithmetic and small allocations take on a processor this
+project had not measured them on.
+
+### What it means
+
+**A round trip is 0.13% of a 16.6 ms tick**, so the transport is nowhere near being the thing
+that paces a session. What would have mattered is a round trip in the *tens of milliseconds*,
+because that exceeds a tick and turns the input-delay window into a stall. That is the number
+this scenario exists to notice, and it is two orders of magnitude away.
+
+**What this does not measure is a network**, and nothing in this repository can. Two processes
+on one machine share a kernel and never leave it. Latency between two real machines is a
+property of the wire, which is exactly why ADR-0014 has an input-delay window at all: the number
+that matters is unknowable from here, so the design absorbs it rather than assuming it.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.

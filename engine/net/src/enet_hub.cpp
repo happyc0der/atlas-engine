@@ -233,7 +233,11 @@ Status EnetHub::send(std::size_t from, std::size_t to, std::span<const std::byte
 }
 
 void EnetHub::pump(std::size_t peer) {
+    // A socket hub has one end and it is this process's. The loopback can pump any index
+    // because every peer lives in one process; here the parameter exists only to satisfy the
+    // interface, and the assertion is what says so.
     ATLAS_ASSERT_MSG(peer == m_impl->local, "a socket hub pumps only its own end");
+    (void)peer;  // The assertion is its only use, and assertions compile out under NDEBUG.
     if (m_impl->status.ended) {
         return;
     }
