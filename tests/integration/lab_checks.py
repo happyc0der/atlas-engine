@@ -840,8 +840,18 @@ def check_socket_killed_peer_ends_the_session(binary: str) -> None:
     if code == 0:
         raise CheckFailed("the listener exited zero after losing its peer; a session that lost "
                           "a participant did not succeed")
-    expect_contains(session.listener_text(), "disconnected",
-                    "the listener said which peer went")
+
+    # **Either reason is correct, and asserting one of them was this case's own bug.** A killed
+    # process never says goodbye, so whether the listener notices by its socket closing -- which
+    # ENet reports as a disconnect -- or by nobody having been heard from depends on whether the
+    # operating system delivered the close, and that varies by platform and by timing. It
+    # noticed on macOS Debug by the first route and on macOS Release by the second.
+    #
+    # What the case is named for, and what matters, is that the session ended rather than
+    # hanging. Pinning the mechanism asserted how it found out instead.
+    text = session.listener_text()
+    if "disconnected" not in text and "heard from" not in text:
+        raise CheckFailed("the listener stopped without saying its peer had gone\n" + text)
 
 
 CASES = {
