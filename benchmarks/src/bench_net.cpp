@@ -34,8 +34,45 @@
 //
 // Being wrong here is fine and is the point of writing it down. Being unable to be wrong is not.
 // ---------------------------------------------------------------------------------------
+//
+// M17 adds one more:
+//
+//   net/socket_roundtrip — one message from one process to another over the loopback network
+//                          interface and back, through `EnetHub`. Two hubs in this process,
+//                          which is not two machines: what it measures is the host's own
+//                          send-and-receive path, not a network.
+//
+// ---------------------------------------------------------------------------------------
+// PREDICTION for the socket scenario, written before the first run and committed before the
+// numbers exist.
+//
+// **20 to 100 microseconds for a round trip.** A message goes through ENet's reliability
+// bookkeeping, a `sendto` into the kernel, the loopback interface, a `recvfrom` in the other
+// hub's `enet_host_service`, and the same again coming back. Two system calls each way is
+// several microseconds before anything else happens, and ENet services its own queues on a
+// timer granularity it controls.
+//
+// **The honest uncertainty is ENet's internal pacing, and it is large.** ENet batches outgoing
+// packets and flushes on `enet_host_service`; with a zero timeout it flushes what is ready and
+// returns, but whether a reply comes back on the next service call or the one after is a
+// property of its scheduler rather than of this code. If the answer lands in the *milliseconds*
+// the cause is that pacing, not the socket, and the fix would be `enet_host_flush` after every
+// send — which this hub does not currently do outside the handshake.
+//
+// **The claim this is expected to support is narrow, and narrower than the other scenarios'.**
+// Lockstep runs at the pace of the slowest participant and a tick is 16.6 ms at sixty a second,
+// so even the pessimistic end of this range is under one per cent of a tick. What would matter
+// is a round trip in the *tens* of milliseconds, because that would exceed a tick and turn the
+// input delay into a stall. This number exists to notice that, not to be optimised.
+//
+// **What this deliberately does not measure is the network**, and no benchmark in this
+// repository can. Two processes on one machine share a kernel and never leave it; latency
+// between two real machines is a property of the wire, and the input-delay window exists
+// precisely because that number is unknowable from here.
+// ---------------------------------------------------------------------------------------
 
 #include <atlas/core/assert.hpp>
+#include <atlas/net/enet_hub.hpp>
 #include <atlas/net/loopback.hpp>
 #include <atlas/net/message.hpp>
 #include <atlas/net/session.hpp>
@@ -44,10 +81,12 @@
 
 #include "harness.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <format>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -109,7 +148,78 @@ struct Participant {
     atlas::Tick next_turn = 0;
 };
 
-[[nodiscard]] std::vector<Result> run() {
+[[nodiscard]]  /// One message there and back over real sockets.
+///
+/// Both hubs are in this process, which is what makes the scenario runnable at all — a
+/// benchmark cannot start a second process and still be a benchmark. It measures the host's
+/// send-and-receive path and says nothing about a network.
+[[nodiscard]] std::vector<Result> socket_results() {
+    std::vector<Result> results;
+
+    auto runtime = atlas::net::EnetRuntime::create();
+    if (!runtime) {
+        // Not fatal to the whole group. A machine with no loopback networking should still be
+        // able to report the three scenarios above rather than abort.
+        std::fprintf(stderr, "bench_net: no socket library, skipping the socket scenario\n");
+        return results;
+    }
+
+    auto listener = atlas::net::EnetHub::listen(*runtime, 0, 2);
+    if (!listener) {
+        std::fprintf(stderr, "bench_net: could not listen, skipping the socket scenario\n");
+        return results;
+    }
+    const std::uint16_t port = (*listener)->port();
+
+    auto joined = std::async(std::launch::async, [&runtime, port] {
+        return atlas::net::EnetHub::connect(*runtime, "127.0.0.1", port, std::chrono::seconds{10});
+    });
+    if (!(*listener)->accept(std::chrono::seconds{10})) {
+        die("accept");
+    }
+    auto connector = joined.get();
+    if (!connector) {
+        die("connect");
+    }
+
+    const std::vector<std::byte> message(256, std::byte{0x3C});
+
+    // Fewer iterations than the in-memory scenarios by two orders of magnitude, because each
+    // one is a pair of system calls rather than a memcpy, and a benchmark that takes a minute
+    // to say one number is a benchmark nobody runs.
+    results.push_back(atlas::bench::measure("net/socket_roundtrip", "bytes=256", 2'000, 200, [&] {
+        if (!(*listener)->send(0, 1, message)) {
+            die("send");
+        }
+        // Pump both until it comes back, which is the round trip: the reply is sent by the
+        // connector the moment it sees the request, so this times the whole path rather
+        // than one direction with a guess about the other.
+        auto& there = (*connector)->inbox(1, 0);
+        auto& back = (*listener)->inbox(0, 1);
+        std::vector<std::vector<std::byte>> drained;
+        bool replied = false;
+        for (int spin = 0; spin < 100'000; ++spin) {
+            (*listener)->pump(0);
+            (*connector)->pump(1);
+            if (!replied && there.depth() > 0) {
+                there.drain(drained);
+                if (!(*connector)->send(1, 0, message)) {
+                    die("reply");
+                }
+                replied = true;
+            }
+            if (back.depth() > 0) {
+                back.drain(drained);
+                return;
+            }
+        }
+        die("the message never came back");
+    }));
+
+    return results;
+}
+
+std::vector<Result> run() {
     std::vector<Result> results;
 
     for (const std::size_t peers : {std::size_t{2}, std::size_t{4}}) {
@@ -194,6 +304,10 @@ struct Participant {
                     die("decode");
                 }
             }));
+    }
+
+    for (auto& result : socket_results()) {
+        results.push_back(std::move(result));
     }
 
     return results;
