@@ -795,7 +795,14 @@ def check_socket_differs_from_solo(binary: str) -> None:
         session.start()
         listener_code, connector_code = session.wait()
     if listener_code != 0 or connector_code != 0:
-        raise CheckFailed("the socket pair did not finish cleanly")
+        # With the logs, because without them a failure here says only that something went
+        # wrong. This case failed once on a continuous-integration runner and could not be
+        # diagnosed from its own output, which is a defect in the check rather than in the code
+        # it was checking -- its sibling above had said this properly all along.
+        raise CheckFailed(
+            f"the socket pair did not finish cleanly "
+            f"(listener {listener_code}, connector {connector_code})\n"
+            f"listener:\n{session.listener_text()}\nconnector:\n{session.connector_text()}")
     paired = peer_hashes(session.listener_text())
 
     solo = run(binary, ["--headless", *shared])

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <format>
 #include <string>
@@ -156,20 +157,51 @@ EnetHub::~EnetHub() {
         return;
     }
 
-    // **Say goodbye before closing, rather than just closing.** Destroying the host drops the
-    // socket without telling anyone, so every peer would sit waiting for a timeout to decide
-    // something it could have been told immediately — ten seconds of a session that is already
-    // over. `_now` rather than the graceful form because a destructor must not wait: this
-    // queues the notification and sends it in the same call.
+    // **Say goodbye, but deliver what was already said first.**
     //
-    // A process that is killed outright cannot do this, which is exactly why the timeout in
-    // `pump` exists as well. The two cover different failures and neither replaces the other.
+    // This used `enet_peer_disconnect_now`, which was wrong in a way its own name hides: that
+    // call begins with `enet_peer_reset_queues`, so it **discards every queued outgoing
+    // packet** and, in ENet's words, the foreign peer "is not guaranteed to receive the
+    // disconnect notification". A peer reaching the end of its run would throw away turns its
+    // partner was still waiting for — which is a lost message, the one thing a lockstep
+    // transport may never produce.
+    //
+    // `_later` disconnects only once the outgoing queue has drained, and it needs servicing to
+    // get there, so this waits. Bounded, because a destructor that can hang is worse than one
+    // that gives up: past the budget the remaining peers are reset and whatever is left is
+    // lost, which is the old behaviour as a last resort rather than as the first move.
+    constexpr auto kDrainBudget = std::chrono::milliseconds{500};
+
+    bool anything_to_send = false;
     for (ENetPeer* peer : m_impl->peers) {
         if (peer != nullptr) {
-            enet_peer_disconnect_now(peer, 0);
+            enet_peer_disconnect_later(peer, 0);
+            anything_to_send = true;
         }
     }
-    enet_host_flush(m_impl->host);
+
+    if (anything_to_send) {
+        const auto deadline = std::chrono::steady_clock::now() + kDrainBudget;
+        while (std::chrono::steady_clock::now() < deadline) {
+            ENetEvent event{};
+            const int serviced = enet_host_service(m_impl->host, &event, 10);
+            if (serviced > 0 && event.type == ENET_EVENT_TYPE_RECEIVE) {
+                // Arrived while shutting down. Nothing will read it, but it must be freed or
+                // the address sanitiser reports the leak — correctly.
+                enet_packet_destroy(event.packet);
+            }
+            if (serviced < 0) {
+                break;
+            }
+            const bool outstanding = std::ranges::any_of(m_impl->peers, [](const ENetPeer* peer) {
+                return peer != nullptr && peer->state != ENET_PEER_STATE_DISCONNECTED;
+            });
+            if (!outstanding) {
+                break;
+            }
+        }
+    }
+
     enet_host_destroy(m_impl->host);
 }
 
