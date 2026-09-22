@@ -9,6 +9,7 @@ atlas_add_test(net
         test_inbox.cpp
         test_inbox_threads.cpp
         test_link.cpp
+        test_enet_hub.cpp
         test_loopback.cpp
         test_message.cpp
         test_protocol.cpp

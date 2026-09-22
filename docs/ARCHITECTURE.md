@@ -143,7 +143,7 @@ declaration. Its only permitted consumer is `atlas::rhi`.
 | scene | Presentation entities, transforms, hierarchy, serialization | Is the grand-strategy database |
 | animation | Clip evaluation, the clip cache, and the derived pose it writes | Writes an authored component, or produces anything that is hashed |
 | simulation | Ticks, commands, system contracts, RNG, hashing, replay, snapshots | Contains game rules |
-| net | Lockstep sessions, turns, the message codec, a bounded inbox, an in-memory link | Owns a transport, or reaches the world, the scene or anything that draws |
+| net | Lockstep sessions, turns, the message codec, a bounded inbox, an in-memory link, and a socket transport behind `net::Link` (ADR-0017) | Reaches the world, the scene or anything that draws; owns a thread, or lets a socket type into a header |
 | script | The WebAssembly sandbox, the mod loader, the instruction and memory budgets, the mod host | Gives a guest any authority it was not handed, or lets one reach state except through a command |
 | text | String tables as assets, the catalog that finalises them, and a substituter that cannot throw | Formats with the standard library's runtime path, or holds a string the log also has to print |
 | runtime | Composition, main loop, subsystem lifetimes | Depends on tools or editor code |

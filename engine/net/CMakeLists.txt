@@ -20,6 +20,7 @@ find_package(unofficial-enet CONFIG REQUIRED)
 
 atlas_add_module(net
     SOURCES
+        src/enet_hub.cpp
         src/inbox.cpp
         src/link.cpp
         src/loopback.cpp
@@ -27,6 +28,7 @@ atlas_add_module(net
         src/message.cpp
         src/protocol.cpp
     HEADERS
+        include/atlas/net/enet_hub.hpp
         include/atlas/net/inbox.hpp
         include/atlas/net/link.hpp
         include/atlas/net/loopback.hpp

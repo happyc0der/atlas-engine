@@ -154,6 +154,28 @@ It also exposed a second inconsistency, fixed in prose rather than in numbers:
 `kMaxCommandsPerTurn` times the command queue's payload ceiling permits a turn of roughly 256
 MiB, so **the binding constraint on a turn is the message cap and not the command counter**.
 
+**10. ENet's process-wide initialisation is owned by an RAII object, not hidden in the hub.**
+
+This decision was missing when this record was first written on 2026-09-20 and is added here
+rather than discovered in the implementation. `enet_initialize()` calls `WSAStartup` on Windows
+and must be paired with `enet_deinitialize()`; it is process-wide state, and CLAUDE.md permits
+exactly one such object — the log sink registry — with [ADR-0015](0015-sandboxed-mods.md)'s
+`script::Runtime` already recorded as the second.
+
+`net::EnetRuntime` is the third, and it takes the same shape for the same reasons: created once
+by the composition root, at most one alive at a time, asserting rather than returning an error
+on a second, because two of them is a programmer error and not a condition to recover from.
+
+**The alternative — a reference-counted static inside `EnetHub` — is refused.** It would make
+the initialisation invisible at every call site, which is precisely the "hidden global mutable
+state" CLAUDE.md forbids, and it would tie the lifetime of Winsock to whichever hub happened to
+be destroyed last. A socket library coming up and going down as a side effect of constructing a
+session object is the kind of ordering nobody can debug when it goes wrong.
+
+The cost is one more thing a composition root must remember, which is the same cost
+`script::Runtime` and `platform::Platform` already impose, and is paid in the one place that
+knows the whole program's lifetime.
+
 ## Alternatives
 
 **SDL3_net.** Adds no package the project does not already have — its only dependency is
