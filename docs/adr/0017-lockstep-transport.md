@@ -3,8 +3,18 @@
 
 ## Status
 
-**Proposed**, 2026-09-20. M17 builds it; this record becomes Accepted when it is in force, as
-the legend in this index requires.
+**Accepted**, 2026-09-22, implemented in M17.
+
+Proposed when it was written on 2026-09-20, because a milestone still had to build it — the
+legend in this index reserves Accepted for a record that is in force.
+
+**D10 was added during the milestone rather than at the start**, and is marked as such at its own
+heading: ENet's process-wide initialisation needed an owner, and the first version of this record
+had not noticed. It was written before the code that needed it, not after.
+
+Every other decision survived implementation unchanged, including the one most at risk of not
+surviving: the transport's deadline for a quiet peer did not have to reach into the turn gate,
+so ADR-0014's central invariant is intact.
 
 Answers the five criteria [ADR-0014](0014-deterministic-lockstep.md) decision 9 recorded rather
 than resolved, and **supersedes that decision in part**: 0014 says *"No transport is chosen here

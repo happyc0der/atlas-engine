@@ -81,8 +81,14 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   It contains no game rules.
 - Under lockstep a tick runs only when every expected source has reported, and **readiness
   depends on who has reported and never on elapsed time** (ADR-0014). No timeout lives in the
-  gate: what to do about a silent peer is a transport policy and arrives as a change to the
-  expectation set.
+  gate: what to do about a silent peer is a transport policy, and since ADR-0017 that policy is
+  to end the session. Dropping a peer and continuing is simulation-visible — every remaining
+  peer must apply the drop at the identical tick or diverge — so it needs an agreement protocol
+  and is deferred.
+- **A transport decides when a turn arrives, never whether it is applied.** A turn is stamped
+  with its tick before it is sent; one that arrives late is a protocol violation rather than a
+  command applied at the wrong moment. The transport lives behind `net::Link`, no socket type
+  appears in any header, and `net`'s module edges stay `core;simulation`.
 - A gate check goes **before** the command drain. `drain` removes what it returns, so refusing a
   tick after it discards that tick's commands and the retry reaches a different state from every
   peer.

@@ -510,9 +510,20 @@ reader's, are in [ADR-0013](adr/0013-animation-clip-format.md).
 ## Networking
 
 Deterministic lockstep over the command queue, and nothing else — the meaning ADR-0010 fixed and
-[ADR-0014](adr/0014-deterministic-lockstep.md) designs. **There is no transport**, by decision,
-and nothing was added to `vcpkg.json`. What exists is the shape a transport would plug into, and
-an in-memory link that exercises it hard enough to be worth something.
+[ADR-0014](adr/0014-deterministic-lockstep.md) designs. Until M17 there was **no transport** by
+decision, and nothing in `vcpkg.json`; [ADR-0017](adr/0017-lockstep-transport.md) chose ENet
+against the five criteria 0014 recorded, and two processes now agree hash for hash over a real
+socket.
+
+**Everything a session does sits behind `net::Link`**, an interface of four calls. The in-memory
+hub and the socket hub both implement it, and `net::Session` cannot tell them apart — which is
+what makes the loopback suite the proof that the seam is real: it did not change when the socket
+arrived. No ENet type appears in any header, so replacing the transport would touch one class.
+
+**Direct address only**: connect by host and port. No encryption, no traversal, no lobby, each
+deferred with a trigger. And **a peer that goes quiet ends the session** rather than being
+dropped, because dropping it is simulation-visible — every remaining peer would have to apply
+the drop at the identical tick or diverge, which needs an agreement protocol of its own.
 
 **A tick runs only when every participant has said what it is doing on that tick.** Every peer
 then applies the same commands in the same order, in the total order `(source, sequence)` fixes,

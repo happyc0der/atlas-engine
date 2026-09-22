@@ -24,7 +24,7 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0011](0011-audio.md) | Audio: SDL output, main-thread push mixing, decoders in assets | Accepted |
 | [0012](0012-scene-format-v2.md) | Scene format version 2, the append rule, and two writers on one entity | Accepted |
 | [0013](0013-animation-clip-format.md) | Animation clip file format | Accepted |
-| [0014](0014-deterministic-lockstep.md) | Deterministic lockstep over the command queue | Accepted; decision 9 superseded by 0017 when M17 lands |
+| [0014](0014-deterministic-lockstep.md) | Deterministic lockstep over the command queue | Accepted; decision 9 superseded by 0017 |
 | [0015](0015-sandboxed-mods.md) | Sandboxed mods: WebAssembly, behind the command queue | Accepted |
 | [0016](0016-string-tables.md) | String tables: one lookup, one substituter, English only | Accepted |
-| [0017](0017-lockstep-transport.md) | A transport for lockstep: ENet, polled, direct address only | Proposed |
+| [0017](0017-lockstep-transport.md) | A transport for lockstep: ENet, polled, direct address only | Accepted |

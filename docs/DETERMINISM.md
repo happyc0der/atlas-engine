@@ -32,6 +32,19 @@ has reported. So a slow peer changes *when* a tick runs and never *which command
 a stall is counted separately from a dropped tick precisely because the two are opposite things.
 See [ADR-0014](adr/0014-deterministic-lockstep.md).
 
+**A real socket changes none of that, and M17 is the milestone that proved it rather than
+assumed it.** Two processes on two ends of a network interface reach the same hash at the same
+tick, because the transport only ever decides *when* a turn arrives and never *whether* it is
+applied: a turn is stamped with the tick it belongs to before it is sent, and a turn that
+arrives late is a protocol violation rather than a command applied at the wrong moment.
+
+**The one deadline in the design lives in the transport and not in the gate.** A peer that has
+gone quiet for long enough ends the session ([ADR-0017](adr/0017-lockstep-transport.md) D5), and
+the gate never learns that a clock exists — readiness still depends only on who has reported.
+Dropping a quiet peer and playing on would be the decision that broke this, because it is
+simulation-visible: two peers applying the same drop at different ticks compute different
+states, which is why it is deferred rather than defaulted.
+
 **A session between different builds is permitted only when both peers produce the same golden
 hashes**, exchanged at the handshake and refused on a mismatch. That is a probe rather than a
 proof: two builds agreeing about the fixed scenario agree about the simulation as far as anything

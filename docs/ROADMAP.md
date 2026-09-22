@@ -25,6 +25,7 @@ Status legend: **done**, *in progress*, planned.
 | M14 | Networking: lockstep design and loopback proof | M | **done** |
 | M15 | Sandboxed mods | L | **done** |
 | M16 | Localisation: string tables, English | S | **done** |
+| M17 | A transport for lockstep | M | **done** |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1204,6 +1205,49 @@ a rule is exactly where a discrepancy hides.
 default atlas, so French, German, Spanish and Italian would work from a translated file and
 Polish, Greek, Russian and every CJK language would show blanks. Recorded before any of the
 milestone was built, rather than discovered after somebody shipped a Polish table.
+
+## M17 — A transport for lockstep
+
+Full report: [reports/M17.md](reports/M17.md).
+
+Slices: the sweep; [ADR-0017](adr/0017-lockstep-transport.md) at a gate; the `net::Link` seam;
+the dependency and the hub at a second gate; the lab and two processes; the benchmark and the
+documents.
+
+**Exit criteria**
+- A legal message can be received, and the two bounds that disagreed become one rule.
+- A record accepted at a gate, answering ADR-0014's five criteria one at a time.
+- A transport behind an interface, with the loopback tests unchanged as the proof of the seam.
+- Two processes agreeing hash for hash over a socket, and a killed peer ending the session
+  rather than hanging.
+- No new thread, and ARCHITECTURE's "No new thread" sentence still true and unedited.
+- Measured against a prediction written first.
+
+| Criterion | Status |
+|---|---|
+| The bounds reconciled | **Met.** `kMaxMessageBytes` was 8 MiB against an inbox budget of 1 MiB, so every message between them was legal to send and impossible to receive. A `static_assert` ties them now. Planning found a second disagreement and it is recorded rather than fixed: the command count times the payload ceiling permits a 256 MiB turn, so the *message cap* binds a turn's size and not the counter. |
+| A record at a gate | **Met, and two of three candidates were eliminated by criteria this project wrote down before it knew they existed.** GameNetworkingSockets carries `"supports": "!uwp & !(arm64 & windows)"`; SDL3_net is a socket wrapper rather than a reliable ordered channel, and the only candidate needing a `net → platform` edge. |
+| The seam | **Met.** `net::Link` is four calls. Every existing net test passed unchanged — none of them names `LinkEnd` — and `session.hpp` no longer includes the loopback at all. |
+| Two processes agree | **Met.** Both reach the same hash at the same tick over a real socket, with the anti-vacuity half in its own case: a pair must not reach a solo run's hash. Verified the case can fail by making the hub drop what it receives. |
+| A killed peer | **Met, and it needed two mechanisms.** A hub says goodbye in its destructor; a process killed outright cannot, so the transport's deadline notices instead. The first draft had only the graceful case and it failed, which is how the gap was found. |
+| No new thread | **Met.** ARCHITECTURE's sentence and its threading table are both unedited, and `net`'s module edges are still `core;simulation` — ENet links `PRIVATE`. |
+| Measured against a prediction written first | **Met, and for once the prediction held.** 22.4 µs against a predicted 20–100, after four wrong ones in three milestones. |
+
+### What choosing ENet actually bought
+
+The clearest measure is what did **not** change. `cmake/ModuleGraph.cmake` is untouched; so is
+the mermaid diagram; so are CLAUDE.md's SDL rules. SDL3_net looked cheapest in the manifest —
+one already-pinned dependency — and would have cost a `net → platform` edge that the module
+table forbids by name, cascading into six places. The module that is pure state exchange would
+have acquired the engine's heaviest presentation dependency in order to obtain a socket.
+
+### The deadline that does not break determinism
+
+A quiet peer ends the session, and the deadline for deciding it lives in the transport. The turn
+gate still reads no clock, so ADR-0014's central invariant is intact rather than merely
+respected. The alternative — dropping a peer and continuing — is deferred with its reason:
+every remaining peer would have to apply the drop at the identical tick or diverge, which needs
+an agreement protocol whose subtle failure is the exact thing lockstep exists to prevent.
 
 ## First continuous integration
 

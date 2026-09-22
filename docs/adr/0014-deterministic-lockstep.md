@@ -20,7 +20,8 @@ sentences above stop describing the tree when M17 lands. They are left standing 
 edited, because what this record decided without a transport is the part worth being able to
 read later. **Decisions 1 to 8 stand unchanged**, and decision 3 — readiness depends on who has
 reported and never on elapsed time — is the invariant 0017 is answerable to: the deadline for a
-silent peer lives in the transport, and the gate still reads no clock.
+silent peer lives in the transport, and the gate still reads no clock. **It was accepted on
+2026-09-22 when M17 closed, and is in force.**
 
 0017 also answers, rather than supersedes, the question this record left open at decision 3:
 what to do about a peer that has stopped reporting. The answer is that it ends the session,
