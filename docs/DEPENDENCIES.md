@@ -31,6 +31,7 @@ distribution. All current dependencies are permissive and therefore compatible.
 | EnTT | Scene entity storage | 3.16.0 | MIT | Yes | Permitted in `atlas/scene` headers by ADR-0004; in practice private to `scene/src` | M5 |
 | nlohmann-json | Reading and writing the scene file, and reading animation clips and string tables | 3.12.0, port-version 2 | MIT | Yes | Private to `scene/src` and `assets/src`; no JSON type appears in any Atlas header, and `atlas::text` receives plain strings rather than linking this | M5, second consumer M13, third call site M16 |
 | WAMR | The WebAssembly interpreter sandboxed mods run in | WAMR-2.4.5, pinned by REF and SHA512 in `external/vcpkg-overlays/wasm-micro-runtime/portfile.cmake`. **The only overlay port in this project**, because no WebAssembly runtime exists in vcpkg — not at our baseline and not upstream, checked 2026-09-18 | Apache-2.0 WITH LLVM-exception | Yes, one way, the same footing as SPIRV-Cross | Private to `script/src`; no WebAssembly type appears in any Atlas header, which is what keeps ADR-0015's Luau fallback real | M15 |
+| ENet | The reliable-ordered UDP transport a lockstep session runs over (ADR-0017) | 1.3.18, pinned in `vcpkg.json` | MIT. **The port declares no licence** and defers to the upstream `LICENSE`, so it was read rather than assumed: the archive the portfile pins was fetched, its SHA512 matched, and both hashes are recorded in [ADR-0017](adr/0017-lockstep-transport.md) | Yes, one way | Private to `net/src`; no ENet type appears in any Atlas header, which is what keeps the transport swappable behind `net::Link` | M17 |
 
 Dependencies are added in the milestone that first needs them, never in advance.
 
@@ -107,6 +108,7 @@ order fails to compile rather than aborting at run time.
 | Catch2 | Another test framework | Mechanical test rewrite |
 | stb_image | libpng plus libjpeg-turbo | Rewriting one importer |
 | nlohmann-json | Another JSON library, or a bespoke format | Rewriting `scene/src/serialization.cpp`, `assets/src/animation_clip.cpp` and `assets/src/string_table.cpp`; no caller changes. The last of those also uses the SAX interface, which not every library has an equivalent of |
+| ENet | GameNetworkingSockets, SDL3_net, or reliability written here | Rewriting `net/src/enet_hub.cpp` behind the `net::Link` interface; no caller changes, and the loopback is unaffected |
 
 ## Update policy
 

@@ -7,9 +7,17 @@
 # because a mod is also a command source and must not depend on networking for an interface
 # about the command queue.
 #
-# No transport, by decision. There is no socket in this milestone and nothing here reaches
-# vcpkg.json; what this module provides is the shape a transport would plug into, and a
-# loopback link that exercises it hard enough to be worth something.
+# ENet is the transport, chosen by ADR-0017 and linked PRIVATE, exactly as audio links SDL3.
+# **No ENet type appears in any header**, which is what keeps the choice reversible: the socket
+# hub is one implementation of `net::Link`, and swapping it would touch one class rather than
+# every caller.
+#
+# The reason this is a PRIVATE_DEPS line and not a DEPENDS one is the whole argument of
+# ADR-0017. SDL3_net would have needed `net -> platform`, an edge ModuleGraph.cmake forbids by
+# name; ENet opens its own sockets and needs nothing from this engine. So `net`'s module edges
+# are still core;simulation, and the diagram is unchanged.
+find_package(unofficial-enet CONFIG REQUIRED)
+
 atlas_add_module(net
     SOURCES
         src/inbox.cpp
@@ -28,7 +36,24 @@ atlas_add_module(net
     DEPENDS
         core
         simulation
+    PRIVATE_DEPS
+        unofficial::enet::enet
 )
+
+# Winsock and the multimedia timer, on Windows, from this side.
+#
+# **ENet does not link them for MSVC and this is not an oversight to report upstream** — the
+# port's own patch adds `winmm ws2_32` under `if (MINGW)` only, and the source carries no
+# `#pragma comment(lib, ...)`, so a Microsoft-toolchain consumer supplies them itself. Without
+# this line the Windows lanes fail at link with unresolved `WSAStartup`, `socket` and
+# `timeGetTime` — seventeen Winsock call sites and five timer ones — and nothing on macOS or
+# Linux would ever have said so.
+#
+# Found by reading the port and the upstream CMakeLists before the first push rather than by
+# watching a lane go red, which is what M15's three continuous-integration failures bought.
+if(WIN32)
+    target_link_libraries(atlas_net PRIVATE ws2_32 winmm)
+endif()
 
 if(ATLAS_BUILD_TESTS)
     add_subdirectory(tests)
