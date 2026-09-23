@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <atlas/chess/position.hpp>
 #include <atlas/chess/world.hpp>
 #include <atlas/core/assert.hpp>
 
@@ -21,13 +22,6 @@ template <typename T>
     ATLAS_ASSERT_MSG(table != nullptr, "a chess table is missing or of the wrong type");
     return *table;
 }
-
-/// The back rank, king's side to the right: rook, knight, bishop, queen, king, bishop, knight,
-/// rook. Files a to h.
-constexpr std::array<PieceKind, kFileCount> kBackRank{
-    PieceKind::Rook, PieceKind::Knight, PieceKind::Bishop, PieceKind::Queen,
-    PieceKind::King, PieceKind::Bishop, PieceKind::Knight, PieceKind::Rook,
-};
 
 }  // namespace
 
@@ -63,15 +57,7 @@ Result<ChessWorld> make_world() {
 }
 
 void set_start_position(sim::World& world, const TableIds& ids) {
-    auto& board = board_table(world, ids);
-    board.clear();
-    for (std::uint8_t file = 0; file < kFileCount; ++file) {
-        board.put(square(file, 0), make_piece(Colour::White, kBackRank[file]));
-        board.put(square(file, 1), Piece::WhitePawn);
-        board.put(square(file, 6), Piece::BlackPawn);
-        board.put(square(file, 7), make_piece(Colour::Black, kBackRank[file]));
-    }
-    state_table(world, ids).clear();
+    Position::start().write_tables(board_table(world, ids), state_table(world, ids));
     history_table(world, ids).clear();
     result_table(world, ids).clear();
     // Players are deliberately left as they are: who holds which colour is the application's
