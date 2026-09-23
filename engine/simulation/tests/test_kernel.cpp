@@ -2,6 +2,7 @@
 #include <atlas/core/assert.hpp>
 #include <atlas/simulation/kernel.hpp>
 
+#include "synthetic_scenario.hpp"
 #include "synthetic_systems.hpp"
 #include <catch2/catch_test_macros.hpp>
 
@@ -20,9 +21,12 @@ using atlas::sim::KernelConfig;
 using atlas::sim::SourceId;
 using atlas::sim::TurnGate;
 using atlas::sim::World;
+using atlas::sim::testing::bump_payload;
 using atlas::sim::testing::Harness;
 using atlas::sim::testing::increment_values;
+using atlas::sim::testing::kBump;
 using atlas::sim::testing::random_into_counter;
+using atlas::sim::testing::Scenario;
 using atlas::sim::testing::sum_into_counter;
 using atlas::sim::testing::ValueTable;
 
@@ -503,4 +507,66 @@ TEST_CASE("running zero ticks does nothing", "[sim][kernel]") {
     CHECK(reports->empty());
     CHECK(kernel.current_tick() == 0);
     CHECK(h.world.hash() == before);
+}
+
+TEST_CASE("a declined command is its own fate and changes nothing", "[sim][kernel]") {
+    // ADR-0019. A bump to a row the table does not have is well-formed and on time, and the
+    // world refuses it. That is neither late nor invalid: `commands_rejected()` stays at zero,
+    // the decline is counted on its own, and — measured against a twin kernel that was sent
+    // nothing — the tick's hash is what it would have been anyway.
+    Scenario declined;
+    Scenario twin;
+    Kernel kernel(declined.h.world, declined.h.schedule, declined.h.commands,
+                  KernelConfig{.seed = 99, .record_applied_commands = true});
+    Kernel kernel_twin(twin.h.world, twin.h.schedule, twin.h.commands, KernelConfig{.seed = 99});
+
+    REQUIRE(
+        declined.h.commands.submit(0, SourceId::Local, kBump, bump_payload(255, 5)).has_value());
+
+    const auto report = kernel.step();
+    const auto twin_report = kernel_twin.step();
+    REQUIRE(report.has_value());
+    REQUIRE(twin_report.has_value());
+
+    CHECK(report->commands_declined == 1);
+    CHECK(report->commands_applied == 0);
+    CHECK(report->commands_invalid == 0);
+    CHECK(report->commands_late == 0);
+    CHECK(report->commands_rejected() == 0);
+    CHECK(kernel.declined_commands() == 1);
+    CHECK(kernel.invalid_commands() == 0);
+    CHECK(report->state_hash == twin_report->state_hash);
+
+    // Not recorded: a recording is of what changed the state, and this changed nothing. A
+    // replay that re-submitted it would decline it again, which is the same outcome.
+    CHECK(report->applied_commands.empty());
+}
+
+TEST_CASE("the same decline is made by two kernels at the same tick", "[sim][kernel]") {
+    // The property lockstep rests on: a decline depends only on world state and the payload,
+    // so two kernels fed the same commands decline the same ones and stay hash-equal.
+    Scenario a;
+    Scenario b;
+    Kernel kernel_a(a.h.world, a.h.schedule, a.h.commands, KernelConfig{.seed = 5});
+    Kernel kernel_b(b.h.world, b.h.schedule, b.h.commands, KernelConfig{.seed = 5});
+
+    for (atlas::Tick tick = 0; tick < 20; ++tick) {
+        // Rows 0 to 15 exist; every fourth tick asks for one that does not. The in-range row
+        // wraps at sixteen — a first draft let it run to nineteen and got three extra declines
+        // it had not asked for, which the kernel was right about and the test was not.
+        const auto row = static_cast<std::uint8_t>(tick % 4 == 0 ? 200 : tick % 16);
+        for (auto* commands : {&a.h.commands, &b.h.commands}) {
+            REQUIRE(
+                commands->submit(tick, SourceId::Local, kBump, bump_payload(row, 3)).has_value());
+        }
+        const auto ra = kernel_a.step();
+        const auto rb = kernel_b.step();
+        REQUIRE(ra.has_value());
+        REQUIRE(rb.has_value());
+        INFO("tick " << tick);
+        CHECK(ra->state_hash == rb->state_hash);
+        CHECK(ra->commands_declined == rb->commands_declined);
+        CHECK(ra->commands_declined == (tick % 4 == 0 ? 1 : 0));
+    }
+    CHECK(kernel_a.declined_commands() == 5);
 }

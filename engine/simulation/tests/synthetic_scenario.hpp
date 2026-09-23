@@ -23,6 +23,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <span>
 #include <vector>
 
@@ -48,12 +49,17 @@ inline const CommandType kBump = command_type("bump a row");
     handler.apply = [values](World& world, const ApplyContext&,
                              std::span<const std::byte> payload) -> Status {
         auto* table = dynamic_cast<ValueTable*>(world.table(values));
-        if (table == nullptr) {
-            return ok();
-        }
+        // A handler registered against a table the world does not hold is a mistake in the
+        // fixture, not a state the world can be in, so it is an assertion rather than a
+        // decline (ADR-0019 D7).
+        ATLAS_ASSERT_MSG(table != nullptr, "bump registered against a table the world lacks");
         const auto row = std::to_integer<std::size_t>(payload[0]);
         if (row >= table->value.size()) {
-            return ok();
+            // Declined: well-formed, on time, and the world has no such row. Until M19 this
+            // returned silently and was counted as applied.
+            return std::unexpected(
+                Error(atlas::ErrorCode::OutOfRange,
+                      std::format("bump names row {} of {}", row, table->value.size())));
         }
         std::int32_t amount = 0;
         for (std::size_t i = 0; i < 4; ++i) {
