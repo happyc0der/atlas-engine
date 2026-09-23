@@ -12,6 +12,7 @@ atlas_add_app_library(chess_sim
         src/world.cpp
         src/position.cpp
         src/fen.cpp
+        src/rules.cpp
     DEPENDS
         atlas::simulation
 )

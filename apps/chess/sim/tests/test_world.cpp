@@ -34,7 +34,8 @@ TEST_CASE("a fresh world holds the starting position in five tables", "[chess][w
     CHECK(pieces == 32);
     CHECK(state_table(h.world(), h.ids()).side_to_move == Colour::White);
     CHECK(state_table(h.world(), h.ids()).castling == atlas::chess::kAllCastling);
-    CHECK(history_table(h.world(), h.ids()).keys.empty());
+    // The history starts with the starting position's own key, so a repetition of it counts.
+    CHECK(history_table(h.world(), h.ids()).keys.size() == 1);
     CHECK(players_table(h.world(), h.ids()).white == atlas::sim::SourceId::Local);
     CHECK(validate_world(h.world(), h.ids()).has_value());
 }
@@ -140,11 +141,16 @@ TEST_CASE("validation sees what no single table can", "[chess][world]") {
         board.put(square(4, 3), Piece::WhitePawn);
         CHECK(validate_world(h.world(), h.ids()).has_value());
     }
-    SECTION("a history whose length disagrees with the clock") {
+    SECTION("a history longer than the clock allows, or empty") {
         history.keys = {1, 2, 3};
-        state.halfmove_clock = 5;
+        state.halfmove_clock = 1;
         CHECK_FALSE(validate_world(h.world(), h.ids()).has_value());
         state.halfmove_clock = 2;
         CHECK(validate_world(h.world(), h.ids()).has_value());
+        // Fewer keys than plies is a position set up mid-game, which is allowed.
+        state.halfmove_clock = 40;
+        CHECK(validate_world(h.world(), h.ids()).has_value());
+        history.keys.clear();
+        CHECK_FALSE(validate_world(h.world(), h.ids()).has_value());
     }
 }

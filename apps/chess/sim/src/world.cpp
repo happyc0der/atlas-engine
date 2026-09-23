@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <atlas/chess/position.hpp>
+#include <atlas/chess/rules.hpp>
 #include <atlas/chess/world.hpp>
 #include <atlas/core/assert.hpp>
 
@@ -57,9 +58,7 @@ Result<ChessWorld> make_world() {
 }
 
 void set_start_position(sim::World& world, const TableIds& ids) {
-    Position::start().write_tables(board_table(world, ids), state_table(world, ids));
-    history_table(world, ids).clear();
-    result_table(world, ids).clear();
+    set_position(world, ids, Position::start());
     // Players are deliberately left as they are: who holds which colour is the application's
     // to say, and resetting the board is not a reason to forget it.
 }
@@ -185,9 +184,11 @@ Status validate_world(const sim::World& world, const TableIds& ids) {
     }
 
     // The history holds one key per position since the last irreversible move, including the
-    // current one, so its length is the halfmove clock plus one — except in a world that has
-    // never had a move applied, where the rules have not yet written the first key.
-    if (!history.keys.empty() && history.keys.size() != state.halfmove_clock + std::size_t{1}) {
+    // current one, so a game played from the start has exactly the halfmove clock plus one. A
+    // game set up from a position has only the keys since it was set up, so the bound is an
+    // upper one: more keys than plies is a file that remembers moves that were not made, and
+    // no keys at all is a position the rules never wrote.
+    if (history.keys.empty() || history.keys.size() > state.halfmove_clock + std::size_t{1}) {
         return std::unexpected(
             Error(ErrorCode::MalformedData,
                   std::format("the history holds {} keys against a halfmove clock of {}",
