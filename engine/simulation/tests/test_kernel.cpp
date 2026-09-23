@@ -566,7 +566,7 @@ TEST_CASE("the same decline is made by two kernels at the same tick", "[sim][ker
         INFO("tick " << tick);
         CHECK(ra->state_hash == rb->state_hash);
         CHECK(ra->commands_declined == rb->commands_declined);
-        CHECK(ra->commands_declined == (tick % 4 == 0 ? 1 : 0));
+        CHECK(ra->commands_declined == (tick % 4 == 0 ? std::size_t{1} : std::size_t{0}));
     }
     CHECK(kernel_a.declined_commands() == 5);
 }
