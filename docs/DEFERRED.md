@@ -112,6 +112,9 @@ integration ran for the first time. What it found is recorded in
   for the loop would have been a second `main` depending on every other module, and would have
   made the dependency table less informative than it is. Re-deferred with a sharper condition:
   a third application, or the two loops converging in shape rather than merely in ingredients.
+  **The third application arrived on 2026-09-23** — `apps/chess`, ADR-0018 D5 — and the
+  answer was the same: its loop shares the utilities and none of the shape. Re-deferred with the
+  count at three. Condition: the loops converging, or a fourth application.
 - ~~**Command and undo infrastructure, and therefore scene editing.**~~ **Built in M9** as
   `atlas::edit`. The panel now takes an `edit::History` rather than a `const Scene&`, which
   keeps the compiler-enforced guarantee and adds editing behind it: the history exposes its
@@ -545,6 +548,26 @@ fact about the tree today rather than a consequence of the milestone.
   with a networking milestone. Trigger: the first submodule bump, or any evidence of a stale
   cache. The cheap version is to hash the submodule's resolved commit; the honest version is to
   stop having two places that record a pin.
+
+### M18 — chess, the record
+
+- **Chess in its own repository.** ADR-0018 D2 and D6: an in-tree game cannot prove the engine's
+  public surface is sufficient, because it can see everything, and the charter's v1.0 criterion
+  is about a game that cannot. Deferred because the engine has no install or export target;
+  without one an out-of-tree consumer is a submodule pointing at a source tree. Condition: that
+  target exists. Chess is then the first thing to build against it.
+- **A mod as the chess opponent** (M23). ADR-0018 D7. A mod that reads the board, generates
+  legal moves inside the sandbox and submits one cannot be written with `tools/gen_mods.py`,
+  which assembles bytes by hand with no loops, branches or locals. The decision it forces — an
+  AssemblyScript or C-to-wasm toolchain in the tree, or Lua compiled to WASM as ADR-0015
+  sketched — is larger than chess. Condition: M22 done, and the toolchain chosen by its own
+  record.
+- **The claimable draws.** Chess lets a player *claim* a draw by the fifty-move rule or
+  threefold repetition, and forces one at seventy-five moves or fivefold. M20 applies the
+  fifty-move and threefold draws automatically, because a claim is a second command type with
+  no engine consequence and the probe is about the engine. Condition: a person asking to play on.
+- **Clocks, PGN import and export, an opening book, a rating.** Not engine questions. Condition:
+  chess leaving the tree.
 
 ## Decided by ADR-0010, planned as milestones
 

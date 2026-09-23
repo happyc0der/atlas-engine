@@ -26,6 +26,12 @@ Status legend: **done**, *in progress*, planned.
 | M15 | Sandboxed mods | L | **done** |
 | M16 | Localisation: string tables, English | S | **done** |
 | M17 | A transport for lockstep | M | **done** |
+| M18 | Chess: the record, and M16's hotfix | S | **done** |
+| M19 | A command may be declined | M | planned |
+| M20 | Chess: the rules library | M–L | planned |
+| M21 | A session can finish | M | planned |
+| M22 | Chess: the application, two people, a socket | L | planned |
+| M23 | Chess: a mod as the opponent | ? | planned |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1248,6 +1254,33 @@ gate still reads no clock, so ADR-0014's central invariant is intact rather than
 respected. The alternative — dropping a peer and continuing — is deferred with its reason:
 every remaining peer would have to apply the drop at the identical tick or diverge, which needs
 an agreement protocol whose subtle failure is the exact thing lockstep exists to prevent.
+
+## M18 — Chess: the record, and M16's hotfix
+
+Full report: [reports/M18.md](reports/M18.md).
+
+Slices: the overlay showing words rather than keys, with a test that counts lookups;
+[ADR-0018](adr/0018-chess-probe.md) at a gate.
+
+**Exit criteria**
+- The M16 regression fixed, with a test that would have caught it.
+- A record deciding where chess lives, what it can and cannot prove, and which engine changes
+  it forces — each of those by its own later record.
+- The `runtime` deferral answered rather than left firing.
+
+| Criterion | Status |
+|---|---|
+| The regression fixed | **Met.** Five titles, every statistic label, the mode buttons and two lab values now resolve. `Catalog::lookups()` and `test_stats_panel.cpp` assert one lookup per key handed to the panel — `misses() == 0` was true of the broken overlay too. Three mutation checks, one of which survived a first draft of the test and is written up. |
+| A record at a gate | **Met.** ADR-0018: in-tree by exception, not v1.0 by the charter's own letter, fenced to `atlas::simulation`, the two engine changes decided by 0019 and 0020 before the code that needs them. Nine predictions scored: seven confirmed, one half, one wrong in mechanism, three findings unpredicted. |
+| The `runtime` deferral | **Met.** Not built; count at three; condition sharpened to the loops converging or a fourth application. |
+
+### What the predictions were for
+
+The plan wrote nine claims about where the engine would bend **before** surveying the code,
+so that they could be wrong. Seven were right, which is less interesting than the three things
+the surveys found that nobody predicted — one of them a regression on `main` that the milestone
+it belonged to had, in its own report, named as a class of gap and not looked for. A consumer
+finds what a checklist cannot, and that is the argument for building one.
 
 ## First continuous integration
 

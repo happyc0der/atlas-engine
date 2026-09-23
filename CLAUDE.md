@@ -4,6 +4,9 @@ Atlas is a C++23 **engine platform** for a future map-based grand-strategy game.
 Build the engine. Never implement the game: no countries, wars, diplomacy, economies,
 historical data, political borders, or game-specific scripting. Synthetic test data may
 use neutral names (RegionValue, OwnerIndex, ColorIndex) and must carry no game meaning.
+`apps/chess` is the one recorded exception (ADR-0018): a probe that tests whether a game can be
+written against the engine, fenced at configure time to `atlas::simulation`, and **no chess
+reaches `engine/`**.
 
 ## Commands
 
