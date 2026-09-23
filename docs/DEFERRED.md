@@ -569,6 +569,23 @@ fact about the tree today rather than a consequence of the milestone.
 - **Clocks, PGN import and export, an opening book, a rating.** Not engine questions. Condition:
   chess leaving the tree.
 
+### M19 — declined commands
+
+- **Recording declined commands into the replay, flagged.** ADR-0019 D4: a replay is a
+  recording of what changed the state, and a declined command is exactly as absent from the
+  state as an invalid one, which is not recorded either. Condition: a consumer that needs to
+  replay the *decisions* rather than the *state* — an analysis tool asking what a player tried.
+- **Delivering a decline's reason to the application per command.** The `TickReport` carries
+  a count and the log carries the reason. An application that wants to tell a person predicts
+  legality before submitting, because the decline arrives `input_delay` ticks after the attempt
+  anyway and a person should not wait for it; the decline inside the tick is the authoritative
+  backstop against a remote peer, not the user interface. Condition: a consumer for which
+  prediction is impossible — a rule that depends on state the submitter cannot see.
+- **A general check that a declining handler changed nothing.** The kernel cannot hash around
+  every command; a handler owns its own tables. The contract is tested per handler with a twin
+  world. Condition: a debug-build kernel option hashing before and after each command, if a
+  handler is ever found to have broken the contract in a way a twin test did not catch.
+
 ## Decided by ADR-0010, planned as milestones
 
 Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.

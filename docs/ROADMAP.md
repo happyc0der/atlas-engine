@@ -27,7 +27,7 @@ Status legend: **done**, *in progress*, planned.
 | M16 | Localisation: string tables, English | S | **done** |
 | M17 | A transport for lockstep | M | **done** |
 | M18 | Chess: the record, and M16's hotfix | S | **done** |
-| M19 | A command may be declined | M | planned |
+| M19 | A command may be declined | M | **done** |
 | M20 | Chess: the rules library | M–L | planned |
 | M21 | A session can finish | M | planned |
 | M22 | Chess: the application, two people, a socket | L | planned |
@@ -1281,6 +1281,40 @@ so that they could be wrong. Seven were right, which is less interesting than th
 the surveys found that nobody predicted — one of them a regression on `main` that the milestone
 it belonged to had, in its own report, named as a class of gap and not looked for. A consumer
 finds what a checklist cannot, and that is the argument for building one.
+
+## M19 — A command may be declined
+
+Full report: [reports/M19.md](reports/M19.md).
+
+Slices: [ADR-0019](adr/0019-declined-commands.md) at a gate; the mechanical migration with
+every golden hash unchanged; the three hidden refusals in the tree becoming real declines, each
+in its own commit; the documents.
+
+**Exit criteria**
+- A record accepted at a gate, deciding the third fate of a command and why it is not a
+  rejection.
+- `apply` receives its context and returns a verdict; twelve handlers migrated; every golden
+  hash byte-identical.
+- The lab, the synthetic scenario and the net harness each decline where they used to return
+  silently, with the "changed nothing" contract tested against a twin.
+- The lockstep proof M14 could not write: two peers agreeing on a decline with nothing in the
+  state to show for it.
+
+| Criterion | Status |
+|---|---|
+| A record at a gate | **Met.** ADR-0019, Proposed in the morning and Accepted in the afternoon of 2026-09-23, with one decision corrected by implementing it and marked as such. |
+| The migration | **Met.** Twelve lambdas, not the eleven the plan counted. Both engine goldens and the lab's golden byte-identical before anything declined, which was the slice's only exit criterion. |
+| Three real declines | **Met, and the lab's found a bug.** Its hidden refusal was unreachable — the queue re-validates an instant before `apply` — and what it never checked was the table it indexed, so a bound that lagged a load would have written past the end. It declines now. Five mutations, each caught; one test's arithmetic was wrong before the kernel was. |
+| The proof M14 could not write | **Met.** Both peers claim the same cell every tick with a handler that declines rather than records; most of the run is declines, the counts and hashes agree tick by tick, and the contest counters the recording fixture uses stay at zero. |
+
+### What the third fate is for
+
+Chess needs it sixty times a game, but the argument for it was already in the tree: M14's
+proof of a state-dependent refusal had to *write the refusal into the world* to make it
+observable, and its own comment said why. A refusal the kernel cannot see is one it counts as
+an application, records as one, and hashes as one. The change is one field on the report and
+one parameter on the handler; what it buys is that the lockstep proof can now assert the thing
+it was written to assert.
 
 ## First continuous integration
 

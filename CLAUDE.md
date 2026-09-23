@@ -103,6 +103,10 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   its own commands asks the session what it is.
 - A tick is always: drain and apply commands, compute, commit, hash. Nothing reaches
   simulation state except through a command.
+- A command has three fates: late, invalid, or **declined** on world state by its handler
+  (ADR-0019). `apply` returns a `Status`; an error is a decline, counted on its own, never
+  recorded, and never a silent no-op. **A handler that declines has changed nothing** — decide
+  before writing, and test it with a hash taken before and after.
 - Compute takes a `const World` and commit a mutable one. A system writes only storage it
   owns during compute. Never widen that.
 - Authoritative state is integer by default. Floating point in it needs a recorded reason

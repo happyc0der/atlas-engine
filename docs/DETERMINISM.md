@@ -58,7 +58,11 @@ Commands are stamped with a target tick, a source identifier, and a monotonic pe
 sequence number. At the start of a tick, the commands targeting it are drained and sorted
 by `(source, sequence)`, which is a total order independent of arrival time. Payloads are
 validated by a registered decoder before they are applied; a rejected command is logged and
-dropped rather than partially applied.
+dropped rather than partially applied. A command that is well-formed and on time may still be
+**declined** by its handler on world state — the cell is owned, it is not this source's turn
+(ADR-0019). A decline depends only on the world and the payload, which every peer holds
+identically at that tick, so every peer declines identically; it is counted on its own, changes
+nothing, and is not recorded, because a recording is of what changed the state.
 
 ## System ordering
 

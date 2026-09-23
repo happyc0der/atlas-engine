@@ -653,6 +653,13 @@ Implemented in M6, parallelised in M8.
 apply them in `(source, sequence)` order. Compute, batch by batch. Commit, system by system in
 declared order. Hash the result.
 
+**A command has three fates, and a handler decides the third.** Late — stamped for a tick
+already run — is a protocol violation under lockstep. Invalid — bad bytes — is refused by the
+handler's validator and counted. Declined — well-formed, on time, and refused by the world —
+is the handler's own verdict: `apply` receives who submitted the command and at which tick,
+and returns a status (ADR-0019). A handler that declines has changed nothing, and because a
+decline depends only on state every peer shares, every peer makes the same one.
+
 **Everything from outside enters through a command.** Input, a script, a network peer and a
 replay all take the same path. That is not tidiness: if anything else could reach state,
 recording commands would not be a recording of what happened, and a replay would not be a

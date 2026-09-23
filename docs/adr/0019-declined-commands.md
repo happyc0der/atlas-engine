@@ -3,8 +3,14 @@
 
 ## Status
 
-**Proposed**, 2026-09-23, written at M19's gate under [ADR-0018](0018-chess-probe.md) D4.
-Accepted when M19 lands it. Nothing in `engine/simulation` changes before this record is read.
+**Accepted**, 2026-09-23, implemented in M19.
+
+Proposed when it was written the same day at M19's gate under [ADR-0018](0018-chess-probe.md)
+D4, and the code followed the record. One decision was sharpened by implementing it and is
+marked at its own heading: D7's account of the lab's hidden refusal was wrong about *which*
+refusal it was, and the correction found a latent out-of-bounds write. Every other decision
+survived unchanged, including the one most at risk — that every golden hash is byte-identical
+across a change to the signature of every command handler in the tree.
 
 Amends the tick contract in [ADR-0003](0003-simulation-render-separation.md) and the
 `TickReport` split [ADR-0014](0014-deterministic-lockstep.md) made in its decision 10, by
@@ -127,6 +133,15 @@ has three consumers on the day it lands rather than none:
   deleted. The lab's synthetic generator never produces such a cell, so **every golden hash is
   unchanged**, and a new lab case submits one deliberately and asserts it is counted declined
   and the hash unmoved.
+
+  *Corrected during M19, 2026-09-23.* The bound check is `validate`'s, and the queue re-runs
+  `validate` an instant before `apply` against the same bound, so the early return this bullet
+  describes was unreachable on one thread and could not be the decline. What the handler never
+  checked was **the table it was about to index**: the bound is the application's claim about
+  the grid and the table is the world's, they agree in every run the lab makes, and a bound
+  that lagged a load would have passed validation and written past the end of the table. That
+  is the state-dependent refusal, it is the one the handler now makes, and the case above
+  provokes it by inflating the bound. The early return stays and returns its reason.
 - The synthetic scenario's `bump` declines a row out of range. The missing-table return stays
   an assertion rather than a decline: a handler registered against a table that does not exist
   is a setup mistake, not a state the world can be in.
