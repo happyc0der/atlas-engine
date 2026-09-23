@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Chess: the first game on the engine, and a probe of it (ADR-0018). It is the one recorded
+# exception to the rule above this directory that applications are not games. Its whole
+# purpose is to find what a game needs that the engine lacks, and to find it without a line of
+# chess reaching engine/.
+#
+# The rules are a library that may link only atlas::simulation, fenced at configure time in
+# sim/CMakeLists.txt exactly as the lab's simulation is. The application that puts a board, two
+# people and a socket around it arrives in M22.
+add_subdirectory(sim)
