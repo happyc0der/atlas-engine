@@ -61,6 +61,37 @@ TEST_CASE("the cell bound follows the grid rather than the registration", "[lab]
     CHECK(h.commands.submit(0, atlas::sim::SourceId::Local, kSetColorIndex, payload).has_value());
 }
 
+TEST_CASE("a cell the world does not hold is declined, counted, and changes nothing",
+          "[lab][commands]") {
+    // The bound is the application's claim about the grid and the table is the world's; a
+    // bound that lagged a load would let the validator pass a cell the table does not have.
+    // Until M19 the handler wrote past the end of the table. Now it declines (ADR-0019): the
+    // third fate, counted apart from applied and from rejected, and — checked against a twin
+    // that was sent nothing — leaving the world exactly as it would otherwise have been.
+    LabHarness with_command(kSmall);
+    LabHarness without(kSmall);
+    auto kernel_with = with_command.kernel(3);
+    auto kernel_without = without.kernel(3);
+
+    const std::uint32_t held = with_command.lab.layout.cell_count();
+    with_command.bound->store(held + 100);
+    const auto beyond = encode_set_color_index(held + 5, 2);
+    REQUIRE(with_command.commands.submit(1, atlas::sim::SourceId::Local, kSetColorIndex, beyond)
+                .has_value());
+
+    REQUIRE(kernel_with.step().has_value());  // tick 0
+    REQUIRE(kernel_without.step().has_value());
+    const auto report = kernel_with.step().value();  // tick 1: the command is due
+    const auto twin = kernel_without.step().value();
+
+    CHECK(report.commands_declined == 1);
+    CHECK(report.commands_applied == 0);
+    // A decline is not a rejection: the command was well-formed and on time.
+    CHECK(report.commands_rejected() == 0);
+    CHECK(kernel_with.declined_commands() == 1);
+    CHECK(report.state_hash == twin.state_hash);
+}
+
 TEST_CASE("synthetic commands are a function of seed and tick", "[lab][commands]") {
     LabHarness a(kSmall);
     LabHarness b(kSmall);

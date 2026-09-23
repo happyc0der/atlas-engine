@@ -56,14 +56,28 @@ Status register_lab_commands(sim::CommandQueue& commands, const TableIds& ids,
     };
     handler.apply = [cell_bound, ids](sim::World& world, const sim::ApplyContext&,
                                       std::span<const std::byte> payload) -> Status {
-        // Decoded again against the bound as it is now. A command that no longer fits, which
-        // can only mean the grid changed between validation and this tick, is not applied at
-        // all rather than applied to a cell that happens to exist.
+        // Decoded again against the bound as it is now. The queue re-validated an instant ago
+        // against the same bound, so on one thread this cannot fail; it is kept because the
+        // alternative is indexing a table with a number nobody checked, and until M19 that
+        // was exactly what the next line did.
         auto decoded = decode_set_color_index(payload, cell_bound->load());
         if (!decoded) {
-            return ok();
+            return std::unexpected(std::move(decoded).error());
         }
-        cell_table(world, ids).color_index[decoded->cell] = decoded->color;
+        // The bound is what the application says the grid is; the table is what the world
+        // holds. They agree in every run the lab makes, and nothing enforced it: a bound that
+        // lagged a load would have written past the end of the table. This is the decline
+        // ADR-0019 exists for — a well-formed command the world refuses — and the first one
+        // in the tree. Before M19 the handler returned silently and the kernel counted the
+        // command as applied.
+        auto& cells = cell_table(world, ids);
+        if (decoded->cell >= cells.color_index.size()) {
+            return std::unexpected(
+                Error(ErrorCode::OutOfRange,
+                      std::format("set_color_index names cell {} and the world holds {}",
+                                  decoded->cell, cells.color_index.size())));
+        }
+        cells.color_index[decoded->cell] = decoded->color;
         return ok();
     };
     return commands.register_handler(kSetColorIndex, std::move(handler));

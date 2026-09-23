@@ -1649,6 +1649,7 @@ void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
     // quietly dropping every command looks exactly like a run nobody is sending any.
     std::size_t last_applied = 0;
     std::size_t last_rejected = 0;
+    std::size_t last_declined = 0;
 
     atlas::lab::MapMode mode = options->map_mode;
     atlas::sim::Speed resume_speed = accumulator->speed();
@@ -1910,6 +1911,7 @@ void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
             last_hash = report->state_hash;
             last_applied = report->commands_applied;
             last_rejected = report->commands_rejected();
+            last_declined = report->commands_declined;
             if (recorder.has_value()) {
                 // A recorder that has hit its limit stops the run rather than carrying on
                 // producing a recording it can no longer write. Carrying on would mean
@@ -2001,9 +2003,10 @@ void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
                         values[11] = phase(phases.present);
                         values[12] = std::format("{:.2f}", field->camera().zoom());
                         values[13] = std::format("{:#018x}", sim.kernel->seed());
-                        values[14] = std::format(
-                            "{} applied, {} rejected, {} late, {} pending", last_applied,
-                            last_rejected, sim.kernel->late_commands(), sim.commands.pending());
+                        values[14] =
+                            std::format("{} applied, {} declined, {} rejected, {} late, {} pending",
+                                        last_applied, last_declined, last_rejected,
+                                        sim.kernel->late_commands(), sim.commands.pending());
                         values[15] = std::format("{}", atlas::kHashAlgorithmVersion);
                         if (audio.has_value()) {
                             const auto audio_stats = audio->stats();
@@ -2197,9 +2200,11 @@ void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
     const std::uint64_t ticks_total = sim.kernel->current_tick() - first_tick;
     const auto elapsed_us = std::max<std::uint64_t>(1, micros_since(run_start));
     report_mod(*mods, "");
-    ATLAS_LOG_INFO(kApp, "final tick={} state hash={:#018x} late commands={} pick disagreements={}",
+    ATLAS_LOG_INFO(kApp,
+                   "final tick={} state hash={:#018x} late commands={} declined commands={} pick "
+                   "disagreements={}",
                    sim.kernel->current_tick(), last_hash, sim.kernel->late_commands(),
-                   pick_mismatches);
+                   sim.kernel->declined_commands(), pick_mismatches);
     ATLAS_LOG_INFO(kApp,
                    "observed {:.0f} ticks/s over {} ticks and {} cells (an observation of this "
                    "run, not a benchmark; see atlas_bench --filter simulation)",
