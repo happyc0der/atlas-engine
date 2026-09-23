@@ -1981,8 +1981,14 @@ void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
                         values[0] = std::format("{}", frame_index);
                         values[1] = std::format("{}", sim.kernel->current_tick());
                         values[2] = std::format("{:#018x}", last_hash);
-                        values[3] = std::string{atlas::tools::speed_name(accumulator->speed())};
-                        values[4] = std::string{atlas::lab::to_string(mode)};
+                        // Values are resolved here, labels in the panel: a value is the
+                        // application's to compose, and these two are keys rather than
+                        // numbers. M16 handed the keys over unresolved and the row read
+                        // `ui.speed.1x`.
+                        values[3] = std::string{
+                            catalog.lookup(atlas::tools::speed_name(accumulator->speed()))};
+                        values[4] = std::string{
+                            catalog.lookup(kMapModeNames[static_cast<std::size_t>(mode)])};
                         values[5] = std::format("{} of {}", last_draw.visible_chunks,
                                                 sim.lab.layout.chunk_count());
                         values[6] = std::format("{} cells, {} draws, {} KiB", last_draw.cells.cells,

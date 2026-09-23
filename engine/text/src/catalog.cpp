@@ -37,6 +37,7 @@ Status Catalog::insert(std::string_view key, std::string_view value) {
 }
 
 std::string_view Catalog::lookup(std::string_view key) const {
+    ++m_lookups;
     if (const auto entry = m_strings.find(key); entry != m_strings.end()) {
         return entry->second;
     }
@@ -137,6 +138,7 @@ void Catalog::clear() noexcept {
     m_locale.clear();
     m_missing.clear();
     m_unlogged.clear();
+    m_lookups = 0;
     m_misses = 0;
     m_miss_overflow_logged = false;
 }

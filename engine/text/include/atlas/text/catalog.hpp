@@ -110,6 +110,14 @@ class Catalog {
     /// defers everything that would need to — plural rules, collation, a second atlas.
     [[nodiscard]] std::string_view locale() const noexcept { return m_locale; }
 
+    /// Total lookups since construction, hits and misses alike.
+    ///
+    /// Exists for one assertion: that a panel drawn against a catalog *asked* it. M16 shipped
+    /// an overlay whose titles and labels never reached `lookup` at all, and `misses() == 0`
+    /// was true of it for exactly that reason. A test that also requires `lookups() >= N`
+    /// cannot be passed by a panel that resolves nothing.
+    [[nodiscard]] std::size_t lookups() const noexcept { return m_lookups; }
+
     /// Total misses since construction, including repeats of the same key.
     [[nodiscard]] std::size_t misses() const noexcept { return m_misses; }
 
@@ -174,6 +182,7 @@ class Catalog {
     /// is drained by `log_new_misses` and is empty in the steady state.
     mutable std::vector<std::string_view> m_unlogged;
 
+    mutable std::size_t m_lookups = 0;
     mutable std::size_t m_misses = 0;
     mutable bool m_miss_overflow_logged = false;
 };

@@ -32,6 +32,23 @@ TEST_CASE("a missing key returns itself and is counted", "[text]") {
     CHECK(catalog.distinct_misses() == 1);
 }
 
+TEST_CASE("every lookup is counted, hit or miss, and clear resets the count", "[text]") {
+    // The count exists so a panel test can prove the panel asked. A hit and a miss are one
+    // lookup each; the distinction between them is the miss counter's, not this one's.
+    Catalog catalog;
+    REQUIRE(catalog.insert("ui.present", "Present").has_value());
+
+    CHECK(catalog.lookups() == 0);
+    (void)catalog.lookup("ui.present");
+    (void)catalog.lookup("ui.absent");
+    (void)catalog.lookup("ui.absent");
+    CHECK(catalog.lookups() == 3);
+    CHECK(catalog.misses() == 2);
+
+    catalog.clear();
+    CHECK(catalog.lookups() == 0);
+}
+
 TEST_CASE("a repeated miss is counted every time and recorded once", "[text]") {
     Catalog catalog;
 

@@ -34,6 +34,42 @@ constexpr log::Category kTools{"tools"};
 /// on the heap. A name longer than this is shown read-only rather than truncated.
 constexpr std::size_t kNameBufferSize = 128;
 
+/// Resolve a key, with no catalog meaning every key resolves to itself.
+///
+/// The absent-catalog path is deliberately the same code as the missing-key path rather than a
+/// second one: a panel drawn with no table shows `ui.entity.id`, which is legible and obviously
+/// unfinished, and every existing test keeps working without a registry wired into it.
+[[nodiscard]] std::string_view tr(const text::Catalog* catalog, std::string_view key) {
+    return catalog != nullptr ? catalog->lookup(key) : key;
+}
+
+/// Substitute into a looked-up pattern, for the strings that carry numbers.
+template <typename... Args>
+[[nodiscard]] std::string trf(const text::Catalog* catalog, std::string_view key,
+                              const Args&... args) {
+    const std::array<std::string, sizeof...(Args)> owned{std::format("{}", args)...};
+    std::array<std::string_view, sizeof...(Args)> views{};
+    for (std::size_t i = 0; i < owned.size(); ++i) {
+        views[i] = owned[i];
+    }
+    return text::substitute(tr(catalog, key), views);
+}
+
+/// A window title the person reads, over a window identifier that never changes.
+///
+/// Dear ImGui keys a window's docked position and collapsed state on its title, so a title
+/// that changed with the locale would forget where the user put the window. `###` makes the
+/// part after it the identifier and the part before it the text, which is why the key goes
+/// after: it is the one thing about a window that survives a retranslation.
+///
+/// This helper is the M16 fix. That milestone routed every label *inside* the panels through
+/// the catalog and left the five titles, the statistic labels and the mode buttons showing
+/// their keys, because `tr` was defined below the first panel that needed it and nothing
+/// checked what reached the screen. `test_stats_panel.cpp` now counts the lookups.
+[[nodiscard]] std::string title_for(const text::Catalog* catalog, std::string_view key) {
+    return std::format("{}###{}", tr(catalog, key), key);
+}
+
 /// Tell the overlay which modifiers are held.
 ///
 /// Sent with every key event rather than tracked, because the overlay's shortcuts are checked
@@ -295,7 +331,7 @@ void DebugUi::stats_panel(std::string_view title, std::span<const Stat> stats) {
     }
     ImGui::SetCurrentContext(m_impl->context);
 
-    const std::string window_title{title};
+    const std::string window_title = title_for(m_impl->catalog, title);
     // Deliberately nested rather than merged. The library's pairing rules are asymmetric:
     // End must be called whether or not Begin returned true, while EndTable must be called
     // only when BeginTable did. Collapsing the two conditions hides that difference.
@@ -315,7 +351,8 @@ void DebugUi::stats_panel(std::string_view title, std::span<const Stat> stats) {
             for (const auto& stat : stats) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(stat.label.data(), stat.label.data() + stat.label.size());
+                const std::string_view label = tr(m_impl->catalog, stat.label);
+                ImGui::TextUnformatted(label.data(), label.data() + label.size());
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextUnformatted(stat.value.data(), stat.value.data() + stat.value.size());
             }
@@ -329,27 +366,6 @@ namespace {
 
 /// Draw one entity's subtree. Recursive because the tree is, and the scene bounds its own
 /// depth, so the recursion is bounded by the same limit.
-/// Resolve a key, with no catalog meaning every key resolves to itself.
-///
-/// The absent-catalog path is deliberately the same code as the missing-key path rather than a
-/// second one: a panel drawn with no table shows `ui.entity.id`, which is legible and obviously
-/// unfinished, and every existing test keeps working without a registry wired into it.
-[[nodiscard]] std::string_view tr(const text::Catalog* catalog, std::string_view key) {
-    return catalog != nullptr ? catalog->lookup(key) : key;
-}
-
-/// Substitute into a looked-up pattern, for the strings that carry numbers.
-template <typename... Args>
-[[nodiscard]] std::string trf(const text::Catalog* catalog, std::string_view key,
-                              const Args&... args) {
-    const std::array<std::string, sizeof...(Args)> owned{std::format("{}", args)...};
-    std::array<std::string_view, sizeof...(Args)> views{};
-    for (std::size_t i = 0; i < owned.size(); ++i) {
-        views[i] = owned[i];
-    }
-    return text::substitute(tr(catalog, key), views);
-}
-
 /// The key naming an asset state.
 ///
 /// `assets::to_string(AssetState)` keeps its own words and gains no dependency on this module:
@@ -777,7 +793,7 @@ ScenePanelReport DebugUi::scene_panel(std::string_view title, edit::History& his
     ImGui::SetNextWindowPos(ImVec2(20.0F, 320.0F), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(360.0F, 520.0F), ImGuiCond_FirstUseEver);
 
-    const std::string window_title{title};
+    const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {
         ImGui::TextUnformatted(trf(m_impl->catalog, keys::kSceneEntityCount, scene.size()).c_str());
         ImGui::Separator();
@@ -836,7 +852,7 @@ LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::L
     ImGui::SetNextWindowPos(ImVec2(400.0F, 510.0F), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(620.0F, 280.0F), ImGuiCond_FirstUseEver);
 
-    const std::string window_title{title};
+    const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {
         // The severity words used to exist three times over: here, in `core`'s
         // `to_string(Severity)`, and again in its `to_short_string`. Those two stay as they
@@ -921,7 +937,7 @@ SimulationControlsRequest DebugUi::simulation_controls_panel(std::string_view ti
     // rather than guessed: at 360 the lab's fourth mode ran off the edge of the panel.
     ImGui::SetNextWindowSize(ImVec2(600.0F, 210.0F), ImGuiCond_FirstUseEver);
 
-    const std::string window_title{title};
+    const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {
         const bool paused = view.speed.policy == sim::SpeedPolicy::Paused;
         if (ImGui::Button(
@@ -954,7 +970,10 @@ SimulationControlsRequest DebugUi::simulation_controls_panel(std::string_view ti
             for (std::size_t index = 0; index < view.modes.size(); ++index) {
                 const bool current = index == view.mode_index;
                 ImGui::BeginDisabled(current);
-                const std::string label{view.modes[index]};
+                // Same arrangement as a window title, and for the same reason: the button's
+                // identifier is the key, so its text can change without it becoming a
+                // different button mid-click.
+                const std::string label = title_for(m_impl->catalog, view.modes[index]);
                 if (ImGui::Button(label.c_str())) {
                     request.mode_index = index;
                 }
@@ -963,7 +982,9 @@ SimulationControlsRequest DebugUi::simulation_controls_panel(std::string_view ti
                 // names, must not lose the last of them off the side of the panel.
                 if (index + 1 < view.modes.size()) {
                     const float next_width =
-                        ImGui::CalcTextSize(std::string{view.modes[index + 1]}.c_str()).x +
+                        ImGui::CalcTextSize(
+                            std::string{tr(m_impl->catalog, view.modes[index + 1])}.c_str())
+                            .x +
                         (ImGui::GetStyle().FramePadding.x * 2.0F);
                     if (ImGui::GetContentRegionAvail().x > next_width) {
                         ImGui::SameLine();
@@ -1013,7 +1034,7 @@ void DebugUi::asset_panel(std::string_view title, const assets::Registry& regist
     ImGui::SetNextWindowPos(ImVec2(400.0F, 250.0F), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(620.0F, 240.0F), ImGuiCond_FirstUseEver);
 
-    const std::string window_title{title};
+    const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {
         const auto stats = registry.stats();
         ImGui::TextUnformatted(trf(m_impl->catalog, keys::kAssetsSummary, stats.total, stats.ready,
