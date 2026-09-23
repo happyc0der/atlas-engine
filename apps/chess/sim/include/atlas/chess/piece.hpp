@@ -73,8 +73,9 @@ enum class Piece : std::uint8_t {
     if (kind == PieceKind::None) {
         return Piece::None;
     }
-    return static_cast<Piece>(static_cast<std::uint8_t>(kind) |
-                              (colour == Colour::Black ? kBlackBit : 0));
+    const unsigned bits =
+        static_cast<unsigned>(kind) | (colour == Colour::Black ? unsigned{kBlackBit} : 0U);
+    return static_cast<Piece>(static_cast<std::uint8_t>(bits));
 }
 
 [[nodiscard]] constexpr PieceKind kind_of(Piece piece) noexcept {
@@ -103,8 +104,11 @@ inline constexpr std::uint8_t kWhiteKingSide = 1;
 inline constexpr std::uint8_t kWhiteQueenSide = 2;
 inline constexpr std::uint8_t kBlackKingSide = 4;
 inline constexpr std::uint8_t kBlackQueenSide = 8;
-inline constexpr std::uint8_t kAllCastling =
-    kWhiteKingSide | kWhiteQueenSide | kBlackKingSide | kBlackQueenSide;
+/// All four, written as the number rather than the OR: a bitwise operator on two `uint8_t`s
+/// promotes them to `int`, and the newer clang-tidy on the Linux runner objects to that.
+inline constexpr std::uint8_t kAllCastling = 0x0F;
+static_assert(kAllCastling ==
+              (kWhiteKingSide + kWhiteQueenSide + kBlackKingSide + kBlackQueenSide));
 
 /// The en passant file when there is none. Files are 0 to 7.
 inline constexpr std::uint8_t kNoEnPassant = 8;
