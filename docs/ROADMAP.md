@@ -28,7 +28,7 @@ Status legend: **done**, *in progress*, planned.
 | M17 | A transport for lockstep | M | **done** |
 | M18 | Chess: the record, and M16's hotfix | S | **done** |
 | M19 | A command may be declined | M | **done** |
-| M20 | Chess: the rules library | M–L | planned |
+| M20 | Chess: the rules library | M–L | **done** |
 | M21 | A session can finish | M | planned |
 | M22 | Chess: the application, two people, a socket | L | planned |
 | M23 | Chess: a mod as the opponent | ? | planned |
@@ -1315,6 +1315,37 @@ observable, and its own comment said why. A refusal the kernel cannot see is one
 an application, records as one, and hashes as one. The change is one field on the report and
 one parameter on the handler; what it buys is that the lockstep proof can now assert the thing
 it was written to assert.
+
+## M20 — Chess: the rules library
+
+Full report: [reports/M20.md](reports/M20.md).
+
+Slices: the fence and the five tables; the position, movement, notation and perft; the command,
+its declines and the six endings; the Opera Game as the third golden.
+
+**Exit criteria**
+- A rules library fenced to `atlas::simulation`, with every rule including the draws.
+- Perft against published counts on six positions.
+- A famous game's final position as a golden hash, replayed and saved through the engine's own
+  paths with nothing chess-shaped in either.
+- No engine change.
+
+| Criterion | Status |
+|---|---|
+| The fence | **Met, and proved before it was committed.** A platform link added to the library's dependencies fails configure with the fence's message. |
+| Every rule | **Met.** Castling with its three conditions, en passant offered only when a pawn can take, four promotions, rights spent three ways, check, mate, stalemate, the fifty-move rule, threefold on a key that ignores the clocks, insufficient material without over-recognising two knights. |
+| Perft | **Met on the first run.** Six positions, every shallower depth too so two errors cannot cancel. The tests were wrong twice before the generator was once: a pinned bishop asked to move along its pin, and an expected FEN with the castling field from memory. |
+| The golden | **Met.** Thirty-three plies to mate, final FEN asserted, three hashes recorded on macOS arm64 for the other lanes to confirm. Replayed with every checkpoint matching; saved at ply sixteen and finished elsewhere to the same hash. |
+| No engine change | **Met.** M20 touched nothing under `engine/`. Prediction 8 — that save, replay and the hash would need nothing — was tested for real here and held. |
+
+### What the probe found this time
+
+Nothing in the engine, which is the finding. The rules are 1,900 lines of library and 1,300 of
+tests, they link one module, and the only engine facility they needed that did not exist in M17
+was the one M19 built for them. The state fits the world's table contract without a wrinkle,
+the empty schedule ticks, and the replay and save paths carried a real game the way they carry a
+synthetic one. The hypothesis that a map engine's simulation generalises to a board game has
+now been tested with the game itself rather than with a survey, and it held.
 
 ## First continuous integration
 

@@ -234,7 +234,10 @@ libraries:**
 | Windows x64 | MSVC | Microsoft STL | continuous integration |
 
 The test carrying the values, `engine/simulation/tests/test_golden.cpp`, is compiled and run in
-all four; a mismatch anywhere fails that job. The x86_64 result arrived on 2026-09-15, when
+all four; a mismatch anywhere fails that job. Since M20 a third golden runs beside it,
+`apps/chess/sim/tests/test_golden.cpp`: a famous chess game played through the kernel to mate,
+its final position asserted as FEN and its world hash recorded — the first golden whose
+scenario is a real one rather than a synthetic one. The x86_64 result arrived on 2026-09-15, when
 continuous integration ran for the first time; before that this section said the comparison had
 not been made, because it had not. The version 2 values have been green on every platform since
 they were recorded on 2026-09-16.

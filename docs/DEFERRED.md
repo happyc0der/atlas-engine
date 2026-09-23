@@ -586,6 +586,23 @@ fact about the tree today rather than a consequence of the milestone.
   world. Condition: a debug-build kernel option hashing before and after each command, if a
   handler is ever found to have broken the contract in a way a twin test did not catch.
 
+### M20 — chess, the rules
+
+- **Resignation and a draw by agreement.** Each is a second command type with no engine
+  consequence and a small user-interface question — who may offer, when it lapses — that
+  belongs with the application. Condition: M22, if a person playing wants either.
+- **Standard algebraic notation.** The library reads and writes coordinates (`e2e4`, `e7e8q`)
+  and FEN; SAN needs disambiguation rules, check suffixes and a legal-move lookup on parse. The
+  Opera Game was transcribed to coordinates by hand and the final FEN caught nothing wrong in
+  the transcription. Condition: importing games from outside, which is PGN, which is SAN.
+- **An incremental position update.** Legality is checked by copy-make on a seventy-two byte
+  value, and perft to the depths the tests run takes well under a second in a debug build. An
+  engine that searched would want make/unmake and hashed move ordering; this library does not
+  search. Condition: a mod opponent (M23) that needs to, in which case it belongs in the mod.
+- **A deeper perft in continuous integration.** The tests run the published positions to depths
+  a sanitiser build finishes quickly; each case lists its deeper counts in a comment for anyone
+  who wants them. Condition: a generation bug that the shallow depths miss, which none has yet.
+
 ## Decided by ADR-0010, planned as milestones
 
 Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.

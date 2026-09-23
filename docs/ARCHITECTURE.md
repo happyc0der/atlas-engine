@@ -115,6 +115,14 @@ construction; `atlas::lab_view` holds the cell field and the identifier pass, so
 draw with the application's own code; and `apps/lab/main.cpp` is the composition root that
 puts a window, a device and an overlay around them.
 
+Chess is the third application and the one recorded exception to "not games" (ADR-0018). Its
+rules are `atlas::chess_sim`, fenced to `atlas::simulation` by the same configure-time loop:
+five tables that are the whole of a position, a value type the rules reason over by copy-make,
+and one command, `chess.move`, whose handler declines a move the position or the turn order
+refuses (ADR-0019). There are no systems — a position changes only through a command, so the
+schedule is empty and the kernel ticks it. A famous game's final position is the third golden
+hash, beside the two engine goldens, and is compared on the same four platforms.
+
 Third-party libraries are private to the modules named here and to no others: SDL3 to
 `platform` and `rhi`, EnTT to `scene`, nlohmann-json to `scene` and `assets`, Dear ImGui to
 `tools`, Tracy to `core` behind compiled-out macros, WAMR to `script`. The sentence used to say

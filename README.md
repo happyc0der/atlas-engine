@@ -30,6 +30,10 @@ that can be typed into.
 Two applications drive it. `atlas_sandbox` is the lifecycle and scene demonstration.
 `atlas_lab` is the Strategy Laboratory: a synthetic million-cell grid with map modes, picking,
 time controls and replay, which exists to test the architecture rather than to be a game.
+A third is on its way: chess, the first game on the engine and a probe of it
+([ADR-0018](docs/adr/0018-chess-probe.md)). Its rules library is complete — every rule
+including the draws, perft-verified, with the Opera Game as a golden hash — and the board, two
+people and a socket around it are the next milestones.
 
 **What is not done.** The renderer has been verified on one graphics processor and one software
 rasteriser; Direct3D 12 and non-Apple hardware are unverified, and that is the largest untested
