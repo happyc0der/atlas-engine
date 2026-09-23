@@ -185,10 +185,11 @@ inline const sim::CommandType kClaimCell = sim::command_type("claim cell");
         }
         return ok();
     };
-    handler.apply = [cells](sim::World& world, std::span<const std::byte> payload) {
+    handler.apply = [cells](sim::World& world, const sim::ApplyContext&,
+                            std::span<const std::byte> payload) -> Status {
         auto* table = dynamic_cast<CellTable*>(world.table(cells));
         if (table == nullptr) {
-            return;
+            return ok();
         }
         std::uint32_t cell = 0;
         std::uint32_t claimant = 0;
@@ -199,7 +200,7 @@ inline const sim::CommandType kClaimCell = sim::command_type("claim cell");
                                                    << (i * 8));
         }
         if (cell >= table->owner.size()) {
-            return;
+            return ok();
         }
         if (table->owner[cell] == 0) {
             table->owner[cell] = claimant;
@@ -207,6 +208,7 @@ inline const sim::CommandType kClaimCell = sim::command_type("claim cell");
             ++table->contested[cell];
             table->last_refused[cell] = claimant;
         }
+        return ok();
     };
     return handler;
 }

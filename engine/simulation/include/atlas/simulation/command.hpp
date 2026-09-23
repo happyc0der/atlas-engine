@@ -94,6 +94,17 @@ struct Command {
     std::vector<std::byte> payload;
 };
 
+/// Who submitted a command, and at which tick it is being applied (ADR-0019).
+///
+/// Neither field means anything the engine has to understand. `source` is what lets a rules
+/// table refuse a command from the wrong peer *inside* the simulation, where the refusal is
+/// hashed and identical everywhere, rather than in an application a modified client could
+/// skip. `tick` lets a handler record when a thing happened without a second table.
+struct ApplyContext {
+    SourceId source = SourceId::Local;
+    Tick tick = 0;
+};
+
 /// How a command type is validated and applied.
 struct CommandHandler {
     /// Check the payload before anything is changed.
@@ -103,8 +114,31 @@ struct CommandHandler {
     /// which is the one outcome worth ruling out entirely.
     std::function<Status(std::span<const std::byte>)> validate;
 
-    /// Apply a payload that has already been validated.
-    std::function<void(World&, std::span<const std::byte>)> apply;
+    /// Apply a payload that has already been validated, or decline it on world state.
+    ///
+    /// `ok()` means applied. An error means **declined**: the handler looked at the world and
+    /// said no — the piece is not there, it is not this source's turn, the cell is owned — and
+    /// the error carries the reason. A decline is the third fate of a command beside late and
+    /// invalid (ADR-0019), and it is deterministic by construction: it depends only on world
+    /// state and the payload, which every peer holds identically at the same tick.
+    ///
+    /// **A handler that declines has changed nothing.** That is the contract, and the kernel
+    /// cannot check it, because a handler owns its own tables: decide *before* writing, and
+    /// test it with a hash taken before and after. A partial write followed by a decline is a
+    /// bug in the handler, not a kind of decline.
+    ///
+    /// The decline path may allocate, because an `Error` carries words. Declines are rare by
+    /// construction; a handler that expects thousands a tick is doing `validate`'s job in the
+    /// wrong place.
+    std::function<Status(World&, const ApplyContext&, std::span<const std::byte>)> apply;
+};
+
+/// What became of a command that reached its handler.
+struct ApplyOutcome {
+    /// `ok()` when applied; the handler's reason when declined.
+    Status verdict;
+
+    [[nodiscard]] bool applied() const noexcept { return verdict.has_value(); }
 };
 
 /// Commands waiting for the ticks they name.
@@ -156,8 +190,11 @@ class CommandQueue {
 
     /// Apply one command through its registered handler.
     ///
-    /// Fails if the type has no handler or the payload no longer validates.
-    [[nodiscard]] Status apply(World& world, const Command& command) const;
+    /// Fails — the command is *invalid* — if the type has no handler or the payload no longer
+    /// validates. Otherwise the outcome carries the handler's verdict: applied, or declined
+    /// with a reason. The two are kept apart because they mean opposite things to whoever
+    /// reads the counts: bad bytes from a source, against a legal attempt at an illegal thing.
+    [[nodiscard]] Result<ApplyOutcome> apply(World& world, const Command& command) const;
 
     [[nodiscard]] std::size_t pending() const noexcept { return m_pending.size(); }
 

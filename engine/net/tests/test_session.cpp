@@ -55,7 +55,8 @@ const CommandType kPoke = command_type("poke");
         }
         return atlas::ok();
     };
-    handler.apply = [](atlas::sim::World&, std::span<const std::byte>) {};
+    handler.apply = [](atlas::sim::World&, const atlas::sim::ApplyContext&,
+                       std::span<const std::byte>) { return atlas::ok(); };
     return handler;
 }
 

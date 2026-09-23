@@ -67,6 +67,15 @@ struct TickReport {
     /// Commands whose payload no longer validated, or whose type has lost its handler.
     std::size_t commands_invalid = 0;
 
+    /// Commands that were well-formed and on time, and that the world refused (ADR-0019).
+    ///
+    /// The third fate, and not a rejection: a decline depends only on world state and the
+    /// payload, so every peer declines identically, and it is neither a protocol violation nor
+    /// an error. Counted apart from `commands_invalid` because a monitor must be able to tell
+    /// a source sending bad bytes from a legal attempt at an illegal thing, and apart from
+    /// `commands_applied` because a declined command changed nothing and is not recorded.
+    std::size_t commands_declined = 0;
+
     /// Late plus invalid: what `commands_rejected` meant before M14, unchanged.
     ///
     /// A function rather than a third field so the three cannot drift. A field would have to be
@@ -197,6 +206,11 @@ class Kernel {
     /// every peer refuses it identically, and the run is unaffected.
     [[nodiscard]] std::uint64_t invalid_commands() const noexcept { return m_invalid_commands; }
 
+    /// Commands declined by their handler on world state (ADR-0019).
+    ///
+    /// Not a rejection and not folded into one: see `TickReport::commands_declined`.
+    [[nodiscard]] std::uint64_t declined_commands() const noexcept { return m_declined_commands; }
+
     /// Calls to `step` refused because the gate was not ready.
     ///
     /// Counted apart from the accumulator's `dropped_ticks`, and **the two must never be added
@@ -217,6 +231,7 @@ class Kernel {
     Tick m_tick = 0;
     std::uint64_t m_late_commands = 0;
     std::uint64_t m_invalid_commands = 0;
+    std::uint64_t m_declined_commands = 0;
     std::uint64_t m_stalled_steps = 0;
     /// Reused by the refusal message, so a stall asked about every frame does not allocate one.
     std::vector<SourceId> m_waiting;

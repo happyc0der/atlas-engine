@@ -82,12 +82,25 @@ Result<TickReport> Kernel::step() {
                 continue;
             }
 
-            if (auto status = m_commands->apply(*m_world, command); !status) {
+            auto outcome = m_commands->apply(*m_world, command);
+            if (!outcome) {
                 // One bad command from one source must not halt a simulation that others are
                 // also driving, so this is counted and skipped rather than returned.
                 ++m_invalid_commands;
                 ++report.commands_invalid;
-                ATLAS_LOG_WARN(kSim, "dropping a command at tick {}: {}", m_tick, status.error());
+                ATLAS_LOG_WARN(kSim, "dropping a command at tick {}: {}", m_tick, outcome.error());
+                continue;
+            }
+            if (!outcome->applied()) {
+                // Declined, not rejected: the world said no, and every peer's world says the
+                // same. Debug rather than warning, because a decline is an ordinary result —
+                // a game would otherwise warn on every illegal attempt — and not recorded,
+                // because a recording is of what changed the state (ADR-0019 D4).
+                ++m_declined_commands;
+                ++report.commands_declined;
+                ATLAS_LOG_DEBUG(kSim, "declined a command from source {} at tick {}: {}",
+                                static_cast<std::uint32_t>(command.source), m_tick,
+                                outcome->verdict.error());
                 continue;
             }
             ++report.commands_applied;

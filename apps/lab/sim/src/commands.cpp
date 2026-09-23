@@ -54,15 +54,17 @@ Status register_lab_commands(sim::CommandQueue& commands, const TableIds& ids,
         }
         return ok();
     };
-    handler.apply = [cell_bound, ids](sim::World& world, std::span<const std::byte> payload) {
+    handler.apply = [cell_bound, ids](sim::World& world, const sim::ApplyContext&,
+                                      std::span<const std::byte> payload) -> Status {
         // Decoded again against the bound as it is now. A command that no longer fits, which
         // can only mean the grid changed between validation and this tick, is not applied at
         // all rather than applied to a cell that happens to exist.
         auto decoded = decode_set_color_index(payload, cell_bound->load());
         if (!decoded) {
-            return;
+            return ok();
         }
         cell_table(world, ids).color_index[decoded->cell] = decoded->color;
+        return ok();
     };
     return commands.register_handler(kSetColorIndex, std::move(handler));
 }

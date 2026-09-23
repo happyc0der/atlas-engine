@@ -10,6 +10,8 @@
 #include <vector>
 
 using atlas::ErrorCode;
+using atlas::Status;
+using atlas::sim::ApplyContext;
 using atlas::sim::command_type;
 using atlas::sim::CommandHandler;
 using atlas::sim::CommandType;
@@ -43,10 +45,11 @@ const CommandType kSetFirst = command_type("set first value");
         }
         return atlas::ok();
     };
-    handler.apply = [values](World& world, std::span<const std::byte> payload) {
+    handler.apply = [values](World& world, const ApplyContext&,
+                             std::span<const std::byte> payload) -> Status {
         auto* table = dynamic_cast<ValueTable*>(world.table(values));
         if (table == nullptr || table->value.empty()) {
-            return;
+            return atlas::ok();
         }
         std::int32_t value = 0;
         for (std::size_t i = 0; i < 4; ++i) {
@@ -54,6 +57,7 @@ const CommandType kSetFirst = command_type("set first value");
                 static_cast<std::int32_t>(std::to_integer<std::uint32_t>(payload[i]) << (i * 8));
         }
         table->value[0] = value;
+        return atlas::ok();
     };
     return handler;
 }
@@ -295,7 +299,9 @@ TEST_CASE("a late command and an invalid one are counted apart", "[sim][kernel]"
         }
         return atlas::ok();
     };
-    handler.apply = [](World&, std::span<const std::byte>) {};
+    handler.apply = [](World&, const ApplyContext&, std::span<const std::byte>) {
+        return atlas::ok();
+    };
     REQUIRE(h.commands.register_handler(kSetFirst, std::move(handler)).has_value());
     REQUIRE(h.schedule.finalise(h.world).has_value());
 

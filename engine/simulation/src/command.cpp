@@ -175,7 +175,7 @@ std::vector<Command> CommandQueue::drain(Tick tick) {
     return taken;
 }
 
-Status CommandQueue::apply(World& world, const Command& command) const {
+Result<ApplyOutcome> CommandQueue::apply(World& world, const Command& command) const {
     const auto handler = m_impl->handlers.find(command.type);
     if (handler == m_impl->handlers.end()) {
         return std::unexpected(
@@ -191,8 +191,8 @@ Status CommandQueue::apply(World& world, const Command& command) const {
             static_cast<std::uint32_t>(command.type), static_cast<std::uint32_t>(command.source))));
     }
 
-    handler->second.apply(world, command.payload);
-    return ok();
+    const ApplyContext context{.source = command.source, .tick = command.target};
+    return ApplyOutcome{.verdict = handler->second.apply(world, context, command.payload)};
 }
 
 std::uint64_t CommandQueue::next_sequence(SourceId source) const noexcept {

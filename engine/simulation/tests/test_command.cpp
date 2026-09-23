@@ -10,6 +10,8 @@
 #include <vector>
 
 using atlas::ErrorCode;
+using atlas::Status;
+using atlas::sim::ApplyContext;
 using atlas::sim::Command;
 using atlas::sim::command_type;
 using atlas::sim::CommandHandler;
@@ -37,11 +39,13 @@ const CommandType kAdd = command_type("add");
         }
         return atlas::ok();
     };
-    handler.apply = [](World& world, std::span<const std::byte> payload) {
+    handler.apply = [](World& world, const ApplyContext&,
+                       std::span<const std::byte> payload) -> Status {
         auto* table = dynamic_cast<CounterTable*>(world.table(atlas::sim::table_id("counter")));
         if (table != nullptr) {
             table->count += std::to_integer<std::uint64_t>(payload[0]);
         }
+        return atlas::ok();
     };
     return handler;
 }
@@ -76,7 +80,9 @@ TEST_CASE("a handler needs both validation and application", "[sim][command]") {
     CommandQueue queue;
 
     CommandHandler apply_only;
-    apply_only.apply = [](World&, std::span<const std::byte>) {};
+    apply_only.apply = [](World&, const ApplyContext&, std::span<const std::byte>) {
+        return atlas::ok();
+    };
     CHECK_FALSE(queue.register_handler(kAdd, std::move(apply_only)).has_value());
 
     CommandHandler validate_only;
@@ -258,7 +264,9 @@ TEST_CASE("applying a command changes the world", "[sim][command]") {
 
     const auto taken = f.queue.drain(1);
     REQUIRE(taken.size() == 1);
-    REQUIRE(f.queue.apply(f.world, taken[0]).has_value());
+    const auto outcome = f.queue.apply(f.world, taken[0]);
+    REQUIRE(outcome.has_value());
+    CHECK(outcome->applied());
     CHECK(f.count() == 7);
 }
 

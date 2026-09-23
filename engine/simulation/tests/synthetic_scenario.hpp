@@ -45,14 +45,15 @@ inline const CommandType kBump = command_type("bump a row");
         }
         return ok();
     };
-    handler.apply = [values](World& world, std::span<const std::byte> payload) {
+    handler.apply = [values](World& world, const ApplyContext&,
+                             std::span<const std::byte> payload) -> Status {
         auto* table = dynamic_cast<ValueTable*>(world.table(values));
         if (table == nullptr) {
-            return;
+            return ok();
         }
         const auto row = std::to_integer<std::size_t>(payload[0]);
         if (row >= table->value.size()) {
-            return;
+            return ok();
         }
         std::int32_t amount = 0;
         for (std::size_t i = 0; i < 4; ++i) {
@@ -60,6 +61,7 @@ inline const CommandType kBump = command_type("bump a row");
                                                 << (i * 8));
         }
         table->value[row] += amount;
+        return ok();
     };
     return handler;
 }

@@ -120,7 +120,8 @@ const atlas::sim::CommandType kPoke = atlas::sim::command_type("bench poke");
         }
         return atlas::ok();
     };
-    handler.apply = [](atlas::sim::World&, std::span<const std::byte>) {};
+    handler.apply = [](atlas::sim::World&, const atlas::sim::ApplyContext&,
+                       std::span<const std::byte>) { return atlas::ok(); };
     return handler;
 }
 

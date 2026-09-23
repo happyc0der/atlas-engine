@@ -53,7 +53,8 @@ const CommandType kPoke = atlas::sim::command_type("poke");
         }
         return atlas::ok();
     };
-    handler.apply = [](atlas::sim::World&, std::span<const std::byte>) {};
+    handler.apply = [](atlas::sim::World&, const atlas::sim::ApplyContext&,
+                       std::span<const std::byte>) { return atlas::ok(); };
     return handler;
 }
 
@@ -540,7 +541,8 @@ TEST_CASE("the committed demonstration mod loads and does what it says", "[scrip
         }
         return atlas::ok();
     };
-    handler.apply = [](atlas::sim::World&, std::span<const std::byte>) {};
+    handler.apply = [](atlas::sim::World&, const atlas::sim::ApplyContext&,
+                       std::span<const std::byte>) { return atlas::ok(); };
     REQUIRE(f.queue.register_handler(set_color, std::move(handler)));
 
     std::ifstream file("assets/mods/synthetic.wasm", std::ios::binary);
