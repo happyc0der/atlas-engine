@@ -27,6 +27,7 @@ using atlas::net::SessionConfig;
 using atlas::net::testing::claim_payload;
 using atlas::net::testing::kCells;
 using atlas::net::testing::kClaimCell;
+using atlas::net::testing::kClaimIfFree;
 using atlas::net::testing::Peer;
 using atlas::sim::Command;
 using atlas::sim::Kernel;
@@ -50,6 +51,7 @@ struct Participant {
     std::unique_ptr<Kernel> kernel;
     std::vector<std::uint64_t> hashes;
     std::vector<std::size_t> applied;
+    std::vector<std::size_t> declined;
     /// The next tick this peer has still to announce. Tracks its own kernel rather than the
     /// frame count, which is what keeps a stalled peer from running ahead in announcements.
     atlas::Tick next_turn = 0;
@@ -60,6 +62,8 @@ struct Table {
     std::unique_ptr<LoopbackHub> hub;
     std::vector<std::unique_ptr<Participant>> peers;
     std::uint32_t delay = 2;
+    /// Which claim every peer submits: the recorded contest by default, or the declining one.
+    atlas::sim::CommandType claim_type = kClaimCell;
 
     Table(std::size_t count, const atlas::net::LoopbackConfig& link, SessionConfig config) {
         auto made = LoopbackHub::create(link);
@@ -145,7 +149,7 @@ struct Table {
                         .target = tick,
                         .source = source,
                         .sequence = participant.peer.commands.next_sequence(source),
-                        .type = kClaimCell,
+                        .type = claim_type,
                         .payload = claim_payload(cell, static_cast<std::uint32_t>(i) + 1),
                     };
                     // Submitted locally as well as sent: a peer applies its own commands like
@@ -176,6 +180,7 @@ struct Table {
                 }
                 participant->hashes.push_back(report->state_hash);
                 participant->applied.push_back(report->commands_applied);
+                participant->declined.push_back(report->commands_declined);
                 participant->gate.retire_before(report->tick);
                 if (!participant->session->send_hash_check(report->tick, report->state_hash,
                                                            report->system_hashes)) {
@@ -345,4 +350,81 @@ TEST_CASE("a corrupted message never produces a silent disagreement", "[net][loc
         CHECK(table.peers[0]->peer.world.hash() == table.peers[1]->peer.world.hash());
         CHECK(table.peers[0]->kernel->current_tick() == table.peers[1]->kernel->current_tick());
     }
+}
+
+TEST_CASE("a decline is made identically by both peers and leaves no trace in the state",
+          "[net][lockstep]") {
+    // The case M14 could not write (ADR-0019). Its state-dependent refusal had to be recorded
+    // in the world to be observable; this one records nothing, and the kernel's own count is
+    // what is compared. Both peers claim the same cell every tick, so the total order decides
+    // whose claim is applied and whose is declined, and the two must agree on that — tick by
+    // tick, in the count and in the hash — or lockstep has a hole in it.
+    Table table(2, {.peer_count = 2, .latency_polls = 1, .reorder = true, .reorder_seed = 5},
+                SessionConfig{.input_delay = 2, .hash_check_interval = 8, .seed = 17});
+    table.claim_type = kClaimIfFree;
+    table.settle();
+    for (int frame = 0; frame < 300; ++frame) {
+        REQUIRE(table.frame());
+    }
+
+    auto& a = *table.peers[0];
+    auto& b = *table.peers[1];
+    REQUIRE(a.hashes.size() > 100);
+    REQUIRE(a.hashes.size() == b.hashes.size());
+    std::size_t declined_total = 0;
+    for (std::size_t tick = 0; tick < a.hashes.size(); ++tick) {
+        INFO("tick " << tick);
+        REQUIRE(a.hashes[tick] == b.hashes[tick]);
+        REQUIRE(a.applied[tick] == b.applied[tick]);
+        REQUIRE(a.declined[tick] == b.declined[tick]);
+        declined_total += a.declined[tick];
+    }
+
+    // Not vacuous: once every cell is owned, every claim is declined, so most of the run is
+    // declines — and the session saw nothing wrong with any of them.
+    CHECK(declined_total > 100);
+    CHECK(a.kernel->declined_commands() == declined_total);
+    CHECK(a.kernel->invalid_commands() == 0);
+    CHECK(a.session->stats().hash_checks_agreed > 10);
+    CHECK_FALSE(a.session->divergence().has_value());
+
+    // And nothing about a decline reached the state: every cell that is owned was claimed once,
+    // and the contest counters the recording fixture uses stay at zero.
+    const auto* cells =
+        dynamic_cast<const atlas::net::testing::CellTable*>(a.peer.world.table(a.peer.cells));
+    REQUIRE(cells != nullptr);
+    for (std::size_t cell = 0; cell < kCells; ++cell) {
+        CHECK(cells->contested[cell] == 0);
+        CHECK(cells->last_refused[cell] == 0);
+    }
+}
+
+TEST_CASE("a declined claim leaves the world as a twin that never saw it", "[net][lockstep]") {
+    // The contract behind the case above, checked directly: a handler that declines has
+    // changed nothing. Two peers run in isolation; both claim the cell once, and one is then
+    // sent a second claim on the same cell, which is declined. Its hash afterwards must equal
+    // the twin's, or the decline wrote something on its way out.
+    Peer declined;
+    Peer twin;
+    Kernel kernel(declined.world, declined.schedule, declined.commands, KernelConfig{.seed = 3});
+    Kernel kernel_twin(twin.world, twin.schedule, twin.commands, KernelConfig{.seed = 3});
+
+    for (auto* commands : {&declined.commands, &twin.commands}) {
+        REQUIRE(commands->submit(0, atlas::sim::SourceId::Local, kClaimIfFree, claim_payload(4, 1))
+                    .has_value());
+    }
+    REQUIRE(
+        declined.commands.submit(1, atlas::sim::SourceId::Local, kClaimIfFree, claim_payload(4, 2))
+            .has_value());
+
+    REQUIRE(kernel.step().has_value());
+    REQUIRE(kernel_twin.step().has_value());
+    const auto report = kernel.step();
+    const auto twin_report = kernel_twin.step();
+    REQUIRE(report.has_value());
+    REQUIRE(twin_report.has_value());
+
+    CHECK(report->commands_declined == 1);
+    CHECK(report->commands_applied == 0);
+    CHECK(report->state_hash == twin_report->state_hash);
 }

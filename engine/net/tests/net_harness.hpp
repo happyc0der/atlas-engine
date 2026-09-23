@@ -13,6 +13,7 @@
 /// Deliberately meaningless, like every other synthetic fixture here. Cells have owners and a
 /// contested count; neither carries any domain meaning, and the engine has no game in it.
 
+#include <atlas/core/assert.hpp>
 #include <atlas/simulation/command.hpp>
 #include <atlas/simulation/kernel.hpp>
 #include <atlas/simulation/rng.hpp>
@@ -23,6 +24,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <format>
 #include <memory>
 #include <span>
 #include <utility>
@@ -213,6 +215,53 @@ inline const sim::CommandType kClaimCell = sim::command_type("claim cell");
     return handler;
 }
 
+inline const sim::CommandType kClaimIfFree = sim::command_type("claim cell if free");
+
+/// Claim a cell, or be **declined** because somebody already owns it (ADR-0019).
+///
+/// The sibling of `claim_handler` and the case M14 could not write: that fixture records its
+/// refusal in the world because a silent no-op was the only other option. This one has no side
+/// effect on a refusal at all. It declines, the kernel counts it, and the proof asserts that
+/// both peers count the same thing at the same tick with equal hashes — which is what makes a
+/// decline safe under lockstep and is the reason it needs no place in the state.
+[[nodiscard]] inline sim::CommandHandler claim_if_free_handler(sim::TableId cells) {
+    sim::CommandHandler handler;
+    handler.validate = [](std::span<const std::byte> payload) -> Status {
+        if (payload.size() != 8) {
+            return std::unexpected(
+                Error(ErrorCode::MalformedData, "expected a cell and a claimant"));
+        }
+        return ok();
+    };
+    handler.apply = [cells](sim::World& world, const sim::ApplyContext&,
+                            std::span<const std::byte> payload) -> Status {
+        auto* table = dynamic_cast<CellTable*>(world.table(cells));
+        ATLAS_ASSERT_MSG(table != nullptr, "claim registered against a table the world lacks");
+        std::uint32_t cell = 0;
+        std::uint32_t claimant = 0;
+        for (std::size_t i = 0; i < 4; ++i) {
+            cell |=
+                static_cast<std::uint32_t>(std::to_integer<std::uint32_t>(payload[i]) << (i * 8));
+            claimant |= static_cast<std::uint32_t>(std::to_integer<std::uint32_t>(payload[i + 4])
+                                                   << (i * 8));
+        }
+        if (cell >= table->owner.size()) {
+            return std::unexpected(Error(ErrorCode::OutOfRange,
+                                         std::format("cell {} of {}", cell, table->owner.size())));
+        }
+        if (table->owner[cell] != 0) {
+            // Decided before anything is written: the contract is that a decline changed
+            // nothing, and this handler has nothing to un-write.
+            return std::unexpected(Error(ErrorCode::AlreadyExists,
+                                         std::format("cell {} is owned by {}; {} is declined", cell,
+                                                     table->owner[cell], claimant)));
+        }
+        table->owner[cell] = claimant;
+        return ok();
+    };
+    return handler;
+}
+
 /// Sums the cells into the tally, so a tick changes state even when no command arrives.
 ///
 /// Shaped the way every system here is: compute reads the world and fills storage the system
@@ -290,6 +339,7 @@ struct Peer {
         tally = *tally_registered;
 
         REQUIRE(commands.register_handler(kClaimCell, claim_handler(cells)).has_value());
+        REQUIRE(commands.register_handler(kClaimIfFree, claim_if_free_handler(cells)).has_value());
         REQUIRE(schedule.add(tally_system(cells, tally)).has_value());
         REQUIRE(schedule.add(stir_system(tally)).has_value());
         REQUIRE(schedule.finalise(world).has_value());
