@@ -7,6 +7,7 @@ atlas_add_test(chess_sim
         test_fen.cpp
         test_perft.cpp
         test_rules.cpp
+        test_golden.cpp
     DEPENDS
         atlas::chess_sim
     LABELS
