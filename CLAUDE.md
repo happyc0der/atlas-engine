@@ -140,6 +140,11 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 - An instruction budget is counted in instructions, never in wall time. A wall-clock watchdog
   fires after different amounts of work on different machines, which is the divergence it exists
   to prevent.
+- **A mod speaks by key, one way, and reads no text** (ADR-0021). `atlas_say` names a key the host
+  prefixes with `mod.<name>.`, and a mod's own table may define only keys under that prefix.
+  Nothing resolved ever goes back into a mod: text depends on the locale, and a mod that read it
+  would decide differently on two peers. What a mod says is presentation — never hashed, saved,
+  replayed or sent.
 - **Every string a person can see comes from `text::Catalog`, by a key named in
   `engine/tools/include/atlas/tools/text_keys.hpp`** (ADR-0016). A call site names the constant,
   never the string, so `--text-check` can resolve the whole list against the shipped table. A

@@ -3,8 +3,13 @@
 
 ## Status
 
-**Proposed**, 2026-09-24, written at M24's gate. Accepted when M24 lands it. Nothing in
-`engine/script` changes before this record is read.
+**Accepted**, 2026-09-24, implemented in M24.
+
+Proposed the same day at M24's gate. **Four things changed by implementing it**, each marked at
+its own heading with what changed and why rather than edited to read as if it had always said
+it: D1's refusals are more precise than written, D4's budget lives somewhere else, D5's lab has
+no panel, and the Consequences' `--text-check` line was wrong about what can be checked. The
+import, its direction, the namespace rule and every refusal of text *into* a mod held.
 
 Extends [ADR-0015](0015-sandboxed-mods.md)'s guest interface by one import and its limits by one
 budget. Nothing in 0015 is superseded: every decision about what a mod may not reach stands, and
@@ -67,6 +72,16 @@ interface already speaks at every other boundary. Returns 0, or a negative code:
 or too long (`ATLAS_ERR_RANGE`), too many arguments (`ATLAS_ERR_RANGE`), or this tick's budget is
 spent (`ATLAS_ERR_EXHAUSTED`).
 
+*Made precise during M24, 2026-09-24.* Three refusals the sketch did not name. **A key suffix is
+at most `ATLAS_MOD_MAX_SAY_KEY` (64) bytes of `[a-z0-9_.]`**, with no leading or trailing dot and
+no empty segment, so a suffix cannot climb into a parent namespace by beginning with a dot or
+produce a key that no table could spell; anything else is `ATLAS_ERR_RANGE`. **Everything that
+can be judged without touching guest memory is judged first**, so a malformed call is a refusal
+the mod sees rather than a trap that disables it. And **an argument pointer outside the mod's
+memory traps**, disabling the mod, which is ADR-0015's rule for a bad pointer; the arguments are
+checked by the host against the runtime's own bounds rather than by the import's signature,
+because the signature's buffer form counts bytes and the count here is of integers.
+
 **D2. Nothing comes back.** No import returns resolved text, a string's length, or whether a key
 exists. A mod cannot learn what it said looked like, which is the property that keeps the
 interface locale-blind and therefore lockstep-safe.
@@ -86,10 +101,27 @@ a message a second, so a mod saying sixteen things in one tick has gone wrong, a
 the budget is dropped and counted rather than queued. The queue is bounded too, because an
 application that never drains it must not grow it without limit.
 
+*Changed during M24, 2026-09-24.* **Both bounds live in `ModHostConfig`**, as
+`max_messages_per_tick` (four) and `max_queued_messages` (sixty-four), not in `ModLimits`. The
+limits in `ModLimits` bound what a guest can cost the *runtime* — instructions, memory, file size
+— and are checked by the loader; these bound what a host is willing to *hold* for an application,
+beside the log's rate limit, which already lived in the host's configuration. A message refused
+because the queue is full still spends that tick's budget, so a mod cannot learn the queue's
+state by retrying. `ModHostStats` counts `messages_said` and `messages_dropped`.
+
 **D5. The application decides where messages appear.** The engine hands over keys and integers;
 the lab resolves them through its catalogue and shows them in a small overlay panel of recent
 messages, and prints each one resolved in a headless run so an integration case can read it.
 What a game does with them is the game's.
+
+*Changed during M24, 2026-09-24.* **The lab has no message panel.** It resolves each message,
+prints it, and logs it at information level, and the overlay's log console — which already
+exists, filters, and scrolls — is where a windowed run shows it. A panel would have been a second
+list of recent lines beside one that is already there, built for a single demonstration mod. The
+integration cases read the printed line, as D5 intended. **Only the lab's single-process path has
+a catalogue**: its loopback table and its socket peer pass none, so under lockstep a mod's
+messages show as their keys. That is what a missing key shows everywhere and is not a divergence,
+because nothing said is compared; it is recorded so nobody reads it as a bug.
 
 **D6. The demonstration mod speaks.** `tools/gen_mods.py` gains a third module, `herald.wasm`,
 that says one keyed message with one argument every so many ticks, with `herald.strings.json`
@@ -130,13 +162,20 @@ exists to keep out.
   one queue and one budget; `ModHost` a way to drain what was said. `kSafeImportCount` is nine.
 - The lab loads `<name>.strings.json` beside a mod, shows and prints what it says, and gains
   `herald.wasm` as its demonstration; `--text-check` learns to resolve a mod's keys when given one.
+
+  *Corrected during M24, 2026-09-24.* **`--text-check` did not learn that, and cannot.** It
+  resolves a list of keys named in source, and a mod's keys are chosen at run time by a guest the
+  engine never inspects: there is no list to resolve. What can be checked is checked where D3 put
+  it — every key in a mod's table lies in its namespace, refused whole otherwise — and a key a mod
+  says without defining shows itself, as every missing key does.
 - The hostile-module suite gains cases for every refusal in D1 and D3, through a real guest.
 - ADR-0015's status line gains a dated forward pointer; `CLAUDE.md`'s mod rules gain one line:
   a mod speaks by key, one way, and reads no text.
 - **The risk is small and worth naming**: this widens the untrusted surface by one import that
-  copies bytes out of guest memory. It reads at most a bounded key and four integers, both
-  bounds-checked by the runtime's own signature before the host sees them, which is the same
-  treatment `atlas_log` and `atlas_submit` already get.
+  copies bytes out of guest memory. It reads at most a bounded key and four integers: the key
+  bounds-checked by the runtime's own signature before the host sees it, and the integers by the
+  host against the runtime's bounds, as D1's note describes — the treatment `atlas_log` and
+  `atlas_submit` already get.
 
 ## Rollback cost
 

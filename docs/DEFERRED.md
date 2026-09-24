@@ -485,7 +485,13 @@ fact about the tree today rather than a consequence of the milestone.
   kilobytes — and a decision about whether the atlas is rebuilt when the locale changes or
   fixed at startup.
 
-- **A string API for mods.** M16's justification was supposed to be a mod that adds strings;
+- ~~**A string API for mods.**~~ **Built in M24**, as ADR-0021: one import, `atlas_say`, that
+  names a key in the mod's own namespace for a person to read, and returns nothing a mod could
+  decide on. The trigger had not fired — no mod has anything to say — and the owner took it
+  anyway, second of the three items M17 left open; the consumer is the lab's `herald.wasm`, which
+  proves the path and nothing about demand. The original entry follows.
+
+  M16's justification was supposed to be a mod that adds strings;
   M15's ABI has eight imports and none of them touches a table, so the consumer named in the
   series plan does not exist. Building it would mean a ninth import, a host implementation,
   a bump of `kSafeImportCount`, tests that call it through a real guest, and a wider untrusted
@@ -637,6 +643,29 @@ fact about the tree today rather than a consequence of the milestone.
   decided by one peer, a vote, or a timer would need the tick proposed and acknowledged before
   anyone runs it. Condition: such a consumer; a game that ends by resignation does not need it,
   because a resignation is a command and the tick it lands on is already agreed.
+
+### M24 — a mod speaks
+
+- **Strings as arguments to a mod's message.** A mod passes up to four integers, never text. A
+  message like *"{0} took {1}"* wants names, and a name a mod could pass is one it read from a
+  view — bytes whose meaning is the application's, so the application should turn them into a
+  name. Trigger: a message that needs a name the application cannot supply from an integer.
+
+- **A panel of a mod's messages.** The lab prints and logs each one, and the overlay's log
+  console is where a windowed run shows them. A panel would be a second list of recent lines for
+  one demonstration mod. Trigger: a consumer whose messages are lost among the log's own lines.
+
+- **A mod's words under lockstep.** The lab's loopback table and socket peer pass no catalogue,
+  so their mods' messages show as keys. Nothing diverges, because nothing said is compared.
+  Trigger: a lockstep application that shows a mod's messages to a person — a mod opponent in
+  chess, or a game.
+
+- **A mod's table in more than one language.** A mod ships `<name>.strings.json` and nothing
+  chooses between locales, exactly as the engine's own table. Trigger: the same as the engine's —
+  a second language.
+
+- **Reloading a mod's table while it runs.** Mods are not reloaded (M15), and neither are their
+  words. Trigger: the same as reloading a mod.
 
 ## Decided by ADR-0010, planned as milestones
 

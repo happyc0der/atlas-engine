@@ -32,7 +32,7 @@ Status legend: **done**, *in progress*, planned.
 | M21 | A session can finish | M | **done** |
 | M22 | Chess: the application, two people, a socket | L | **done** |
 | M23 | One pin for vcpkg | S | **done** |
-| M24 | A string API for mods | M | planned |
+| M24 | A string API for mods | M | **done** |
 | M25 | Dropping a peer and playing on | L | planned |
 | — | Chess: a mod as the opponent | ? | deferred; numbered when scheduled |
 
@@ -1430,6 +1430,28 @@ each.
 |---|---|
 | The key follows the pin | **Met, by removing the possibility of two pins rather than by hashing both.** The key already hashes `vcpkg.json`; `tools/check_vcpkg_pin.py` holds its baseline equal to the submodule's gitlink, and to the commit `DEPENDENCIES.md` names, so the key cannot follow one while the checkout is the other. |
 | Checked everywhere | **Met.** A lint test, a precheck step, and a step in the lint workflow. Moving each of the three records alone fails the check, the gitlink tested by staging a different commit in the index. |
+
+## M24 — A mod speaks
+
+Full report: [reports/M24.md](reports/M24.md).
+
+The second of the three items M17 left open. Decided by
+[ADR-0021](adr/0021-mod-messages.md): a mod may name a message for a person to read, in its own
+namespace, and nothing comes back. The trigger had not fired, and the record says so first.
+
+**Exit criteria**
+- A mod can put a message in front of a person without being able to read any text itself.
+- A mod's words come from its own table and cannot reach anybody else's.
+- Saying something changes nothing a hash can see.
+- Every refusal the record names is exercised through a real guest.
+
+| Criterion | Status |
+|---|---|
+| One way, by key | **Met.** `atlas_say` takes a key suffix and integers and returns a status. No import returns text, a length, or whether a key exists. |
+| Its own words only | **Met twice.** The host prefixes every key, so naming another's is unrepresentable; a table naming anything outside the prefix is refused whole, shown by a case that uses a key nothing else defines, so the catalogue's own clash check cannot be what catches it. |
+| Presentation only | **Met.** The herald's run ends at the hash of a run with no mod. |
+| Refusals through a guest | **Met.** Malformed key, too many arguments, budget, queue bound and an out-of-bounds argument pointer, each in a module built in the test. |
+| A panel in the lab | **Not built, by a dated change to D5.** The log console shows messages in a window; a second list was not worth one demonstration mod. |
 
 ## First continuous integration
 

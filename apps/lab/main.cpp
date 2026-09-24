@@ -166,6 +166,8 @@ Options:
                          once per tick, before that tick. Its commands are stamped with its own
                          identifier and never sent to peers: every peer runs the same mod and
                          produces the same commands, which is what the hash check verifies.
+                         A table named like the mod, herald.strings.json beside herald.wasm,
+                         supplies the words for what it says.
   --mods-dir PATH        Where --mod looks. Default: assets/mods.
   --strings-dir PATH     Where the interface's string table is read from.
                          Default: assets/source/strings.

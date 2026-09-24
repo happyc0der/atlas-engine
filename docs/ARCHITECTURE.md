@@ -597,6 +597,7 @@ is the design:
 | A filesystem, a network, an environment | A mod is untrusted input from a mounted directory. It reads views and submits commands. |
 | An allocator or a libc | WASI and WAMR's built-in libc are compiled out of the port. A guest that wants a heap brings one inside its own memory. |
 | A generator of its own | `atlas_random` is keyed by seed, tick and the mod's identity, so two peers draw the same numbers and a recording replays them. |
+| Text, going in | A resolved string depends on the locale, and two peers need not share one. A mod that read it would decide differently on each. `atlas_say` sends a key out and returns nothing to decide on (ADR-0021). |
 
 **A mod never says who it is.** `atlas_submit` has no source parameter: the host stamps the
 mod's own identifier and the target tick. Claiming to be another peer is unrepresentable rather
@@ -628,6 +629,15 @@ because under lockstep "try it again" is a decision one peer might take and anot
 beside the log sink registry, because WAMR's initialisation is process-global. It is an RAII
 object the composition root creates once and asserts is unique, exactly as `Platform` wraps
 SDL's, and ADR-0015 names it rather than letting the rule widen quietly.
+
+**A mod speaks by key, one way.** `atlas_say` takes a key suffix and up to four integers; the
+host prefixes `mod.<name>.`, so a mod names only its own words, and queues the message for the
+application, which drains it after each poll, resolves it through its catalogue in its own
+language, and shows it. A mod's table sits beside its module as `<name>.strings.json`, is refused
+whole if it names any key outside that prefix, and is added to the catalogue beside the
+engine's. Messages are presentation: bounded per tick and in the queue, dropped and counted
+beyond either, and never hashed, saved, replayed or sent. Decided by
+[ADR-0021](adr/0021-mod-messages.md).
 
 The threading table above is unchanged: everything here runs on the main thread, with the
 kernel. A mod thread is deferred.
