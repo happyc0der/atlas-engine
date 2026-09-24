@@ -15,6 +15,7 @@ atlas_add_app(lab
         file_bytes.cpp
     DEPENDS
         atlas::app_common
+        atlas::app_lockstep
         atlas::lab_sim
         atlas::net
         atlas::script

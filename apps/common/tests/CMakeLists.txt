@@ -11,3 +11,12 @@ atlas_add_test(app_common
     LABELS
         unit
 )
+
+atlas_add_test(app_lockstep
+    SOURCES
+        test_socket_session.cpp
+    DEPENDS
+        atlas::app_lockstep
+    LABELS
+        unit
+)

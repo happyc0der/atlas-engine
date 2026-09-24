@@ -12,6 +12,7 @@
 #include <atlas/app/main_guard.hpp>
 #include <atlas/app/ppm.hpp>
 #include <atlas/app/run_bounds.hpp>
+#include <atlas/app/socket_session.hpp>
 #include <atlas/assets/filesystem.hpp>
 #include <atlas/assets/importer.hpp>
 #include <atlas/assets/virtual_path.hpp>
@@ -688,46 +689,21 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
     // and bounded, because a proof that hangs is a job that times out with nothing to read.
     constexpr auto kConnectTimeout = std::chrono::seconds{30};
 
-    std::unique_ptr<atlas::net::EnetHub> hub;
-    if (options.listen) {
-        auto made = atlas::net::EnetHub::listen(
-            *runtime, static_cast<std::uint16_t>(options.listen_port), options.expect_peers);
-        if (!made) {
-            return std::unexpected(std::move(made).error().context("listening"));
+    atlas::app::SocketEndpoint endpoint{.listen = true,
+                                        .port = static_cast<std::uint16_t>(options.listen_port),
+                                        .expected_peers = options.expect_peers};
+    if (!options.listen) {
+        auto parsed = atlas::app::parse_connect(options.connect);
+        if (!parsed) {
+            return std::unexpected(std::move(parsed).error());
         }
-        hub = *std::move(made);
-
-        // Printed and flushed before the wait, not after it. A harness that asked for port zero
-        // reads this line to learn where to send the other process, so it has to appear while
-        // this one is still waiting rather than once it has given up.
-        std::printf("listening on port %u\n", static_cast<unsigned>(hub->port()));
-        std::fflush(stdout);
-
-        if (auto status = hub->accept(kConnectTimeout); !status) {
-            return std::unexpected(std::move(status).error().context("waiting for peers"));
-        }
-    } else {
-        const auto colon = options.connect.rfind(':');
-        if (colon == std::string_view::npos) {
-            return atlas::fail(atlas::ErrorCode::InvalidArgument, "--connect wants HOST:PORT");
-        }
-        const std::string_view host = options.connect.substr(0, colon);
-        const std::string_view port_text = options.connect.substr(colon + 1);
-        std::uint32_t port = 0;
-        const auto* first = port_text.data();
-        const auto* last = first + port_text.size();
-        if (std::from_chars(first, last, port).ec != std::errc{} || port == 0 || port > 65535) {
-            return atlas::fail(atlas::ErrorCode::InvalidArgument,
-                               std::format("'{}' is not a port", port_text));
-        }
-
-        auto made = atlas::net::EnetHub::connect(*runtime, host, static_cast<std::uint16_t>(port),
-                                                 kConnectTimeout);
-        if (!made) {
-            return std::unexpected(std::move(made).error().context("connecting"));
-        }
-        hub = *std::move(made);
+        endpoint = *std::move(parsed);
     }
+    auto opened = atlas::app::open_socket_hub(*runtime, endpoint, kConnectTimeout);
+    if (!opened) {
+        return std::unexpected(std::move(opened).error());
+    }
+    std::unique_ptr<atlas::net::EnetHub> hub = *std::move(opened);
 
     const std::size_t self = hub->local_index();
 
@@ -769,30 +745,12 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
     ATLAS_LOG_INFO(kApp, "socket peer {} of {}: initial hash {:#018x}", self, hub->peer_count(),
                    initial_hash);
 
-    // The handshake is bounded in wall time rather than in polls, unlike the loopback's. A
-    // loopback poll does a fixed amount of work, so counting them is a proxy for progress; over
-    // a socket a poll can do nothing at all while the other process is still starting up, and
-    // counting those would fail a session that was merely waiting for a slower machine.
-    {
-        const auto deadline = std::chrono::steady_clock::now() + kConnectTimeout;
-        while (!(*session)->running()) {
-            if (std::chrono::steady_clock::now() > deadline) {
-                return atlas::fail(atlas::ErrorCode::Unavailable,
-                                   "the handshake did not complete before the deadline");
-            }
-            auto report = (*session)->poll(0, sim->commands, gate);
-            if (!report) {
-                return std::unexpected(std::move(report).error().context("the handshake"));
-            }
-            if (hub->status().ended) {
-                return atlas::fail(
-                    atlas::ErrorCode::Unavailable,
-                    std::format("the link ended during the handshake: {}", hub->status().reason));
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds{1});
-        }
-        ATLAS_LOG_INFO(kApp, "socket handshake agreed, input delay {}", (*session)->agreed_delay());
+    if (auto status =
+            atlas::app::await_handshake(**session, *hub, sim->commands, gate, kConnectTimeout);
+        !status) {
+        return status;
     }
+    ATLAS_LOG_INFO(kApp, "socket handshake agreed, input delay {}", (*session)->agreed_delay());
 
     atlas::Tick next_turn = 0;
     std::uint64_t last_hash = initial_hash;

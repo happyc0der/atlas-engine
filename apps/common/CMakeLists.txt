@@ -19,6 +19,19 @@ atlas_add_app_library(app_common
         atlas::rhi
 )
 
+# atlas::app_lockstep — opening a lockstep session over a socket, the same way in every
+# application that plays one. Its own target because it links atlas::net, and an application
+# that plays no session should not link a socket library to get a camera controller. Lifted
+# out of the lab when chess became the second application to need it (M22).
+atlas_add_app_library(app_lockstep
+    SOURCES
+        src/socket_session.cpp
+    DEPENDS
+        atlas::core
+        atlas::net
+        atlas::simulation
+)
+
 if(ATLAS_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
