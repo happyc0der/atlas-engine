@@ -6,6 +6,21 @@
 # chess reaching engine/.
 #
 # The rules are a library that may link only atlas::simulation, fenced at configure time in
-# sim/CMakeLists.txt exactly as the lab's simulation is. The application that puts a board, two
-# people and a socket around it arrives in M22.
+# sim/CMakeLists.txt exactly as the lab's simulation is. The view is a second library that turns
+# a position into quads, with no device of its own, so its tests need none. The application is
+# the composition root that puts a window, a board and two people around them.
 add_subdirectory(sim)
+add_subdirectory(view)
+
+atlas_add_app(chess
+    SOURCES
+        main.cpp
+    DEPENDS
+        atlas::app_common
+        atlas::chess_sim
+        atlas::chess_view
+        atlas::assets
+        atlas::platform
+        atlas::renderer
+        atlas::rhi
+)

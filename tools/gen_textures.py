@@ -15,6 +15,14 @@ row arithmetic in `animation::cell_uv` rather than only the tests. Each cell is 
 colour with a bright corner marker, so a wrong cell or a transposed grid is visible at a glance
 rather than subtly off.
 
+`chess_pieces.png` is the chess application's sheet (M22): eight sixteen-pixel cells a row,
+the six white pieces on the top row and the six black ones below, in the order the rules library
+numbers them — pawn, knight, bishop, rook, queen, king — so a piece's cell is its kind minus one
+and its colour. The seventh cell of each row is solid white, which the board tints into its
+squares and highlights, and the eighth is a white ring, which marks a legal move to an empty
+square. Each glyph is written as a fill mask and its outline is derived from it, so a white
+piece is outlined dark and a black one light, and either reads on either colour of square.
+
 `tile.png` replaces the file of the same name that had been committed since M4 with no recorded
 origin at all. `assets/source/PROVENANCE.md` said it should be replaced by a generated pattern
 when something next touched the sandbox's assets, and this is that.
@@ -157,6 +165,171 @@ def sprite_sheet() -> list[list[Pixel]]:
     return rows
 
 
+# Fill masks, sixteen by sixteen, "X" filled and "." empty. The outline is not drawn here: every
+# empty pixel beside a filled one becomes outline, which keeps the six shapes the only thing to
+# read and guarantees every piece has a closed edge.
+CHESS_GLYPHS: dict[str, list[str]] = {
+    "pawn": [
+        "................",
+        "................",
+        "................",
+        "................",
+        ".......XX.......",
+        "......XXXX......",
+        "......XXXX......",
+        ".......XX.......",
+        "......XXXX......",
+        ".......XX.......",
+        ".......XX.......",
+        "......XXXX......",
+        ".....XXXXXX.....",
+        "....XXXXXXXX....",
+        "....XXXXXXXX....",
+        "................",
+    ],
+    "knight": [
+        "................",
+        "................",
+        ".......X.X......",
+        "......XXXXX.....",
+        ".....XXXXXXX....",
+        "....XXXX.XXX....",
+        "....XXXXXXXXX...",
+        "...XXXXXXXXXX...",
+        "...XXX..XXXXX...",
+        ".......XXXXX....",
+        "......XXXXX.....",
+        ".....XXXXXX.....",
+        "....XXXXXXXX....",
+        "....XXXXXXXX....",
+        "................",
+        "................",
+    ],
+    "bishop": [
+        "................",
+        ".......XX.......",
+        "......XXXX......",
+        ".....XXX.XX.....",
+        ".....XX.XXX.....",
+        ".....XXXXXX.....",
+        "......XXXX......",
+        ".......XX.......",
+        "......XXXX......",
+        "......XXXX......",
+        ".....XXXXXX.....",
+        "....XXXXXXXX....",
+        "....XXXXXXXX....",
+        "................",
+        "................",
+        "................",
+    ],
+    "rook": [
+        "................",
+        "................",
+        "....XX.XX.XX....",
+        "....XXXXXXXX....",
+        ".....XXXXXX.....",
+        ".....XXXXXX.....",
+        ".....XXXXXX.....",
+        ".....XXXXXX.....",
+        ".....XXXXXX.....",
+        ".....XXXXXX.....",
+        "....XXXXXXXX....",
+        "...XXXXXXXXXX...",
+        "...XXXXXXXXXX...",
+        "................",
+        "................",
+        "................",
+    ],
+    "queen": [
+        "................",
+        "..X....XX....X..",
+        "..XX..XXXX..XX..",
+        "..XXX.XXXX.XXX..",
+        "...XXXXXXXXXX...",
+        "...XXXXXXXXXX...",
+        "....XXXXXXXX....",
+        ".....XXXXXX.....",
+        ".....XXXXXX.....",
+        "....XXXXXXXX....",
+        "...XXXXXXXXXX...",
+        "...XXXXXXXXXX...",
+        "................",
+        "................",
+        "................",
+        "................",
+    ],
+    "king": [
+        ".......XX.......",
+        "......XXXX......",
+        ".......XX.......",
+        "....XX.XX.XX....",
+        "...XXXXXXXXXX...",
+        "...XXXXXXXXXX...",
+        "....XXXXXXXX....",
+        ".....XXXXXX.....",
+        ".....XXXXXX.....",
+        "....XXXXXXXX....",
+        "...XXXXXXXXXX...",
+        "...XXXXXXXXXX...",
+        "................",
+        "................",
+        "................",
+        "................",
+    ],
+}
+
+# In the rules library's order: PieceKind 1 to 6.
+CHESS_ORDER = ["pawn", "knight", "bishop", "rook", "queen", "king"]
+
+
+def chess_cell(glyph: list[str], fill: Pixel, outline: Pixel) -> list[list[Pixel]]:
+    assert len(glyph) == CELL and all(len(row) == CELL for row in glyph), "a glyph is one cell"
+    clear: Pixel = (0, 0, 0, 0)
+    cell: list[list[Pixel]] = []
+    for y in range(CELL):
+        row: list[Pixel] = []
+        for x in range(CELL):
+            if glyph[y][x] == "X":
+                row.append(fill)
+                continue
+            beside = any(
+                0 <= y + dy < CELL and 0 <= x + dx < CELL and glyph[y + dy][x + dx] == "X"
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+            row.append(outline if beside else clear)
+        cell.append(row)
+    return cell
+
+
+def chess_pieces() -> list[list[Pixel]]:
+    """Two rows of eight cells: the pieces, then a solid cell and a ring."""
+    white_fill: Pixel = (242, 238, 226, 255)
+    white_edge: Pixel = (28, 28, 34, 255)
+    black_fill: Pixel = (44, 44, 52, 255)
+    black_edge: Pixel = (226, 226, 232, 255)
+    solid: Pixel = (255, 255, 255, 255)
+    clear: Pixel = (0, 0, 0, 0)
+
+    ring: list[list[Pixel]] = []
+    centre = (CELL - 1) / 2
+    for y in range(CELL):
+        row: list[Pixel] = []
+        for x in range(CELL):
+            # Integer arithmetic on doubled coordinates, so the ring is exact and symmetric.
+            distance_squared = (2 * x - 2 * centre) ** 2 + (2 * y - 2 * centre) ** 2
+            row.append(solid if 8 * 8 <= distance_squared <= 12 * 12 else clear)
+        ring.append(row)
+    block = [[solid] * CELL for _ in range(CELL)]
+
+    rows: list[list[Pixel]] = []
+    for fill, edge in ((white_fill, white_edge), (black_fill, black_edge)):
+        cells = [chess_cell(CHESS_GLYPHS[name], fill, edge) for name in CHESS_ORDER]
+        cells += [block, ring]
+        for y in range(CELL):
+            rows.append([pixel for cell in cells for pixel in cell[y]])
+    return rows
+
+
 def tile() -> list[list[Pixel]]:
     """A neutral sixteen-pixel tile: a light face, a darker border, and a centre dot.
 
@@ -194,6 +367,10 @@ def generate(into: pathlib.Path) -> list[pathlib.Path]:
     plain = into / "tile.png"
     plain.write_bytes(png_bytes(tile(), comment))
     written.append(plain)
+
+    pieces = into / "chess_pieces.png"
+    pieces.write_bytes(png_bytes(chess_pieces(), comment))
+    written.append(pieces)
 
     return written
 

@@ -17,6 +17,7 @@ here at the same time, including the one entry that is an admission rather than 
 | `../cooked/shaders/*.spv`, `*.msl` | `tools/cook_shaders.py` from `shaders/*.hlsl` | GPL-3.0-or-later, as the sources |
 | `textures/sheet.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
 | `textures/tile.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
+| `textures/chess_pieces.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
 | `../mods/synthetic.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 | `../mods/clock.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 

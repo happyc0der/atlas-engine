@@ -102,6 +102,41 @@ set_tests_properties("sandbox_text_hot_reload" PROPERTIES
     LABELS "display;integration"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
+# ----------------------------------------------------------------------------- chess
+# The first game on the engine (ADR-0018). Real games, whose final positions are facts about
+# chess, played through the application's own command line.
+set(_atlas_chess_checks "${CMAKE_CURRENT_SOURCE_DIR}/integration/chess_checks.py")
+set(_atlas_chess_cases
+    version
+    help
+    scholars_mate
+    loyds_stalemate
+    threefold_repetition
+    declined_move_stops_the_script
+    move_after_the_end_is_declined
+    fen_is_validated
+    same_game_same_hash
+)
+if(TARGET atlas_chess)
+    foreach(case IN LISTS _atlas_chess_cases)
+        add_test(NAME "chess_${case}"
+                 COMMAND "${Python3_EXECUTABLE}" "${_atlas_chess_checks}"
+                         --binary "$<TARGET_FILE:atlas_chess>"
+                         --case "${case}")
+        set_tests_properties("chess_${case}" PROPERTIES
+            LABELS "integration"
+            WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    endforeach()
+
+    add_test(NAME "chess_window_under_dummy_driver"
+             COMMAND "${Python3_EXECUTABLE}" "${_atlas_chess_checks}"
+                     --binary "$<TARGET_FILE:atlas_chess>"
+                     --case window_under_dummy_driver)
+    set_tests_properties("chess_window_under_dummy_driver" PROPERTIES
+        LABELS "display;integration"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+endif()
+
 # ----------------------------------------------------------------------------- the lab
 # The Strategy Lab is a second composition root and carries the milestone's determinism
 # claims, which only whole-program runs can test: a second run, a save, a replay.
