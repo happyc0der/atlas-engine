@@ -199,6 +199,16 @@ class Session final : public sim::CommandSource {
     /// as a lost peer.
     [[nodiscard]] bool finished() const noexcept { return m_state == SessionState::Finished; }
 
+    /// The tick any peer, this one included, has said the run ends at. Empty until one has.
+    ///
+    /// Every declared finish agrees or the session has already ended, so there is one answer.
+    /// **What an application compares against its own idea of the run.** The session cannot
+    /// tell a partner finishing early from one finishing on time, because it does not know how
+    /// long the run was meant to be; the application does. A driver that waits for its own
+    /// bound instead may wait on a partner that has stopped announcing turns — both alive, both
+    /// waiting, and nothing but a wall clock to end it.
+    [[nodiscard]] std::optional<Tick> declared_finish() const noexcept;
+
     [[nodiscard]] SessionState state() const noexcept { return m_state; }
 
     [[nodiscard]] bool running() const noexcept { return m_state == SessionState::Running; }

@@ -254,6 +254,18 @@ Status Session::accept_finish(std::size_t peer, const Finish& finish, Tick now) 
     return {};
 }
 
+std::optional<Tick> Session::declared_finish() const noexcept {
+    if (m_finish_tick.has_value()) {
+        return m_finish_tick;
+    }
+    for (const std::optional<Tick>& theirs : m_peer_finish) {
+        if (theirs.has_value()) {
+            return theirs;
+        }
+    }
+    return std::nullopt;
+}
+
 bool Session::finish_is_complete(Tick now) const noexcept {
     if (m_state != SessionState::Finishing || !m_finish_tick.has_value()) {
         return false;

@@ -888,7 +888,14 @@ def check_socket_mismatched_bounds_end_the_session(binary: str) -> None:
     # a protocol violation; the other hears about it. Neither may exit zero, and at least one
     # must name the disagreement rather than a lost peer — which is what separates this from
     # the killed-peer case.
-    shared = [*SMALL, "--commands-per-tick", "1"]
+    #
+    # An input delay of one, deliberately. At the default of two the shorter peer tends to have
+    # announced a turn past its finish, the longer one runs it, and the session's own check on
+    # running past a finish names the mismatch. At one it usually has not, and the longer peer
+    # stops exactly one tick past the finish — which the session rightly allows — waiting on a
+    # turn nobody will send. Only the application's comparison of the partner's finish with its
+    # own bound ends that, and a mutation removing it survived three runs at the default delay.
+    shared = [*SMALL, "--commands-per-tick", "1", "--input-delay", "1"]
     with Session(binary, shared) as session:
         session.start(listener_extra=["--ticks", "60"], connector_extra=["--ticks", "50"])
         listener_code, connector_code = session.wait()
@@ -900,8 +907,13 @@ def check_socket_mismatched_bounds_end_the_session(binary: str) -> None:
             f"a peer exited zero after running a different length of game from its partner "
             f"(listener {listener_code}, connector {connector_code})\n"
             f"listener:\n{listener}\nconnector:\n{connector}")
-    if "disagree about what the run was" not in listener + connector:
-        raise CheckFailed("neither peer named the disagreement\n"
+    # The listener, told to run longer, names it: it compares the partner's finish against its
+    # own bound the moment the finish arrives. Asserted on that side rather than on either,
+    # because "either" passed on a timing that happened to let the session's own run-past check
+    # fire, and on another timing both peers would have waited on each other until a wall clock
+    # ended them without saying why (M21).
+    if "disagree about what the run was" not in listener:
+        raise CheckFailed("the listener did not name the disagreement\n"
                           f"listener:\n{listener}\nconnector:\n{connector}")
 
 

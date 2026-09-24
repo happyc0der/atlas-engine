@@ -535,6 +535,10 @@ TEST_CASE("a peer is not finished until its partner says where it finishes",
     poll_both(table, 8);
     CHECK(a.session->state() == SessionState::Finishing);
     CHECK(b.session->state() == SessionState::Running);
+    // Peer 1 has not finished, and knows where peer 0 did: what a driver compares against its
+    // own idea of how long the run was.
+    CHECK(a.session->declared_finish() == atlas::Tick{24});
+    CHECK(b.session->declared_finish() == atlas::Tick{24});
 
     REQUIRE(b.session->finish(24).has_value());
     poll_both(table, 4);
@@ -648,6 +652,7 @@ TEST_CASE("a peer that runs past its partner's finish ends the session",
 TEST_CASE("finish is refused before the session runs and past what was announced",
           "[net][lockstep][finish]") {
     Table unsettled = finishing_table();
+    CHECK_FALSE(unsettled.peers[0]->session->declared_finish().has_value());
     const auto early = unsettled.peers[0]->session->finish(0);
     REQUIRE_FALSE(early.has_value());
     CHECK(early.error().code() == atlas::ErrorCode::Unavailable);

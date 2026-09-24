@@ -852,6 +852,25 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
             return std::unexpected(std::move(second).error().context("a socket peer"));
         }
 
+        // A partner that finished somewhere other than where this peer was told to has run a
+        // different game, and says so the moment its finish arrives. Waiting for this peer's own
+        // bound instead can wait for ever: the partner stops announcing turns at its finish, and
+        // this peer may be stopped exactly one tick past it — which the session rightly allows —
+        // waiting on a turn nobody will send. Only the application knows how long the run was
+        // meant to be, so only it can make this check (ADR-0020).
+        if (const auto declared = (*session)->declared_finish();
+            declared.has_value() &&
+            (options.max_ticks == 0 || *declared != options.max_ticks - 1)) {
+            return atlas::fail(
+                atlas::ErrorCode::InvalidArgument,
+                std::format("a partner finishes at tick {} and this peer was told to run {}; "
+                            "the two disagree about what the run was",
+                            *declared,
+                            options.max_ticks == 0
+                                ? std::string{"without a bound"}
+                                : std::format("to tick {}", options.max_ticks - 1)));
+        }
+
         // Bounded by --ticks as well as by the gate. The gate alone would let a frame run every
         // tick already announced, which is up to the input delay past the bound — and a peer
         // that has run past the tick it finishes at has run a tick its partner never will.
