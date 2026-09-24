@@ -268,7 +268,7 @@ inline const sim::CommandType kClaimIfFree = sim::command_type("claim cell if fr
 /// owns, commit writes that storage back. The scratch lives in a shared pointer so the two
 /// closures share it and the description can be passed by value.
 [[nodiscard]] inline sim::SystemDesc tally_system(sim::TableId cells, sim::TableId tally) {
-    auto scratch = std::make_shared<std::pair<std::uint64_t, std::uint64_t>>(0, 0);
+    const auto scratch = std::make_shared<std::pair<std::uint64_t, std::uint64_t>>(0, 0);
 
     sim::SystemDesc desc;
     desc.name = "tally cells";
@@ -300,7 +300,7 @@ inline const sim::CommandType kClaimIfFree = sim::command_type("claim cell if fr
 /// to. It draws from the tick's own random stream, which is a pure function of the seed and the
 /// tick and therefore identical on every peer.
 [[nodiscard]] inline sim::SystemDesc stir_system(sim::TableId tally) {
-    auto scratch = std::make_shared<std::uint64_t>(0);
+    const auto scratch = std::make_shared<std::uint64_t>(0);
 
     sim::SystemDesc desc;
     desc.name = "stir the tally";

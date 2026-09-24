@@ -10,6 +10,13 @@
 ---
 InheritParentConfig: true
 
+# The repository's filter admits public headers only, and this pass used to inherit it, so a
+# header that exists only for tests — a harness, a scenario, a wasm builder, the shared scratch
+# directory — was included by dozens of analysed files and analysed by none of them. The public
+# headers stay in the filter; test, test-support and benchmark headers join them. The production
+# pass still reads the root file unmodified.
+HeaderFilterRegex: '(engine/.*/include/atlas/.*|(engine|apps)/.*/tests/[^/]*|tests/support/[^/]*|benchmarks/src/[^/]*)\.hpp$'
+
 Checks: >
   -bugprone-unchecked-optional-access,
   -bugprone-use-after-move,

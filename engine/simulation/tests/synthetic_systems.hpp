@@ -51,7 +51,7 @@ struct Harness {
 /// commit writes that storage back. The scratch lives in a shared_ptr so the two closures
 /// share it and the system can be added by value.
 [[nodiscard]] inline SystemDesc increment_values(TableId values) {
-    auto scratch = std::make_shared<std::vector<std::int32_t>>();
+    const auto scratch = std::make_shared<std::vector<std::int32_t>>();
 
     SystemDesc desc;
     desc.name = "increment values";
@@ -73,7 +73,7 @@ struct Harness {
 
 /// Sums the values into the counter, reading one table and writing another.
 [[nodiscard]] inline SystemDesc sum_into_counter(TableId values, TableId counter) {
-    auto scratch = std::make_shared<std::uint64_t>(0);
+    const auto scratch = std::make_shared<std::uint64_t>(0);
 
     SystemDesc desc;
     desc.name = "sum into counter";
@@ -97,7 +97,7 @@ struct Harness {
 /// Adds a random amount to the counter, so a test can tell whether the stream is reproducible.
 [[nodiscard]] inline SystemDesc random_into_counter(TableId counter,
                                                     std::string_view stream_name = "noise") {
-    auto scratch = std::make_shared<std::uint64_t>(0);
+    const auto scratch = std::make_shared<std::uint64_t>(0);
     const auto stream = stream_id(stream_name);
 
     SystemDesc desc;

@@ -88,7 +88,9 @@ fi
 # tools/clang-tidy-tests.yml, which inherits it and then disables the handful of checks that a
 # testing framework makes meaningless; the reasons are in that file. They were analysed by
 # nothing at all until M8, which is how several hundred findings accumulated unseen in code
-# that is as much a part of the project as the rest of it.
+# that is as much a part of the project as the rest of it. That file also widens the header
+# filter, so the headers only tests include are analysed too; the root's filter admits public
+# headers alone.
 PRODUCTION_FILES=()
 while IFS= read -r file; do
     [[ -n "${file}" ]] && PRODUCTION_FILES+=("${file}")
