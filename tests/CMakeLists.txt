@@ -162,6 +162,8 @@ set(_atlas_lab_headless_cases
     mod_replay_needs_no_runtime
     mod_peers_agree
     mod_clock_diverges
+    mod_speaks_by_key
+    mod_table_is_fenced
     save_writes_file
     load_continues
     load_different_grid_adopts_layout

@@ -37,6 +37,7 @@
 #include <atlas/net/session.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/rhi/device.hpp>
+#include <atlas/script/atlas_mod.h>
 #include <atlas/script/mod_host.hpp>
 #include <atlas/script/runtime.hpp>
 #include <atlas/simulation/kernel.hpp>
@@ -47,6 +48,7 @@
 #include <atlas/simulation/turn_gate.hpp>
 #include <atlas/tasks/worker_pool.hpp>
 #include <atlas/text/catalog.hpp>
+#include <atlas/text/substitute.hpp>
 #include <atlas/tools/debug_ui.hpp>
 #include <atlas/tools/panels.hpp>
 #include <atlas/tools/text_keys.hpp>
@@ -435,6 +437,10 @@ struct Simulation {
 struct ModRuntime {
     std::optional<atlas::script::Runtime> runtime;
     std::vector<std::byte> bytes;
+    /// The mod's own words, from `<name>.strings.json` beside it, already checked to name only
+    /// keys under the mod's namespace (ADR-0021). Absent when the mod ships none, or when the one
+    /// it ships was refused, and either way the mod runs and its keys show as themselves.
+    std::optional<atlas::assets::ImportedStringTable> strings;
 
     [[nodiscard]] bool wanted() const noexcept { return runtime.has_value(); }
 };
@@ -476,6 +482,35 @@ struct ModPlayer {
         return std::unexpected(std::move(bytes).error().context("reading the mod"));
     }
     opened.bytes = *std::move(bytes);
+
+    // The table beside the module, if there is one. Read through the same mount and the same
+    // validated path as the module itself. A table naming anything outside the mod's namespace
+    // is refused whole — a mod may add words under its own name and nobody else's — and the mod
+    // loads regardless, because words are presentation and a missing one shows its key.
+    {
+        std::string_view stem = options.mod;
+        if (stem.ends_with(".wasm")) {
+            stem.remove_suffix(std::string_view{".wasm"}.size());
+        }
+        const std::string table_name = std::format("{}.strings.json", stem);
+        if (auto table_path = atlas::assets::VirtualPath::parse(table_name);
+            table_path && files.exists(*table_path)) {
+            auto table_bytes = files.read(*table_path);
+            auto table = table_bytes ? atlas::assets::import_string_table(*table_bytes, table_name)
+                                     : atlas::Result<atlas::assets::ImportedStringTable>{
+                                           std::unexpected(table_bytes.error())};
+            if (!table) {
+                ATLAS_LOG_WARN(kApp, "mod '{}' string table not used: {}", options.mod,
+                               table.error());
+            } else if (auto allowed = atlas::script::check_mod_table(*table, options.mod);
+                       !allowed) {
+                ATLAS_LOG_WARN(kApp, "mod '{}' string table refused: {}", options.mod,
+                               allowed.error());
+            } else {
+                opened.strings = *std::move(table);
+            }
+        }
+    }
 
     if (options.unsafe_debug_imports) {
         // Said out loud, at warning level, every time. A run that offers a mod a clock is a run
@@ -532,7 +567,8 @@ struct ModPlayer {
 /// so a per-frame call would make the number of mod invocations depend on frame rate, and
 /// therefore the commands, and therefore the state.
 void run_mod_for_tick(ModPlayer& player, Simulation& sim, atlas::Tick tick,
-                      atlas::sim::TurnGate& gate) {
+                      atlas::sim::TurnGate& gate, const atlas::text::Catalog* catalog,
+                      std::string_view who) {
     if (!player.loaded()) {
         return;
     }
@@ -547,6 +583,27 @@ void run_mod_for_tick(ModPlayer& player, Simulation& sim, atlas::Tick tick,
         // error — but a driver that ignored it would be assuming that on the reader's behalf.
         ATLAS_LOG_ERROR(kApp, "polling the mod failed: {}", report.error());
     }
+
+    // What the mod said, resolved through the application's catalogue in the application's
+    // language (ADR-0021 D5). A run with no catalogue shows keys, which is what a missing key
+    // shows everywhere; the lockstep paths are those runs. Printed as well as logged, so the
+    // log console shows it in a window and a headless run can be read by a script.
+    for (const auto& message : player.host->take_messages()) {
+        std::array<std::string, ATLAS_MOD_MAX_SAY_ARGS> owned;
+        std::array<std::string_view, ATLAS_MOD_MAX_SAY_ARGS> arg_views;
+        const auto arguments = message.arguments();
+        for (std::size_t i = 0; i < arguments.size(); ++i) {
+            owned[i] = std::format("{}", arguments[i]);
+            arg_views[i] = owned[i];
+        }
+        const std::string_view pattern =
+            catalog != nullptr ? catalog->lookup(message.key) : std::string_view{message.key};
+        const std::string text =
+            atlas::text::substitute(pattern, std::span(arg_views).first(arguments.size()));
+        std::printf("%smod '%s' says: %s\n", std::string{who}.c_str(),
+                    std::string{player.host->name()}.c_str(), text.c_str());
+        ATLAS_LOG_INFO(kApp, "{}mod '{}' says: {}", who, player.host->name(), text);
+    }
 }
 
 /// One line saying what a mod did, so an integration case has something to assert on.
@@ -556,10 +613,11 @@ void report_mod(const ModPlayer& player, std::string_view who) {
     }
     const auto stats = player.host->stats();
     ATLAS_LOG_INFO(kApp,
-                   "{}mod '{}': {} submitted, {} refused, {} log line(s) dropped over {} "
-                   "tick(s), {}",
+                   "{}mod '{}': {} submitted, {} refused, {} log line(s) dropped, {} said, {} "
+                   "unsaid over {} tick(s), {}",
                    who, player.host->name(), stats.commands_submitted, stats.commands_refused,
-                   stats.log_lines_dropped, stats.ticks_run,
+                   stats.log_lines_dropped, stats.messages_said, stats.messages_dropped,
+                   stats.ticks_run,
                    player.host->disabled()
                        ? std::string("disabled: ") + std::string(player.host->disabled_because())
                        : std::string("still running"));
@@ -834,7 +892,7 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
         // that has run past the tick it finishes at has run a tick its partner never will.
         while (sim->kernel->ready() &&
                (options.max_ticks == 0 || sim->kernel->current_tick() < options.max_ticks)) {
-            run_mod_for_tick(player, *sim, sim->kernel->current_tick(), gate);
+            run_mod_for_tick(player, *sim, sim->kernel->current_tick(), gate, nullptr, "");
             auto stepped = sim->kernel->step();
             if (!stepped) {
                 return std::unexpected(std::move(stepped).error());
@@ -1161,7 +1219,8 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
         }
 
         bool progressed = false;
-        for (auto& peer : peers) {
+        for (std::size_t i = 0; i < peers.size(); ++i) {
+            auto& peer = peers[i];
             // Bounded by --ticks for the reason the socket peer's is: a peer must not run a
             // tick past the one it finishes at.
             while (
@@ -1170,7 +1229,7 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
                 // Before the tick this peer is about to run, and on this peer's own copy of the
                 // mod. Nothing about it crosses the link.
                 run_mod_for_tick(peer->mod, *peer->sim, peer->sim->kernel->current_tick(),
-                                 peer->gate);
+                                 peer->gate, nullptr, std::format("peer {} ", i));
                 auto report = peer->sim->kernel->step();
                 if (!report) {
                     return std::unexpected(std::move(report).error());
@@ -1496,6 +1555,18 @@ void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
     auto mods = attach_mod(*mod_runtime, *options, sim);
     if (!mods) {
         return std::unexpected(std::move(mods).error());
+    }
+    // The mod's own words beside the engine's (ADR-0021 D3). Refused tables were refused when
+    // they were read; one that clashes with a key already present is refused here, and the
+    // mod's keys then show as themselves.
+    if (mod_runtime->strings.has_value()) {
+        if (auto added = catalog.add_table(*mod_runtime->strings); !added) {
+            ATLAS_LOG_WARN(kApp, "mod '{}' string table not added: {}", options->mod,
+                           added.error());
+        } else {
+            ATLAS_LOG_INFO(kApp, "mod '{}' string table added: {} string(s)", options->mod,
+                           mod_runtime->strings->strings.size());
+        }
     }
     // A solo run has nothing to gate on, and a mod never marks a gate in any case. Declared
     // here so the reference `poll` takes outlives every call to it.
@@ -1930,7 +2001,7 @@ void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
             const atlas::Tick tick = sim.kernel->current_tick();
             // Before the tick, never once per frame: peers run different numbers of frames per
             // tick, so a per-frame call would make a mod's output depend on frame rate.
-            run_mod_for_tick(*mods, sim, tick, mod_gate);
+            run_mod_for_tick(*mods, sim, tick, mod_gate, &catalog, "");
             if (options->commands_per_tick > 0) {
                 // Stamped with this peer's own identifier. Solo that is `Local`, which is
                 // what it has always been; under lockstep it becomes the identifier the

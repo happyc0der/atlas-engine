@@ -1,0 +1,11 @@
+{
+  // What herald.wasm says (ADR-0021). Every key sits under mod.herald., the namespace the host
+  // gives the mod; a key outside it would make the application refuse this table whole.
+  "format": "atlas-strings",
+  "version": 1,
+  "locale": "en",
+
+  "strings": {
+    "mod.herald.bell": "The herald rings at tick {0}"
+  }
+}

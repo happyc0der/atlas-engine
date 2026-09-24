@@ -20,6 +20,7 @@ here at the same time, including the one entry that is an admission rather than 
 | `textures/chess_pieces.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
 | `../mods/synthetic.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 | `../mods/clock.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
+| `../mods/herald.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 
 Both audio files are checked by `ctest -L lint`, which regenerates them into a scratch
 directory and compares byte for byte. A change to a waveform that is not also a change to the

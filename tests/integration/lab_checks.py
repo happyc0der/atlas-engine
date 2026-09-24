@@ -19,9 +19,11 @@ Run one with:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import pathlib
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -612,6 +614,54 @@ def check_mod_clock_diverges(binary: str) -> None:
     expect_contains(text, "UNSAFE debug imports", "the run said what it was doing")
 
 
+def check_mod_speaks_by_key(binary: str) -> None:
+    """ADR-0021: a mod names a message by key, and the application says it in its own words."""
+    result = headless(binary, "--mod", "herald.wasm", ticks=60)
+    expect_exit(result, 0, "a run with a mod that speaks")
+    text = output_of(result)
+    expect_contains(text, "mod 'herald.wasm' string table added: 1 string(s)", "the mod's table")
+    # Resolved and substituted, not the key and not the pattern. Tick 20 and tick 40 both, so a
+    # message that was said once and then repeated from a cache would fail here.
+    expect_contains(text, "mod 'herald.wasm' says: The herald rings at tick 20", "the first bell")
+    expect_contains(text, "mod 'herald.wasm' says: The herald rings at tick 40", "the second bell")
+    expect_contains(text, "3 said, 0 unsaid over 60 tick(s)", "the mod's own accounting")
+
+    # **Speaking is presentation.** The herald submits nothing, so a run with it must end at the
+    # hash a run without any mod ends at. A message that reached the simulation — hashed,
+    # queued, or turned into a command — would move it.
+    plain = headless(binary, ticks=60)
+    expect_exit(plain, 0, "the same run with no mod")
+    if final_hash(text, "the herald's run") != final_hash(output_of(plain), "the plain run"):
+        raise CheckFailed("a mod that only spoke changed the simulation")
+
+
+def check_mod_table_is_fenced(binary: str) -> None:
+    """A mod adds words under its own name and nobody else's (ADR-0021 D3)."""
+    source = pathlib.Path(__file__).resolve().parents[2] / "assets" / "mods"
+    with tempfile.TemporaryDirectory() as tmp:
+        mods = pathlib.Path(tmp)
+        shutil.copyfile(source / "herald.wasm", mods / "herald.wasm")
+        # One key of its own and one in another mod's namespace. The foreign key is one nothing
+        # else defines, on purpose: an engine key such as "ui.panel.stats" would also be refused
+        # by the catalogue as a clash, and this case must fail if the namespace check alone is
+        # removed. A mod that could fill "mod.rival." could put words in another mod's mouth.
+        (mods / "herald.strings.json").write_text(json.dumps({
+            "format": "atlas-strings", "version": 1, "locale": "en",
+            "strings": {"mod.herald.bell": "Rung at {0}", "mod.rival.bell": "Not mine"},
+        }), encoding="utf-8")
+        result = headless(binary, "--mods-dir", str(mods), "--mod", "herald.wasm", ticks=30)
+        expect_exit(result, 0, "a mod whose table reaches outside its namespace")
+        text = output_of(result)
+        expect_contains(text, "string table refused", "the table was refused")
+        expect_contains(text, "mod.rival.bell", "the refusal names the key")
+        # Refused whole, not filtered: its own key went too, so the message shows as its key —
+        # which is what any missing key shows — and the mod carried on speaking.
+        expect_contains(text, "mod 'herald.wasm' says: mod.herald.bell", "the key shows as itself")
+        expect_contains(text, "2 said, 0 unsaid", "the mod ran regardless")
+        if "Rung at" in text:
+            raise CheckFailed(f"part of a refused table was used\n--- output ---\n{text}")
+
+
 def check_socket_peers_agree(binary: str) -> None:
     """Two processes, one socket, the same final hash."""
     # **This is the only case in the repository where two operating-system processes talk to
@@ -792,6 +842,8 @@ CASES = {
     "mod_replay_needs_no_runtime": check_mod_replay_needs_no_runtime,
     "mod_peers_agree": check_mod_peers_agree,
     "mod_clock_diverges": check_mod_clock_diverges,
+    "mod_speaks_by_key": check_mod_speaks_by_key,
+    "mod_table_is_fenced": check_mod_table_is_fenced,
     "save_writes_file": check_save_writes_file,
     "load_continues": check_load_continues,
     "load_different_grid_adopts_layout": check_load_different_grid_adopts_layout,
