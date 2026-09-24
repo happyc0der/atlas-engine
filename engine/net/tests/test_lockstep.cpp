@@ -534,8 +534,7 @@ TEST_CASE("a peer is not finished until its partner says where it finishes",
     REQUIRE(a.session->finish(24).has_value());
     poll_both(table, 8);
     CHECK(a.session->state() == SessionState::Finishing);
-    CHECK_FALSE(a.session->peers_have_finished());
-    CHECK(b.session->peers_have_finished());
+    CHECK(b.session->state() == SessionState::Running);
 
     REQUIRE(b.session->finish(24).has_value());
     poll_both(table, 4);

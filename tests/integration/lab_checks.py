@@ -549,6 +549,15 @@ def check_loopback_peers_agree(binary: str) -> None:
     if not re.search(r"turns received=[1-9]", text):
         raise CheckFailed("no peer received a turn, so the agreement proves nothing")
 
+    # Every peer finished, at the tick the run was bounded to, and ran no further (ADR-0020).
+    finished = re.findall(r"source (\d+) finished at tick (\d+), agreed with every peer", text)
+    if sorted(source for source, _ in finished) != ["0", "1", "2"]:
+        raise CheckFailed(f"expected all three peers to finish, got {finished}\n{text}")
+    if {tick for _, tick in finished} != {"199"}:
+        raise CheckFailed(f"the peers finished at {finished}, not at tick 199")
+    if re.findall(r"final tick=(\d+)", text) != ["200", "200", "200"]:
+        raise CheckFailed("a peer ran past the bound it finished at\n" + text)
+
 
 def check_loopback_differs_from_solo(binary: str) -> None:
     # The anti-vacuity guard, and the same shape as seed_changes_hash: two peers apply twice as
@@ -749,7 +758,12 @@ def check_socket_peers_agree(binary: str) -> None:
     # **This is the only case in the repository where two operating-system processes talk to
     # each other**, and it is what the in-memory link cannot prove: a loopback never loses a
     # packet, never refuses a connection, and never has a process die on the other end.
-    shared = [*SMALL, "--ticks", "120", "--commands-per-tick", "2"]
+    #
+    # An input delay of eight rather than the default two, so a frame routinely has several
+    # ticks' worth of turns in hand. That is what gives a peer the chance to run past `--ticks`
+    # if nothing stops it, and the case asserts nothing did: at a delay of two the window was
+    # narrow enough that a mutation removing the bound survived a run (M21).
+    shared = [*SMALL, "--ticks", "120", "--commands-per-tick", "2", "--input-delay", "8"]
     with Session(binary, shared) as session:
         session.start()
         listener_code, connector_code = session.wait()
@@ -783,6 +797,12 @@ def check_socket_peers_agree(binary: str) -> None:
             raise CheckFailed(f"the {name} received no turns, so the agreement proves nothing")
         if not re.search(r"agreed hashes=[1-9]", text):
             raise CheckFailed(f"the {name} agreed no hash checks")
+        # Both processes finished rather than one hanging up on the other (ADR-0020). Until M21
+        # the second to stop learned the run was over from the socket closing.
+        if not re.search(r"finished at tick 119, agreed with every peer", text):
+            raise CheckFailed(f"the {name} did not finish the session\n{text}")
+        if "final tick=120" not in text:
+            raise CheckFailed(f"the {name} ran past the bound it finished at\n{text}")
 
 
 def check_socket_differs_from_solo(binary: str) -> None:
@@ -861,6 +881,30 @@ def check_socket_killed_peer_ends_the_session(binary: str) -> None:
         raise CheckFailed("the listener stopped without saying its peer had gone\n" + text)
 
 
+def check_socket_mismatched_bounds_end_the_session(binary: str) -> None:
+    """Two processes told to run different lengths both fail, and say why."""
+    # ADR-0020 D3. Two peers that finish at different ticks have disagreed about what the run
+    # was, and no later message can reconcile that. Whichever notices first ends the session as
+    # a protocol violation; the other hears about it. Neither may exit zero, and at least one
+    # must name the disagreement rather than a lost peer — which is what separates this from
+    # the killed-peer case.
+    shared = [*SMALL, "--commands-per-tick", "1"]
+    with Session(binary, shared) as session:
+        session.start(listener_extra=["--ticks", "60"], connector_extra=["--ticks", "50"])
+        listener_code, connector_code = session.wait()
+
+    listener = session.listener_text()
+    connector = session.connector_text()
+    if listener_code == 0 or connector_code == 0:
+        raise CheckFailed(
+            f"a peer exited zero after running a different length of game from its partner "
+            f"(listener {listener_code}, connector {connector_code})\n"
+            f"listener:\n{listener}\nconnector:\n{connector}")
+    if "disagree about what the run was" not in listener + connector:
+        raise CheckFailed("neither peer named the disagreement\n"
+                          f"listener:\n{listener}\nconnector:\n{connector}")
+
+
 CASES = {
     "version": check_version,
     "help": check_help,
@@ -886,6 +930,7 @@ CASES = {
     "socket_peers_agree": check_socket_peers_agree,
     "socket_differs_from_solo": check_socket_differs_from_solo,
     "socket_killed_peer_ends_the_session": check_socket_killed_peer_ends_the_session,
+    "socket_mismatched_bounds_end_the_session": check_socket_mismatched_bounds_end_the_session,
     "loopback_differs_from_solo": check_loopback_differs_from_solo,
     "loopback_held_turn_stalls_then_completes": check_loopback_held_turn_stalls_then_completes,
     "loopback_unreleased_hold_fails_fast": check_loopback_unreleased_hold_fails_fast,

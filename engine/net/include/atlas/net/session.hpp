@@ -191,14 +191,13 @@ class Session final : public sim::CommandSource {
     [[nodiscard]] Status finish(Tick last_tick);
 
     /// True once the run is over and agreed. See `finish`.
-    [[nodiscard]] bool finished() const noexcept { return m_state == SessionState::Finished; }
-
-    /// True once every other peer has said where it finishes.
     ///
-    /// What a driver asks when its link ends: a partner that finished and then hung up has
-    /// already sent everything it will send, so the hang-up carries no information and the run
-    /// can be completed from what arrived. A partner that hung up without finishing has left.
-    [[nodiscard]] bool peers_have_finished() const noexcept;
+    /// **Ask this before asking whether the link has ended.** A partner leaves only once it is
+    /// finished itself, which needs this peer's finish first, so a link that ends while this
+    /// peer is finishing ends after the partner sent everything it will send — and the poll
+    /// that received that also decided this. Asked the other way round, a completed run reads
+    /// as a lost peer.
+    [[nodiscard]] bool finished() const noexcept { return m_state == SessionState::Finished; }
 
     [[nodiscard]] SessionState state() const noexcept { return m_state; }
 

@@ -852,7 +852,11 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
             return std::unexpected(std::move(second).error().context("a socket peer"));
         }
 
-        while (sim->kernel->ready()) {
+        // Bounded by --ticks as well as by the gate. The gate alone would let a frame run every
+        // tick already announced, which is up to the input delay past the bound — and a peer
+        // that has run past the tick it finishes at has run a tick its partner never will.
+        while (sim->kernel->ready() &&
+               (options.max_ticks == 0 || sim->kernel->current_tick() < options.max_ticks)) {
             run_mod_for_tick(player, *sim, sim->kernel->current_tick(), gate);
             auto stepped = sim->kernel->step();
             if (!stepped) {
@@ -869,6 +873,37 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+
+    // Finish rather than hang up (ADR-0020). Until M21 this process printed its hash and
+    // returned, and its partner learned the run was over by the socket closing — which it
+    // could notice before it had applied the last turns that arrived with the close. Now both
+    // say where the run ends and each waits until it has everything up to there.
+    if (options.max_ticks > 0) {
+        if (auto status = (*session)->finish(options.max_ticks - 1); !status) {
+            return std::unexpected(std::move(status).error().context("finishing"));
+        }
+        const auto finish_deadline = std::chrono::steady_clock::now() + kConnectTimeout;
+        while (!(*session)->finished()) {
+            auto report = (*session)->poll(sim->kernel->current_tick(), sim->commands, gate);
+            if (!report) {
+                return std::unexpected(std::move(report).error().context("finishing"));
+            }
+            // Finished first, link second: see `Session::finished`.
+            if ((*session)->finished()) {
+                break;
+            }
+            if (hub->status().ended) {
+                return atlas::fail(
+                    atlas::ErrorCode::Unavailable,
+                    std::format("the link ended before the run was agreed finished: {}",
+                                hub->status().reason));
+            }
+            if (std::chrono::steady_clock::now() > finish_deadline) {
+                return atlas::fail(atlas::ErrorCode::Unavailable, "the partner never finished");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
     }
 
     // One line per process, in the same shape the loopback prints, so one expression reads both
@@ -1150,7 +1185,11 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
 
         bool progressed = false;
         for (auto& peer : peers) {
-            while (peer->sim->kernel->ready()) {
+            // Bounded by --ticks for the reason the socket peer's is: a peer must not run a
+            // tick past the one it finishes at.
+            while (
+                peer->sim->kernel->ready() &&
+                (options.max_ticks == 0 || peer->sim->kernel->current_tick() < options.max_ticks)) {
                 // Before the tick this peer is about to run, and on this peer's own copy of the
                 // mod. Nothing about it crosses the link.
                 run_mod_for_tick(peer->mod, *peer->sim, peer->sim->kernel->current_tick(),
@@ -1194,6 +1233,29 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
                 return atlas::fail(atlas::ErrorCode::Unavailable,
                                    std::format("the loopback made no progress for {} polls: {}",
                                                kMaxPollsWithoutProgress, waiting));
+            }
+        }
+    }
+
+    // Every peer finishes at the same tick and polls until each has what it needs (ADR-0020).
+    // Bounded in polls, like the stall above: the loopback moves messages only when polled, so
+    // a finish that cannot complete shows up as polls going by rather than time.
+    if (options.max_ticks > 0) {
+        for (auto& peer : peers) {
+            if (auto status = peer->session->finish(options.max_ticks - 1); !status) {
+                return std::unexpected(std::move(status).error().context("finishing"));
+            }
+        }
+        std::uint64_t finishing_polls = 0;
+        while (!std::ranges::all_of(peers,
+                                    [](const auto& peer) { return peer->session->finished(); })) {
+            if (auto status = poll_all(); !status) {
+                return std::unexpected(std::move(status).error().context("finishing"));
+            }
+            if (++finishing_polls > kMaxPollsWithoutProgress) {
+                return atlas::fail(atlas::ErrorCode::Unavailable,
+                                   std::format("the loopback did not finish in {} polls",
+                                               kMaxPollsWithoutProgress));
             }
         }
     }

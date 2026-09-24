@@ -212,15 +212,6 @@ Status Session::finish(Tick last_tick) {
     return {};
 }
 
-bool Session::peers_have_finished() const noexcept {
-    for (std::size_t peer = 0; peer < m_peer_finish.size(); ++peer) {
-        if (peer != m_link.index() && !m_peer_finish[peer].has_value()) {
-            return false;
-        }
-    }
-    return true;
-}
-
 Status Session::accept_finish(std::size_t peer, const Finish& finish, Tick now) {
     if (m_state == SessionState::Handshaking) {
         return std::unexpected(
