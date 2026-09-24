@@ -586,6 +586,20 @@ fact about the tree today rather than a consequence of the milestone.
   world. Condition: a debug-build kernel option hashing before and after each command, if a
   handler is ever found to have broken the contract in a way a twin test did not catch.
 
+### M22 — chess, the application
+
+- **Choosing a promotion by click.** A pawn promoted by clicking becomes a queen; `--moves` can
+  name any piece. Underpromotion is legal and the rules handle all four, but a person clicking
+  cannot ask for a knight. Condition: somebody wanting to, which needs a small choice widget
+  and a key for each piece.
+- **The status panel's size on a high-density display.** The overlay draws at one pixel per
+  unit, so on this machine's display it is small beside the board. That is the overlay's, not
+  chess's, and it is the same in the lab and the sandbox. Condition: an interface a person uses
+  for long, which a debug overlay is not meant to be.
+- **Undo, takeback, and a move list.** Not engine questions; a takeback over a socket would be
+  an agreement between two players, which is a protocol of its own. Condition: chess leaving
+  the tree.
+
 ### M20 — chess, the rules
 
 - **Resignation and a draw by agreement.** Each is a second command type with no engine

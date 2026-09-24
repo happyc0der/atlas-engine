@@ -123,6 +123,13 @@ refuses (ADR-0019). There are no systems — a position changes only through a c
 schedule is empty and the kernel ticks it. A famous game's final position is the third golden
 hash, beside the two engine goldens, and is compared on the same four platforms.
 
+Around the rules, `atlas::chess_view` turns a position and a selection into quads without a
+device, so what the board looks like is tested without one, and `apps/chess/main.cpp` is the
+composition root: a window, the board in one draw call, a status panel whose text is the
+application's own table loaded beside the engine's (`text::Catalog::add_table`), and hot-seat or
+networked play. Over a socket it uses `atlas::app_lockstep`, lifted out of the lab when chess
+became its second user, and finishes the session on the tick the result is set (ADR-0020).
+
 Third-party libraries are private to the modules named here and to no others: SDL3 to
 `platform` and `rhi`, EnTT to `scene`, nlohmann-json to `scene` and `assets`, Dear ImGui to
 `tools`, Tracy to `core` behind compiled-out macros, WAMR to `script`. The sentence used to say

@@ -143,7 +143,9 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 - **Every string a person can see comes from `text::Catalog`, by a key named in
   `engine/tools/include/atlas/tools/text_keys.hpp`** (ADR-0016). A call site names the constant,
   never the string, so `--text-check` can resolve the whole list against the shipped table. A
-  missing key renders as itself: visible, logged once, and never an error.
+  missing key renders as itself: visible, logged once, and never an error. **An application's
+  own strings live in the application** — its own key header and table, added beside the
+  engine's with `Catalog::add_table` — never in the engine's (ADR-0018); chess is the example.
 - **Log messages are not localised, and neither are the two usage blocks.** A log line is a
   diagnostic for whoever reads the build, and routing it through a table would make every
   integration case's grep depend on a locale.

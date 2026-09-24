@@ -30,10 +30,11 @@ that can be typed into.
 Two applications drive it. `atlas_sandbox` is the lifecycle and scene demonstration.
 `atlas_lab` is the Strategy Laboratory: a synthetic million-cell grid with map modes, picking,
 time controls and replay, which exists to test the architecture rather than to be a game.
-A third is on its way: chess, the first game on the engine and a probe of it
-([ADR-0018](docs/adr/0018-chess-probe.md)). Its rules library is complete — every rule
-including the draws, perft-verified, with the Opera Game as a golden hash — and the board, two
-people and a socket around it are the next milestones.
+A third is a game: `atlas_chess`, the first game on the engine and a probe of it
+([ADR-0018](docs/adr/0018-chess-probe.md)). Every rule including the draws, perft-verified, with
+the Opera Game as a golden hash; a board in a window, two people at one screen or over a
+socket, and both sides finishing the session where the game ends. No line of it is in
+`engine/`.
 
 **What is not done.** The renderer has been verified on one graphics processor and one software
 rasteriser; Direct3D 12 and non-Apple hardware are unverified, and that is the largest untested
@@ -70,6 +71,9 @@ Something to look at:
 ./build/macos-debug/bin/atlas_sandbox --scene            # a scene, an overlay; Escape quits
 ./build/macos-debug/bin/atlas_lab --grid 512             # the Strategy Laboratory
 ./build/macos-debug/bin/atlas_lab --headless --grid 1024 --ticks 1000   # no window at all
+./build/macos-debug/bin/atlas_chess                      # chess, two people at one screen
+./build/macos-debug/bin/atlas_chess --listen 7777        # host a game as white...
+./build/macos-debug/bin/atlas_chess --connect 127.0.0.1:7777   # ...and join it as black
 ```
 
 `cmake --workflow --preset ci-macos-debug` runs configure, build, and test in one step.

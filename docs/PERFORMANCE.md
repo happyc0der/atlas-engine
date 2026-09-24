@@ -1065,6 +1065,42 @@ on one machine share a kernel and never leave it. Latency between two real machi
 property of the wire, which is exactly why ADR-0014 has an input-delay window at all: the number
 that matters is unknowable from here, so the design absorbs it rather than assuming it.
 
+## Chess, M22: an order of magnitude too pessimistic
+
+Measured in `macos-release` on an idle machine, `atlas_bench --filter chess`, three runs.
+
+### The prediction, written before the first run
+
+Committed in `41f02df`, before any number existed. **One to five milliseconds** for perft to depth
+three from the start — 8,902 leaves, legal moves generated in 421 positions — reasoned from 100 to
+300 ns per copy-made move. **Ten to forty microseconds** for one ply through the kernel, reasoned
+from two legal-move generations per move. A threshold: above 200 µs a ply, something allocates per
+move.
+
+### The result
+
+| Scenario | Median | p90 | p99 | Predicted |
+|---|---|---|---|---|
+| `chess/perft` depth 3 | **172 µs** | 175 µs | 188 µs | 1–5 ms |
+| `chess/ply` | **1.25 µs** | 1.29 µs | 1.38 µs | 10–40 µs |
+
+The median is the middle of three runs' medians, and p90 and p99 are from that same run; the three medians agreed to within four percent. **Both predictions were wrong by roughly ten times, in
+the same direction and for the same reason.** A pseudo-legal move made on a 72-byte copy and
+tested for check costs about 13 ns here — nineteen nanoseconds a leaf over the whole perft — not
+the 100 to 300 ns the prediction assumed. The copy is a cache line and a bit, the king scan is
+sixty-four bytes, and an attack test that finds nothing on most rays exits early. The prediction
+reasoned from what copy-make does and guessed what each step costs; the guess was the part that
+was wrong, as it was for M15 and M16, and it is the same lesson: this project's predictions about
+small arithmetic on this processor are reliably pessimistic, and its predictions dominated by
+system calls, like M17's, are not.
+
+### What it means
+
+**A ply is 0.008% of a 16.6 ms frame**, and a game makes one every few seconds. Chess costs the
+engine nothing worth reclaiming, which is what the scenario was there to establish, and the
+choice of copy-make over an incremental position — made for being obviously correct — costs
+nothing a person could notice either.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.

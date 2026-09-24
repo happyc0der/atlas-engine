@@ -30,7 +30,7 @@ Status legend: **done**, *in progress*, planned.
 | M19 | A command may be declined | M | **done** |
 | M20 | Chess: the rules library | M–L | **done** |
 | M21 | A session can finish | M | **done** |
-| M22 | Chess: the application, two people, a socket | L | planned |
+| M22 | Chess: the application, two people, a socket | L | **done** |
 | M23 | Chess: a mod as the opponent | ? | planned |
 
 ## M0 — Architecture and reproducible skeleton
@@ -1346,6 +1346,39 @@ was the one M19 built for them. The state fits the world's table contract withou
 the empty schedule ticks, and the replay and save paths carried a real game the way they carry a
 synthetic one. The hypothesis that a map engine's simulation generalises to a board game has
 now been tested with the game itself rather than with a survey, and it held.
+
+## M22 — Chess: the application, two people, a socket
+
+Full report: [reports/M22.md](reports/M22.md).
+
+Slices: the board, playable hot-seat, with the integration helpers lifted into a shared file;
+the interface's text, with `Catalog::add_table`; two people over a socket, with the session
+code lifted into `atlas::app_lockstep`; the benchmark with its prediction committed first, and
+the documents.
+
+**Exit criteria**
+- A game two people can play in a window, drawn from a generated sheet, with nothing chess in
+  `engine/`.
+- Its text from its own table, checked by `--text-check`.
+- Two processes playing a game to checkmate over a socket, both exiting zero.
+- Measured against a prediction written first.
+
+| Criterion | Status |
+|---|---|
+| Playable | **Met.** Click a piece and its legal moves show; the move is a command through the kernel. Checked by eye on this machine's GPU, and ten integration cases play real games from the command line. |
+| Its own text | **Met.** Seventeen keys in the application's header, a table beside the engine's, and `--text-check` failing by name when the table is dropped. The one engine change was `Catalog::add_table`. |
+| A socket game to mate | **Met.** Two processes play Scholar's mate knowing only their own moves; both reach the same position and hash and finish the session at the same tick. A partner who leaves mid-game and two sides set up differently both fail as they should. |
+| Measured | **Met, and wrong by an order of magnitude.** Perft to depth three in 172 µs against 1–5 ms; a ply in 1.25 µs against 10–40 µs. |
+
+### What the probe found this milestone
+
+Two engine facilities chess needed and did not have: a way to add an application's string table
+beside the engine's, and nothing else. The session code the lab had written for itself turned
+out to be exactly what chess needed, and it moved into a shared library rather than being copied;
+the move found a port parser that had accepted trailing characters. A branch copied from the lab
+— comparing a partner's declared finish with this side's idea of the game — turned out to be
+unreachable for chess, where the only way two games differ is a divergence the session already
+refuses, and it was removed rather than kept as decoration.
 
 ## M21 — A session can finish
 
