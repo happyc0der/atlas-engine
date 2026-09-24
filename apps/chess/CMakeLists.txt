@@ -17,9 +17,11 @@ atlas_add_app(chess
         main.cpp
     DEPENDS
         atlas::app_common
+        atlas::app_lockstep
         atlas::chess_sim
         atlas::chess_view
         atlas::assets
+        atlas::net
         atlas::platform
         atlas::renderer
         atlas::rhi

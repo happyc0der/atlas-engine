@@ -21,7 +21,7 @@ import argparse
 import re
 import sys
 
-from harness import CheckFailed, expect_contains, expect_exit, output_of, run
+from harness import CheckFailed, Session, expect_contains, expect_exit, output_of, run
 
 
 def game(binary: str, moves: str, *extra: str):
@@ -140,6 +140,71 @@ def check_text_check(binary: str) -> None:
     expect_contains(output_of(result), "all resolved in 'en'", "every chess key resolved")
 
 
+def state_hash(text: str) -> str:
+    match = re.search(r"^state hash: (0x[0-9a-f]+)$", text, re.MULTILINE)
+    if not match:
+        raise CheckFailed(f"no state hash line\n--- output ---\n{text}")
+    return match.group(1)
+
+
+def check_socket_game_to_checkmate(binary: str) -> None:
+    """Two processes play Scholar's mate over a socket, and both finish having agreed."""
+    # Each side plays its own colour and its own moves, and neither knows the other's list: a
+    # move reaches the far side only as a command in a turn. The game ends where the rules say,
+    # and both sides finish the session there and exit zero (ADR-0020) — the thing M21 existed
+    # to make possible and this case exists to prove.
+    with Session(binary, []) as session:
+        session.start(listener_extra=["--moves", "e2e4,f1c4,d1h5,h5f7"],
+                      connector_extra=["--moves", "e7e5,b8c6,g8f6"])
+        white_code, black_code = session.wait()
+    white = session.listener_text()
+    black = session.connector_text()
+    if white_code != 0 or black_code != 0:
+        raise CheckFailed(f"a side did not exit zero (white {white_code}, black {black_code})\n"
+                          f"white:\n{white}\nblack:\n{black}")
+    for name, text in (("white", white), ("black", black)):
+        if result_line(text) != "white wins by checkmate":
+            raise CheckFailed(f"{name} saw {result_line(text)!r}\n{text}")
+        if position_line(text) != "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4":
+            raise CheckFailed(f"{name} ended in the wrong position: {position_line(text)}")
+        expect_contains(text, "session: finished at tick", f"{name} finished the session")
+        expect_contains(text, "plies=7", f"{name} saw all seven plies")
+    if state_hash(white) != state_hash(black):
+        raise CheckFailed(f"the two sides hashed differently: {state_hash(white)} and "
+                          f"{state_hash(black)}")
+
+
+def check_socket_partner_leaving_ends_the_game(binary: str) -> None:
+    """A side that stops before the game is over ends it for the other, who says so."""
+    # White has one move to give and then runs out on its next turn, which is an error on its
+    # side; black must then hear that its partner left rather than wait for a move that will
+    # never come, and must not exit zero — a game that was abandoned did not succeed.
+    with Session(binary, []) as session:
+        session.start(listener_extra=["--moves", "e2e4"],
+                      connector_extra=["--moves", "e7e5,b8c6,g8f6"])
+        white_code, black_code = session.wait()
+    white = session.listener_text()
+    black = session.connector_text()
+    if white_code == 0 or black_code == 0:
+        raise CheckFailed(f"a side exited zero from an abandoned game "
+                          f"(white {white_code}, black {black_code})\n"
+                          f"white:\n{white}\nblack:\n{black}")
+    expect_contains(white, "--moves ran out", "white says why it stopped")
+    if "left" not in black and "disconnected" not in black and "heard from" not in black:
+        raise CheckFailed(f"black did not say its partner had gone\n{black}")
+
+
+def check_socket_sides_must_start_alike(binary: str) -> None:
+    """Two sides set up from different positions are refused at the handshake."""
+    with Session(binary, []) as session:
+        session.start(listener_extra=["--fen", "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1"],
+                      connector_extra=[])
+        white_code, black_code = session.wait()
+    if white_code == 0 or black_code == 0:
+        raise CheckFailed("two sides starting from different positions were allowed to play\n"
+                          f"white:\n{session.listener_text()}\nblack:\n{session.connector_text()}")
+
+
 def check_window_under_dummy_driver(binary: str) -> None:
     # A window, no device: the event loop runs and the program shuts down in order.
     result = run(binary, ["--video-driver", "dummy", "--no-render", "--frames", "10",
@@ -161,6 +226,9 @@ CASES = {
     "fen_is_validated": check_fen_is_validated,
     "same_game_same_hash": check_same_game_same_hash,
     "text_check": check_text_check,
+    "socket_game_to_checkmate": check_socket_game_to_checkmate,
+    "socket_partner_leaving_ends_the_game": check_socket_partner_leaving_ends_the_game,
+    "socket_sides_must_start_alike": check_socket_sides_must_start_alike,
     "window_under_dummy_driver": check_window_under_dummy_driver,
 }
 

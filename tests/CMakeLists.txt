@@ -117,6 +117,10 @@ set(_atlas_chess_cases
     fen_is_validated
     same_game_same_hash
     text_check
+    # Two processes over a real socket, bounded like the lab's.
+    socket_game_to_checkmate
+    socket_partner_leaving_ends_the_game
+    socket_sides_must_start_alike
 )
 if(TARGET atlas_chess)
     foreach(case IN LISTS _atlas_chess_cases)

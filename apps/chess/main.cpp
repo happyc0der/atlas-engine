@@ -16,6 +16,7 @@
 #include <atlas/app/log_options.hpp>
 #include <atlas/app/main_guard.hpp>
 #include <atlas/app/ppm.hpp>
+#include <atlas/app/socket_session.hpp>
 #include <atlas/assets/importer.hpp>
 #include <atlas/assets/registry.hpp>
 #include <atlas/chess/board_layout.hpp>
@@ -32,11 +33,14 @@
 #include <atlas/core/result.hpp>
 #include <atlas/core/time.hpp>
 #include <atlas/math/camera.hpp>
+#include <atlas/net/enet_hub.hpp>
+#include <atlas/net/session.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/renderer/quad_batch.hpp>
 #include <atlas/renderer/texture_cache.hpp>
 #include <atlas/rhi/device.hpp>
 #include <atlas/simulation/kernel.hpp>
+#include <atlas/simulation/turn_gate.hpp>
 #include <atlas/text/catalog.hpp>
 #include <atlas/text/substitute.hpp>
 #include <atlas/tools/debug_ui.hpp>
@@ -44,14 +48,18 @@
 #include "chess_text_keys.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <format>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -83,6 +91,13 @@ struct Options {
     std::string_view moves;
     std::string_view log_level = "info";
     std::string_view log_file;
+    /// Over a socket: host a game as white, or join one as black.
+    bool listen = false;
+    std::uint16_t listen_port = 0;
+    std::string_view connect;
+    std::uint32_t input_delay = 2;
+
+    [[nodiscard]] bool networked() const noexcept { return listen || !connect.empty(); }
 };
 
 void print_usage() {
@@ -104,12 +119,19 @@ Usage: atlas_chess [options]
   --shader-dir PATH      Where the cooked shaders are. Default: assets/cooked/shaders.
   --log-level LEVEL      trace, debug, info, warning, error. Default: info.
   --log-file PATH        Also write the log to PATH.
+  --listen [PORT]        Host a game over a socket, playing white. 0, or omitted, lets the
+                         operating system choose the port, which is printed.
+  --connect HOST:PORT    Join a hosted game, playing black.
+  --input-delay N        Ticks between a move and its arrival, 1..16. Default 2.
   --text-check           Resolve every chess string against the loaded tables, then exit.
   --version              Print build identity and exit.
   --help                 Print this message and exit.
 
 In a window: click a piece, then a square it may move to. A pawn reaching the last rank
 becomes a queen; --moves can name any promotion. Escape or the close button quits.
+
+Over a socket each side plays its own colour, and --moves lists only that side's moves,
+played in turn. The game ends where the rules say it does, and both sides finish there.
 )");
 }
 
@@ -131,6 +153,33 @@ becomes a queen; --moves can name any promotion. Escape or the close button quit
     options.moves = args.value_or("moves", std::string_view{});
     options.log_level = args.value_or("log-level", options.log_level);
     options.log_file = args.value_or("log-file", std::string_view{});
+    options.listen = args.has("listen");
+    if (options.listen) {
+        // Read as text rather than as a number, because the port is optional: `--listen` on its
+        // own is a flag with an empty value, and means "let the operating system choose".
+        const std::string_view text = args.value_or("listen", std::string_view{});
+        std::uint32_t port = 0;
+        if (!text.empty()) {
+            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), port);
+            if (error != std::errc{} || end != text.data() + text.size() || port > 65535) {
+                return std::unexpected(
+                    atlas::Error(atlas::ErrorCode::InvalidArgument,
+                                 std::format("--listen wants a port in 0..65535, got '{}'", text)));
+            }
+        }
+        options.listen_port = static_cast<std::uint16_t>(port);
+    }
+    options.connect = args.value_or("connect", std::string_view{});
+    if (options.listen && !options.connect.empty()) {
+        return std::unexpected(atlas::Error(atlas::ErrorCode::InvalidArgument,
+                                            "--listen and --connect are two ends of one game"));
+    }
+    const auto delay = args.value_or("input-delay", std::uint64_t{2});
+    if (!delay || *delay == 0 || *delay > 16) {
+        return std::unexpected(
+            atlas::Error(atlas::ErrorCode::InvalidArgument, "--input-delay wants 1..16"));
+    }
+    options.input_delay = static_cast<std::uint32_t>(*delay);
     if (auto status = args.reject_unknown(); !status) {
         return std::unexpected(status.error());
     }
@@ -143,6 +192,8 @@ struct Game {
     atlas::chess::ChessWorld chess;
     atlas::sim::Schedule schedule;
     atlas::sim::CommandQueue commands;
+    /// Present only in a game played over a socket. Owned here because the kernel borrows it.
+    std::unique_ptr<atlas::sim::TurnGate> gate;
     std::unique_ptr<atlas::sim::Kernel> kernel;
     std::size_t plies = 0;
     std::optional<atlas::chess::Move> last_move;
@@ -158,7 +209,7 @@ struct Game {
     }
 };
 
-[[nodiscard]] atlas::Result<std::unique_ptr<Game>> make_game(std::string_view fen) {
+[[nodiscard]] atlas::Result<std::unique_ptr<Game>> make_game(std::string_view fen, bool networked) {
     auto made = atlas::chess::make_world();
     if (!made) {
         return std::unexpected(std::move(made).error());
@@ -187,8 +238,19 @@ struct Game {
         !status) {
         return std::unexpected(std::move(status).error());
     }
+    if (networked) {
+        // Who holds which colour is simulation state, hashed and identical on both sides, so
+        // "not your turn" is a decline the rules make and no client can skip. Written before
+        // the handshake, because the initial hash both peers compare includes it.
+        auto& players = atlas::chess::players_table(game->chess.world, game->chess.ids);
+        players.white = atlas::sim::SourceId{0};
+        players.black = atlas::sim::SourceId{1};
+        game->gate = std::make_unique<atlas::sim::TurnGate>();
+    }
     game->kernel = std::make_unique<atlas::sim::Kernel>(
-        game->chess.world, game->schedule, game->commands, atlas::sim::KernelConfig{.seed = kSeed});
+        game->chess.world, game->schedule, game->commands,
+        atlas::sim::KernelConfig{
+            .seed = kSeed, .record_applied_commands = networked, .gate = game->gate.get()});
     return game;
 }
 
@@ -265,6 +327,240 @@ void print_summary(const Game& game) {
     std::printf("result: %s\n", std::string{describe(game.result())}.c_str());
     std::printf("state hash: %#018llx\n", static_cast<unsigned long long>(game.chess.world.hash()));
     std::fflush(stdout);
+}
+
+// ------------------------------------------------------------------------------------ network
+
+/// A game played over a socket: the link, the session, and this side's bookkeeping.
+///
+/// Declared so that the session goes before the hub and the hub before the runtime, which is
+/// the order each borrows from the next.
+struct Network {
+    std::optional<atlas::net::EnetRuntime> runtime;
+    std::unique_ptr<atlas::net::EnetHub> hub;
+    std::unique_ptr<atlas::net::Session> session;
+
+    /// The listener plays white as source 0 and the connector black as source 1, which is what
+    /// the players table says on both sides.
+    atlas::chess::Colour colour = atlas::chess::Colour::White;
+    /// The next tick this side has still to announce.
+    atlas::Tick next_turn = 0;
+    /// The tick this side's last move is stamped for. Another move of its own waits until that
+    /// tick has run, so one side never has two moves in flight.
+    std::optional<atlas::Tick> in_flight;
+    /// The tick the result was set on, which is where both sides finish.
+    std::optional<atlas::Tick> result_tick;
+    /// --moves, over a socket: this side's moves only, played in turn.
+    std::deque<atlas::chess::Move> script;
+};
+
+/// Generous, because a continuous-integration runner under load is slow rather than broken,
+/// and bounded, because a game that hangs is a job that times out with nothing to read.
+constexpr auto kConnectTimeout = std::chrono::seconds{30};
+
+[[nodiscard]] atlas::Result<std::deque<atlas::chess::Move>> parse_script(std::string_view list) {
+    std::deque<atlas::chess::Move> moves;
+    std::size_t start = 0;
+    while (start < list.size()) {
+        const std::size_t comma = std::min(list.find(',', start), list.size());
+        const std::string_view text = list.substr(start, comma - start);
+        start = comma + 1;
+        if (text.empty()) {
+            continue;
+        }
+        auto move = atlas::chess::parse_move(text);
+        if (!move) {
+            return std::unexpected(std::move(move).error().context("reading --moves"));
+        }
+        moves.push_back(*move);
+    }
+    return moves;
+}
+
+/// Open the socket, create the session, and wait until both sides agree.
+[[nodiscard]] atlas::Result<std::unique_ptr<Network>> open_network(const Options& options,
+                                                                   Game& game) {
+    auto network = std::make_unique<Network>();
+    auto runtime = atlas::net::EnetRuntime::create();
+    if (!runtime) {
+        return std::unexpected(std::move(runtime).error().context("the socket library"));
+    }
+    network->runtime = std::move(*runtime);
+
+    atlas::app::SocketEndpoint endpoint{.listen = true, .port = options.listen_port};
+    if (!options.listen) {
+        auto parsed = atlas::app::parse_connect(options.connect);
+        if (!parsed) {
+            return std::unexpected(std::move(parsed).error());
+        }
+        endpoint = *std::move(parsed);
+    }
+    auto hub = atlas::app::open_socket_hub(*network->runtime, endpoint, kConnectTimeout);
+    if (!hub) {
+        return std::unexpected(std::move(hub).error());
+    }
+    network->hub = *std::move(hub);
+    network->colour = network->hub->local_index() == 0 ? atlas::chess::Colour::White
+                                                       : atlas::chess::Colour::Black;
+
+    auto session =
+        atlas::net::Session::create(network->hub->end(network->hub->local_index()),
+                                    {.input_delay = options.input_delay,
+                                     .hash_check_interval = 8,
+                                     .seed = kSeed,
+                                     .start_tick = 0,
+                                     .initial_state_hash = game.chess.world.hash(),
+                                     .tick_rate = 60,
+                                     .build_id = std::string{atlas::build_info::summary()}});
+    if (!session) {
+        return std::unexpected(std::move(session).error());
+    }
+    network->session = *std::move(session);
+    network->session->set_schedule(&game.schedule);
+    if (auto status = atlas::app::await_handshake(*network->session, *network->hub, game.commands,
+                                                  *game.gate, kConnectTimeout);
+        !status) {
+        return std::unexpected(std::move(status).error());
+    }
+    ATLAS_LOG_INFO(kApp, "playing {} over a socket, input delay {}",
+                   network->colour == atlas::chess::Colour::White ? "white" : "black",
+                   network->session->agreed_delay());
+    return network;
+}
+
+/// Whether this side may make a move now: its turn, the game not over, and its last move run.
+[[nodiscard]] bool may_move(const Game& game, const Network& network) {
+    if (game.result().outcome != atlas::chess::Outcome::Ongoing) {
+        return false;
+    }
+    if (network.in_flight.has_value() && game.kernel->current_tick() <= *network.in_flight) {
+        return false;
+    }
+    return game.position().side_to_move == network.colour;
+}
+
+/// One step of a networked game: bring in what arrived, announce this side's turns with its
+/// move if it has one, run what the gate allows, and finish where the result is set.
+[[nodiscard]] atlas::Status advance(Game& game, Network& network,
+                                    std::optional<atlas::chess::Move> move) {
+    atlas::net::Session& session = *network.session;
+    atlas::sim::TurnGate& gate = *game.gate;
+    const atlas::Tick now = game.kernel->current_tick();
+
+    auto report = session.poll(now, game.commands, gate);
+    if (!report) {
+        return std::unexpected(std::move(report).error().context("the session"));
+    }
+    if (session.finished()) {
+        return atlas::ok();
+    }
+
+    // No check here of a partner's declared finish against this side's game, unlike the lab's
+    // against its bound. The two games differ only if the states diverged, and then the session
+    // already refuses to run past the partner's finish (ADR-0020): a second check would be a
+    // branch no test could reach.
+    if (session.state() != atlas::net::SessionState::Running) {
+        return atlas::ok();
+    }
+
+    const atlas::Tick horizon = now + session.agreed_delay();
+    while (network.next_turn <= horizon) {
+        std::vector<atlas::sim::Command> turn;
+        if (move.has_value()) {
+            const auto self = session.self();
+            const auto payload = atlas::chess::encode_move(*move);
+            atlas::sim::Command command{
+                .target = network.next_turn,
+                .source = self,
+                .sequence = game.commands.next_sequence(self),
+                .type = atlas::chess::kMoveCommand,
+                .payload = {payload.begin(), payload.end()},
+            };
+            if (auto status = game.commands.submit_stamped(command); !status) {
+                return status;
+            }
+            network.in_flight = network.next_turn;
+            turn.push_back(std::move(command));
+            move.reset();
+        }
+        if (auto status = session.send_turn(network.next_turn, turn, gate); !status) {
+            return status;
+        }
+        ++network.next_turn;
+    }
+
+    auto second = session.poll(game.kernel->current_tick(), game.commands, gate);
+    if (!second) {
+        return std::unexpected(std::move(second).error().context("the session"));
+    }
+
+    // Nothing runs past the tick the game ended on: that is where both sides finish, and a
+    // side that ran further would have run a tick its partner never will.
+    while (!network.result_tick.has_value() && game.kernel->ready()) {
+        auto stepped = game.kernel->step();
+        if (!stepped) {
+            return std::unexpected(std::move(stepped).error());
+        }
+        gate.retire_before(stepped->tick);
+        if (auto status =
+                session.send_hash_check(stepped->tick, stepped->state_hash, stepped->system_hashes);
+            !status) {
+            return status;
+        }
+        for (const auto& applied : stepped->applied_commands) {
+            if (auto decoded = atlas::chess::decode_move(applied.payload)) {
+                ++game.plies;
+                game.last_move = *decoded;
+                ATLAS_LOG_INFO(kApp, "ply {}: {}", game.plies, atlas::chess::to_string(*decoded));
+            }
+        }
+        if (game.result().outcome != atlas::chess::Outcome::Ongoing) {
+            network.result_tick = stepped->tick;
+        }
+    }
+
+    if (network.result_tick.has_value()) {
+        if (auto status = session.finish(*network.result_tick); !status) {
+            return std::unexpected(std::move(status).error().context("finishing the game"));
+        }
+    }
+    return atlas::ok();
+}
+
+/// A networked game with no window: play this side's --moves until the game is over.
+[[nodiscard]] atlas::Status run_network_headless(Game& game, Network& network) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{120};
+    while (!network.session->finished()) {
+        std::optional<atlas::chess::Move> move;
+        if (may_move(game, network)) {
+            if (network.script.empty()) {
+                return atlas::fail(atlas::ErrorCode::InvalidArgument,
+                                   "--moves ran out before the game ended, on this side's turn");
+            }
+            move = network.script.front();
+            network.script.pop_front();
+        }
+        if (auto status = advance(game, network, move); !status) {
+            return status;
+        }
+        // Finished first, link second: see `Session::finished`.
+        if (network.session->finished()) {
+            break;
+        }
+        if (network.hub->status().ended) {
+            return atlas::fail(atlas::ErrorCode::Unavailable,
+                               std::format("the partner left before the game was agreed over: {}",
+                                           network.hub->status().reason));
+        }
+        if (std::chrono::steady_clock::now() > deadline) {
+            return atlas::fail(atlas::ErrorCode::Unavailable,
+                               "the game made no progress before the deadline");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    std::printf("session: finished at tick %llu\n",
+                static_cast<unsigned long long>(network.result_tick.value_or(0)));
+    return atlas::ok();
 }
 
 /// What a click does: pick a piece up, move it, or put it down.
@@ -439,7 +735,7 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
     camera.set_zoom(std::min(width, height) / (atlas::chess::BoardLayout::kExtent * kMargin));
 }
 
-[[nodiscard]] atlas::Status run_windowed(const Options& options, Game& game) {
+[[nodiscard]] atlas::Status run_windowed(const Options& options, Game& game, Network* network) {
     atlas::assets::FileSystem filesystem;
     if (auto status = filesystem.mount("assets", std::filesystem::path{options.assets_dir});
         !status) {
@@ -512,7 +808,10 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
     }
     atlas::SteadyClock clock;
 
-    const atlas::chess::BoardLayout layout{.flipped = options.flip};
+    // Each player sees their own pieces at the bottom.
+    const bool black_below =
+        options.flip || (network != nullptr && network->colour == atlas::chess::Colour::Black);
+    const atlas::chess::BoardLayout layout{.flipped = black_below};
     atlas::math::OrthoCamera camera;
     Selection selection;
     std::vector<atlas::renderer::Quad> quads;
@@ -547,6 +846,13 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
                 if (click->button != atlas::platform::MouseButton::Left) {
                     continue;
                 }
+                // Over a socket only this side's own turn is clickable, and only once its last
+                // move has run: the rules would decline anything else, and a person should not
+                // have to wait for the decline to find out.
+                if (network != nullptr && !may_move(game, *network)) {
+                    selection.clear();
+                    continue;
+                }
                 // Events are in logical units and the camera's viewport is in pixels.
                 const float scale = window->display_scale();
                 const auto world = camera.screen_to_world(
@@ -559,6 +865,18 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
             }
         }
 
+        if (network != nullptr) {
+            if (auto status = advance(game, *network, chosen); !status) {
+                return status;
+            }
+            if (!network->session->finished() && network->hub->status().ended) {
+                return atlas::fail(
+                    atlas::ErrorCode::Unavailable,
+                    std::format("the partner left before the game was agreed over: {}",
+                                network->hub->status().reason));
+            }
+            chosen.reset();
+        }
         if (chosen.has_value()) {
             auto applied = play(game, *chosen);
             if (!applied) {
@@ -655,6 +973,14 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
         }
     }
 
+    // Leaving a game that is not over says so, and the partner hears it as a peer that left,
+    // which is what it is. Leaving one that is over says nothing: `quit` is quiet once the
+    // session has finished, so a completed game is not turned into a failed one on the far side.
+    if (network != nullptr && !network->session->finished()) {
+        ATLAS_LOG_INFO(kApp, "leaving a game that is not over");
+        network->session->quit();
+    }
+
     if (!options.screenshot.empty() && device.has_value()) {
         if (auto capture = device->take_capture()) {
             if (auto status =
@@ -699,17 +1025,33 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
     atlas::mark_main_thread();
     ATLAS_LOG_INFO(kApp, "startup: {}", atlas::build_info::summary());
 
-    auto game = make_game(options->fen);
+    auto game = make_game(options->fen, options->networked());
     if (!game) {
         return std::unexpected(std::move(game).error());
     }
-    if (auto status = play_script(**game, options->moves); !status) {
+
+    if (options->networked()) {
+        auto network = open_network(*options, **game);
+        if (!network) {
+            return std::unexpected(std::move(network).error());
+        }
+        auto script = parse_script(options->moves);
+        if (!script) {
+            return std::unexpected(std::move(script).error());
+        }
+        (*network)->script = *std::move(script);
+        const auto status = options->headless ? run_network_headless(**game, **network)
+                                              : run_windowed(*options, **game, network->get());
         print_summary(**game);
         return status;
     }
 
+    if (auto status = play_script(**game, options->moves); !status) {
+        print_summary(**game);
+        return status;
+    }
     if (!options->headless) {
-        if (auto status = run_windowed(*options, **game); !status) {
+        if (auto status = run_windowed(*options, **game, nullptr); !status) {
             return status;
         }
     }
