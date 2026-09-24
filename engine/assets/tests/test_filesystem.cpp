@@ -2,11 +2,10 @@
 #include <atlas/assets/filesystem.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <support/scratch_dir.hpp>
 
-#include <atomic>
 #include <chrono>
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <span>
 #include <string>
@@ -18,38 +17,14 @@ using atlas::assets::VirtualPath;
 
 namespace {
 
-/// A unique name per fixture, without casting `this` to an integer. The address would work and
-/// says the wrong thing: what is wanted is distinctness, not identity.
-[[nodiscard]] std::uint64_t next_scratch_id() {
-    static std::atomic<std::uint64_t> counter{0};
-    return counter.fetch_add(1, std::memory_order_relaxed);
-}
-
 /// A temporary directory tree that removes itself.
 class TempTree {
   public:
-    TempTree() {
-        std::error_code error;
-        m_root = std::filesystem::temp_directory_path(error) /
-                 std::format("atlas-assets-{}", next_scratch_id());
-        std::filesystem::create_directories(m_root, error);
-    }
-
-    ~TempTree() {
-        std::error_code error;
-        std::filesystem::remove_all(m_root, error);
-    }
-
-    TempTree(const TempTree&) = delete;
-    TempTree& operator=(const TempTree&) = delete;
-    TempTree(TempTree&&) = delete;
-    TempTree& operator=(TempTree&&) = delete;
-
-    [[nodiscard]] const std::filesystem::path& root() const noexcept { return m_root; }
+    [[nodiscard]] const std::filesystem::path& root() const noexcept { return m_scratch.path(); }
 
     /// Create a file with contents, making parent directories as needed.
     void write(std::string_view relative, std::string_view contents) const {
-        const auto path = m_root / relative;
+        const auto path = root() / relative;
         std::error_code error;
         std::filesystem::create_directories(path.parent_path(), error);
         std::ofstream stream(path, std::ios::binary);
@@ -57,14 +32,14 @@ class TempTree {
     }
 
     [[nodiscard]] std::filesystem::path sub(std::string_view name) const {
-        const auto path = m_root / name;
+        const auto path = root() / name;
         std::error_code error;
         std::filesystem::create_directories(path, error);
         return path;
     }
 
   private:
-    std::filesystem::path m_root;
+    atlas::test::ScratchDir m_scratch{"atlas-assets"};
 };
 
 [[nodiscard]] VirtualPath path_of(std::string_view text) {

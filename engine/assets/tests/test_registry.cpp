@@ -4,9 +4,9 @@
 #include <atlas/core/assert.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <support/scratch_dir.hpp>
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -25,13 +25,6 @@ using atlas::assets::VirtualPath;
 
 namespace {
 
-/// A unique name per fixture, without casting `this` to an integer. The address would work and
-/// says the wrong thing: what is wanted is distinctness, not identity.
-[[nodiscard]] std::uint64_t next_scratch_id() {
-    static std::atomic<std::uint64_t> counter{0};
-    return counter.fetch_add(1, std::memory_order_relaxed);
-}
-
 /// Establish this thread as the main one.
 ///
 /// In an application the platform does this when it starts. These tests use the registry
@@ -45,27 +38,10 @@ const bool kMainThreadMarked = [] {
 
 class TempTree {
   public:
-    TempTree() {
-        std::error_code error;
-        m_root = std::filesystem::temp_directory_path(error) /
-                 std::format("atlas-registry-{}", next_scratch_id());
-        std::filesystem::create_directories(m_root, error);
-    }
-
-    ~TempTree() {
-        std::error_code error;
-        std::filesystem::remove_all(m_root, error);
-    }
-
-    TempTree(const TempTree&) = delete;
-    TempTree& operator=(const TempTree&) = delete;
-    TempTree(TempTree&&) = delete;
-    TempTree& operator=(TempTree&&) = delete;
-
-    [[nodiscard]] const std::filesystem::path& root() const noexcept { return m_root; }
+    [[nodiscard]] const std::filesystem::path& root() const noexcept { return m_scratch.path(); }
 
     void write(std::string_view relative, std::string_view contents) const {
-        const auto path = m_root / relative;
+        const auto path = root() / relative;
         std::error_code error;
         std::filesystem::create_directories(path.parent_path(), error);
         std::ofstream stream(path, std::ios::binary);
@@ -87,7 +63,7 @@ class TempTree {
             0x18, 0x00, 0x00, 0x49, 0xC8, 0x09, 0xF7, 0x03, 0xD9, 0x64, 0xF1, 0x00, 0x00,
             0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
         };
-        const auto path = m_root / relative;
+        const auto path = root() / relative;
         std::error_code error;
         std::filesystem::create_directories(path.parent_path(), error);
         std::ofstream stream(path, std::ios::binary);
@@ -97,7 +73,7 @@ class TempTree {
     }
 
   private:
-    std::filesystem::path m_root;
+    atlas::test::ScratchDir m_scratch{"atlas-registry"};
 };
 
 [[nodiscard]] VirtualPath path_of(std::string_view text) {

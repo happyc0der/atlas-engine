@@ -2,6 +2,7 @@
 #include <atlas/app/ppm.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <support/scratch_dir.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -19,10 +20,6 @@ namespace {
     return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
 }
 
-[[nodiscard]] std::filesystem::path scratch(const char* name) {
-    return std::filesystem::temp_directory_path() / name;
-}
-
 }  // namespace
 
 TEST_CASE("a BGRA capture is written as RGB", "[app][ppm]") {
@@ -37,7 +34,8 @@ TEST_CASE("a BGRA capture is written as RGB", "[app][ppm]") {
         std::byte{255}, std::byte{0}, std::byte{0},   std::byte{255},  // B G R A = blue
     };
 
-    const auto path = scratch("atlas-ppm-bgra.ppm");
+    const atlas::test::ScratchDir scratch{"atlas-ppm"};
+    const auto path = scratch.path() / "bgra.ppm";
     REQUIRE(write_ppm(path, capture).has_value());
 
     const std::string bytes = read_all(path);
@@ -49,7 +47,6 @@ TEST_CASE("a BGRA capture is written as RGB", "[app][ppm]") {
     CHECK(static_cast<unsigned char>(body[2]) == 0);    //            B
     CHECK(static_cast<unsigned char>(body[3]) == 0);    // blue pixel: R
     CHECK(static_cast<unsigned char>(body[5]) == 255);  //             B
-    std::filesystem::remove(path);
 }
 
 TEST_CASE("an RGBA capture is written without reordering", "[app][ppm]") {
@@ -58,19 +55,20 @@ TEST_CASE("an RGBA capture is written without reordering", "[app][ppm]") {
     capture.format = TextureFormat::Rgba8Unorm;
     capture.pixels = {std::byte{10}, std::byte{20}, std::byte{30}, std::byte{255}};
 
-    const auto path = scratch("atlas-ppm-rgba.ppm");
+    const atlas::test::ScratchDir scratch{"atlas-ppm"};
+    const auto path = scratch.path() / "rgba.ppm";
     REQUIRE(write_ppm(path, capture).has_value());
     const std::string body = read_all(path).substr(std::string("P6\n1 1\n255\n").size());
     REQUIRE(body.size() == 3);
     CHECK(static_cast<unsigned char>(body[0]) == 10);
     CHECK(static_cast<unsigned char>(body[1]) == 20);
     CHECK(static_cast<unsigned char>(body[2]) == 30);
-    std::filesystem::remove(path);
 }
 
 TEST_CASE("an empty capture is refused", "[app][ppm]") {
     const Device::Capture empty;
-    const auto status = write_ppm(scratch("atlas-ppm-empty.ppm"), empty);
+    const atlas::test::ScratchDir scratch{"atlas-ppm"};
+    const auto status = write_ppm(scratch.path() / "empty.ppm", empty);
     REQUIRE_FALSE(status.has_value());
     CHECK(status.error().code() == ErrorCode::InvalidArgument);
 }

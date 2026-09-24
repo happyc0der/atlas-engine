@@ -128,6 +128,10 @@ function(atlas_add_test name)
     foreach(dir IN LISTS ARG_INCLUDE_DIRS)
         target_include_directories(${target} PRIVATE ${dir})
     endforeach()
+    # Helpers shared by tests in more than one module, included as "support/<name>.hpp". Not an
+    # `atlas/` path on purpose: they belong to no module, so the module-boundary check has no
+    # edge to ask about.
+    target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 
     set_target_properties(${target} PROPERTIES
         CXX_STANDARD 23

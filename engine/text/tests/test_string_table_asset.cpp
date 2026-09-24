@@ -13,8 +13,8 @@
 #include <atlas/text/catalog.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <support/scratch_dir.hpp>
 
-#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -34,43 +34,19 @@ const bool kMainThreadMarked = [] {
     return true;
 }();
 
-/// Distinct rather than identity: what is wanted is that two trees do not collide, and an
-/// address would say the wrong thing. Same reasoning as the registry's own fixture.
-[[nodiscard]] int next_scratch_id() {
-    static std::atomic<int> counter{0};
-    return counter.fetch_add(1, std::memory_order_relaxed);
-}
-
 class TempTree {
   public:
-    TempTree() {
-        m_root = std::filesystem::temp_directory_path() /
-                 ("atlas-strings-" + std::to_string(next_scratch_id()));
-        std::filesystem::remove_all(m_root);
-        std::filesystem::create_directories(m_root);
-    }
-
-    ~TempTree() {
-        std::error_code ignored;
-        std::filesystem::remove_all(m_root, ignored);
-    }
-
-    TempTree(const TempTree&) = delete;
-    TempTree& operator=(const TempTree&) = delete;
-    TempTree(TempTree&&) = delete;
-    TempTree& operator=(TempTree&&) = delete;
-
     void write(std::string_view relative, std::string_view contents) const {
-        const auto path = m_root / relative;
+        const auto path = root() / relative;
         std::filesystem::create_directories(path.parent_path());
         std::ofstream file{path, std::ios::binary | std::ios::trunc};
         file.write(contents.data(), static_cast<std::streamsize>(contents.size()));
     }
 
-    [[nodiscard]] const std::filesystem::path& root() const noexcept { return m_root; }
+    [[nodiscard]] const std::filesystem::path& root() const noexcept { return m_scratch.path(); }
 
   private:
-    std::filesystem::path m_root;
+    atlas::test::ScratchDir m_scratch{"atlas-strings"};
 };
 
 constexpr std::string_view kEnglish = R"({
