@@ -5,6 +5,9 @@
 
 **Accepted**, 2026-09-22, implemented in M17.
 
+*2026-09-23:* decision 5's list of the ways a session ends gains one that is not a failure — a
+session can finish, by [ADR-0020](0020-session-finish.md). Nothing in this record is superseded.
+
 Proposed when it was written on 2026-09-20, because a milestone still had to build it — the
 legend in this index reserves Accepted for a record that is in force.
 

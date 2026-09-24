@@ -99,6 +99,10 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   for a tick that has already run cannot be applied by anybody.
 - A divergence is detected, attributed to a system, and stops. Atlas does not resync, exactly as
   it does not recover from device loss.
+- **A run that is over finishes; it does not hang up** (ADR-0020). Every peer finishes at the
+  same tick, runs no tick past it, and asks whether the session is `finished()` before asking
+  whether the link has ended. Only the application knows how long the run was meant to be, so
+  it compares `declared_finish()` with its own bound; the session adds no timer.
 - `SourceId::Local` is a **role** — peer zero — not "whoever is running this". Anything stamping
   its own commands asks the session what it is.
 - A tick is always: drain and apply commands, compute, commit, hash. Nothing reaches

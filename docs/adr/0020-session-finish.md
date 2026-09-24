@@ -3,8 +3,14 @@
 
 ## Status
 
-**Proposed**, 2026-09-23, written at M21's gate under [ADR-0018](0018-chess-probe.md) D4.
-Accepted when M21 lands it. Nothing in `engine/net` changes before this record is read.
+**Accepted**, 2026-09-23, implemented in M21.
+
+Proposed when it was written the same day at M21's gate under [ADR-0018](0018-chess-probe.md)
+D4. **Three decisions were changed by implementing them**, each marked at its own heading with
+what changed and why, rather than edited to read as if they had always said it: D3 lost a
+clause that was another clause in other words; D5 claimed a deadline covered a case it does not;
+and D7 gained two things the lab turned out to need. Everything else held, including the
+message, the version, and the states.
 
 Amends [ADR-0017](0017-lockstep-transport.md) decision 5's list of the ways a session ends, by
 adding the one that is not a failure. Nothing in 0014 or 0017 is superseded: a silent peer
@@ -78,6 +84,14 @@ have disagreed about what the run was, which is a protocol violation and ends th
 one — the lab's two processes must be given the same `--ticks`, and chess's two peers reach the
 same result at the same tick or their hashes already differ.
 
+*Changed during M21, 2026-09-23.* The third clause — every partner's turns up to `last_tick`
+received — went. The kernel runs a tick only once the gate has every source's turn for it, so a
+peer that has run `last_tick` has had them all; the clause as written is the clause "this peer
+has run `last_tick`" in other words, and the implementation writes it once, as that. The
+condition is therefore: this peer has finished; every partner has finished at the same tick;
+this peer has run that tick; and the last hash check at or before it has been compared with
+every partner. A test removing each clause fails, which a second copy of one of them could not.
+
 Because the condition is decided from messages that arrive in order on a reliable channel, a
 disconnect that follows a peer's `Finish` and its last turn is *expected*, not a failure: the
 finishing peer has said everything it will say, and the application ignores the link ending
@@ -94,6 +108,17 @@ deadline: a partner that never sends its `Finish` and never disconnects is a sil
 the session ends as it would have in `Running`. Nothing here adds a timer, and the gate still
 reads none.
 
+*Corrected during M21, 2026-09-23.* The sentence above is true of a partner that goes quiet
+and false of the case that mattered. A partner that is **connected but will never finish** —
+because it was told to run a different length of game — is not silent: it answers the
+transport's keep-alives while it waits. If the shorter peer has announced no turn past its
+finish, the longer one stops exactly one tick past it, which the run-past check rightly
+allows, and waits for a turn nobody will send. The session cannot tell that partner from one
+that is merely slow, because it does not know how long the run was meant to be. **The
+application does**, so `Session::declared_finish` reports the tick any peer has declared and the
+application compares it with its own bound; the lab does so on every poll. The session still
+adds no timer.
+
 **D6. `PollReport::closed` is not the session's to report, and the session stops pretending.**
 The four assignments to it before an error return are removed. `command_source.hpp`'s comment
 on `closed` gains one sentence naming who reports it — a replay that ran out, a mod that broke —
@@ -108,6 +133,14 @@ zero. `hub->status().ended` after `Finished` is ignored. The killed-peer case is
 peer that dies sends no `Finish`, and the deadline ends the session as before. A new case
 starts two processes with **different** `--ticks` and asserts both exit non-zero naming the
 mismatch, which is the proof that D3's equality is enforced rather than assumed.
+
+*Extended during M21, 2026-09-23.* Two things the lab turned out to need. **Its step loops are
+bounded by `--ticks` as well as by the gate**: the gate alone let a frame run every tick already
+announced, up to the input delay past the bound, and a peer that has run past the tick it
+finishes at is refused by its partner. And **the socket peer compares a partner's declared
+finish with its own bound**, per the correction to D5. The mismatch case runs at an input delay
+of one, where the stall D5 now describes is the usual timing, and requires the longer-running
+peer to name the disagreement.
 
 **D8. Chess calls `finish(tick)` on the tick its result is set**, in M22. Every peer sets the
 result at the same tick from the same hashed tables, so every peer finishes at the same tick

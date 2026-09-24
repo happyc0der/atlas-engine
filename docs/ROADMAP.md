@@ -29,7 +29,7 @@ Status legend: **done**, *in progress*, planned.
 | M18 | Chess: the record, and M16's hotfix | S | **done** |
 | M19 | A command may be declined | M | **done** |
 | M20 | Chess: the rules library | M–L | **done** |
-| M21 | A session can finish | M | planned |
+| M21 | A session can finish | M | **done** |
 | M22 | Chess: the application, two people, a socket | L | planned |
 | M23 | Chess: a mod as the opponent | ? | planned |
 
@@ -1346,6 +1346,37 @@ was the one M19 built for them. The state fits the world's table contract withou
 the empty schedule ticks, and the replay and save paths carried a real game the way they carry a
 synthetic one. The hypothesis that a map engine's simulation generalises to a board game has
 now been tested with the game itself rather than with a survey, and it held.
+
+## M21 — A session can finish
+
+Full report: [reports/M21.md](reports/M21.md).
+
+Slices: [ADR-0020](adr/0020-session-finish.md) at a gate; the finish message and protocol
+version 2; the two states and the finished condition; the lab finishing in both modes; a fix to
+where a mismatched run is named; the documents.
+
+**Exit criteria**
+- A session that ends because its run is over, with both peers exiting zero.
+- The condition decided from messages, with no clock, and every clause tested by removing it.
+- Two peers told to run different lengths both fail, and say why.
+- M17's end-of-run window closed rather than narrowed.
+
+| Criterion | Status |
+|---|---|
+| A clean ending | **Met.** Both socket processes and every loopback peer log an agreed finish at the bound and exit zero. |
+| The condition | **Met, with one clause fewer than the record proposed.** "Every partner's turns have arrived" is "this peer has run the last tick" in other words, and is written once. Seven session mutations and four lab mutations caught — three after fixes to the tests, each written up. |
+| A mismatch named | **Met, and it took a second attempt.** The first version passed because of a timing, not a guarantee; a mutation removing the fix survived three runs. The application compares a partner's declared finish with its own bound, and the case runs at the input delay where the stall is the usual timing. |
+| The window closed | **Met.** A partner leaves only once it is finished, which needs this peer's finish first, so a hang-up after it carries nothing — and the lab asks `finished()` before it asks whether the link ended. |
+
+### What the second engine change found
+
+The record was wrong twice and a test found both. One clause of the finished condition was
+another clause restated, and a test built to fail without it could not, because the other one
+masked it. And the record's claim that the transport's deadline covers a partner that never
+finishes was false for the one case that mattered: a partner told to run longer is connected,
+answering keep-alives, and waiting. Only the application knows how long a run was meant to be,
+which is why the fix lives there. Both corrections are dated in the record rather than edited
+into it.
 
 ## First continuous integration
 

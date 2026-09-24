@@ -603,6 +603,20 @@ fact about the tree today rather than a consequence of the milestone.
   a sanitiser build finishes quickly; each case lists its deeper counts in a comment for anyone
   who wants them. Condition: a generation bug that the shallow depths miss, which none has yet.
 
+### M21 — a session can finish
+
+- **Finishing with a partner that crashed after its `Finish`.** A partner that sends `Finish`
+  and dies before this peer is finished leaves it waiting for a hash check that will not come,
+  and the run fails as a lost peer rather than completing. It may have had everything it needed
+  but the last comparison, and completing without it would report as agreed a stretch nobody
+  compared. Condition: a consumer for which a crash at the very end is common enough to matter,
+  and even then the answer is probably to report "unverified" rather than "agreed".
+- **Agreeing the finish tick by message.** Every peer must know the tick already — the lab from
+  `--ticks`, chess from a result every peer computes at the same tick. A run whose length is
+  decided by one peer, a vote, or a timer would need the tick proposed and acknowledged before
+  anyone runs it. Condition: such a consumer; a game that ends by resignation does not need it,
+  because a resignation is a command and the tick it lands on is already agreed.
+
 ## Decided by ADR-0010, planned as milestones
 
 Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.

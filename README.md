@@ -37,9 +37,9 @@ people and a socket around it are the next milestones.
 
 **What is not done.** The renderer has been verified on one graphics processor and one software
 rasteriser; Direct3D 12 and non-Apple hardware are unverified, and that is the largest untested
-surface in the project. **There is no network transport** — M14 designed lockstep and proved it
-over an in-memory link, by decision, and choosing a transport is a separate change with recorded
-criteria. Mods exist but nothing large has been written as one: the demonstration mod is under three
+surface in the project. Networking is **direct address only** — two processes play lockstep
+over a real socket since M17, and a session can finish rather than only fail since M21, but
+there is no encryption, no NAT traversal and no lobby, each deferred with its trigger. Mods exist but nothing large has been written as one: the demonstration mod is under three
 hundred bytes, so what loading a real one costs is unmeasured, and the lab runs one mod at a
 time. [ADR-0015](docs/adr/0015-sandboxed-mods.md) chose WebAssembly over Lua and Luau, and
 records what the overlay port it needed has cost so far. Everything

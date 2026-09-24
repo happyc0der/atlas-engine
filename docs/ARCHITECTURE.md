@@ -533,6 +533,13 @@ deferred with a trigger. And **a peer that goes quiet ends the session** rather 
 dropped, because dropping it is simulation-visible — every remaining peer would have to apply
 the drop at the identical tick or diverge, which needs an agreement protocol of its own.
 
+**A session can finish** ([ADR-0020](adr/0020-session-finish.md)), which is the one ending that
+is not a failure. A peer says `Finish{last_tick}` and goes on delivering what its partners need
+up to that tick; each peer decides for itself, from what has arrived, that every partner has
+finished at the same tick, that it has run that tick, and that the last hash check has been
+compared — and then a hang-up carries no information. Two peers that finish at different ticks
+disagreed about what the run was, and the session ends as a protocol violation.
+
 **A tick runs only when every participant has said what it is doing on that tick.** Every peer
 then applies the same commands in the same order, in the total order `(source, sequence)` fixes,
 and reaches the same state **without exchanging any state at all**. That is the whole idea, and
