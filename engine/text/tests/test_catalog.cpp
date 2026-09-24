@@ -212,3 +212,44 @@ TEST_CASE("a key found on a hit stays valid as more entries arrive", "[text]") {
     // looked-up view across an insert would be reading freed memory.
     CHECK(held == "First");
 }
+
+TEST_CASE("a second table is added beside the first", "[text]") {
+    // How an application owns its own strings (ADR-0018): the engine's table, then its own.
+    Catalog catalog;
+    REQUIRE(catalog.load({.locale = "en", .strings = {{"ui.pause", "Pause"}}}).has_value());
+    REQUIRE(
+        catalog.add_table({.locale = "en", .strings = {{"game.to_move", "To move"}}}).has_value());
+    CHECK(catalog.lookup("ui.pause") == "Pause");
+    CHECK(catalog.lookup("game.to_move") == "To move");
+    CHECK(catalog.size() == 2);
+    CHECK(catalog.locale() == "en");
+}
+
+TEST_CASE("a table with a key already present is refused whole", "[text]") {
+    Catalog catalog;
+    REQUIRE(catalog.load({.locale = "en", .strings = {{"ui.pause", "Pause"}}}).has_value());
+    const auto refused =
+        catalog.add_table({.locale = "en", .strings = {{"game.new", "New"}, {"ui.pause", "Hold"}}});
+    REQUIRE_FALSE(refused.has_value());
+    // Nothing from the refused table arrived, not even the entry before the clash, and what was
+    // there before is untouched.
+    CHECK(catalog.size() == 1);
+    CHECK(catalog.lookup("ui.pause") == "Pause");
+    CHECK(catalog.lookup("game.new") == "game.new");
+}
+
+TEST_CASE("a table for another locale is refused", "[text]") {
+    Catalog catalog;
+    REQUIRE(catalog.load({.locale = "en", .strings = {{"ui.pause", "Pause"}}}).has_value());
+    CHECK_FALSE(
+        catalog.add_table({.locale = "fr", .strings = {{"game.to_move", "Trait"}}}).has_value());
+    CHECK(catalog.size() == 1);
+}
+
+TEST_CASE("adding to an empty catalog takes the table's locale", "[text]") {
+    Catalog catalog;
+    REQUIRE(
+        catalog.add_table({.locale = "en", .strings = {{"game.to_move", "To move"}}}).has_value());
+    CHECK(catalog.locale() == "en");
+    CHECK(catalog.lookup("game.to_move") == "To move");
+}

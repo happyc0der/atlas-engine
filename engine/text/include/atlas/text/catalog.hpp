@@ -136,6 +136,19 @@ class Catalog {
     /// interface showing a string that no longer exists anywhere.
     [[nodiscard]] Status load(const assets::ImportedStringTable& table);
 
+    /// Add a second table's entries beside what is already here, all of them or none.
+    ///
+    /// How an application owns its own strings without editing the engine's table (ADR-0018):
+    /// the engine's table is loaded, and the application adds its own beside it. **Refused, and
+    /// nothing added, when any key is already present** — a key in two tables is a key whose
+    /// text depends on which loaded first — and when the table is for a different locale than
+    /// the one already loaded, because an interface half in one language and half in another is
+    /// not a fallback anybody asked for. Into an empty catalog it behaves like `load`.
+    ///
+    /// Unlike `load`, a failure leaves the catalog exactly as it was rather than empty: what was
+    /// already there was fine, and the table being added is the one in question.
+    [[nodiscard]] Status add_table(const assets::ImportedStringTable& table);
+
     /// Claim every string table that has decoded, and make its entries available.
     ///
     /// The same shape as the texture cache's, the audio device's and the clip cache's own

@@ -90,6 +90,56 @@ Status Catalog::load(const assets::ImportedStringTable& table) {
     return {};
 }
 
+Status Catalog::add_table(const assets::ImportedStringTable& table) {
+    if (!m_locale.empty() && table.locale != m_locale) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("a string table for locale '{}' cannot be added to one in '{}'",
+                              table.locale, m_locale)));
+    }
+
+    // Checked before anything is inserted, so a refusal leaves the catalog untouched without
+    // having to take entries back out again.
+    if (m_strings.size() + table.strings.size() > kMaxStrings) {
+        return std::unexpected(
+            Error(ErrorCode::MalformedData,
+                  std::format("adding {} strings to {} would pass the limit of {}",
+                              table.strings.size(), m_strings.size(), kMaxStrings)));
+    }
+    for (const auto& [key, value] : table.strings) {
+        if (m_strings.contains(key)) {
+            return std::unexpected(Error(
+                ErrorCode::MalformedData,
+                std::format("string table key '{}' is already present; a key in two tables has "
+                            "text that depends on which was loaded first",
+                            key)));
+        }
+    }
+
+    std::vector<std::string_view> added;
+    added.reserve(table.strings.size());
+    for (const auto& [key, value] : table.strings) {
+        if (auto status = insert(key, value); !status) {
+            // Only reachable on a key repeated within the table itself, which the importer
+            // already refuses; undone rather than trusted, so a table built in code cannot
+            // leave half of itself behind.
+            for (const std::string_view done : added) {
+                m_strings.erase(m_strings.find(done));
+            }
+            return status;
+        }
+        added.push_back(key);
+    }
+    if (m_locale.empty()) {
+        m_locale = table.locale;
+    }
+    // A key missed before this table arrived may be present now, and should be named again if
+    // it is still missing against the new contents.
+    m_missing.clear();
+    m_unlogged.clear();
+    return {};
+}
+
 std::size_t Catalog::finalise_pending(assets::Registry& registry) {
     ATLAS_ASSERT_MAIN_THREAD();
     ATLAS_ZONE_NAMED("Catalog::finalise_pending");
