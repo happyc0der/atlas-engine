@@ -31,3 +31,4 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0018](0018-chess-probe.md) | Chess as the first consumer: an in-tree probe of the engine, not v1.0 | Accepted |
 | [0019](0019-declined-commands.md) | A command may be declined on world state | Accepted |
 | [0020](0020-session-finish.md) | A session can finish | Accepted |
+| [0021](0021-mod-messages.md) | A mod may speak to a person, one way, by key | Proposed; written at M24's gate |
