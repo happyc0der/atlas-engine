@@ -10,7 +10,7 @@
 
 namespace atlas::net {
 
-static_assert(kProtocolVersion == 1, "bumping the protocol version is a decision, not an edit");
+static_assert(kProtocolVersion == 2, "bumping the protocol version is a decision, not an edit");
 
 // A message must be able to hold a turn carrying the largest payload the command queue accepts,
 // or the two limits disagree and a legal command becomes unsendable.

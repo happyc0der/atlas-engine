@@ -109,7 +109,21 @@ struct Bye {
     std::string detail;
 };
 
-using Message = std::variant<Hello, Welcome, Turn, HashCheck, Bye>;
+/// This peer will run no tick after `last_tick`, and needs nothing further after it (ADR-0020).
+///
+/// **Not a goodbye.** A peer that sends this is still there: it goes on delivering the turns
+/// and hash checks its partners need up to `last_tick`, and goes on comparing theirs. A `Bye`
+/// means the sender has gone and ends the receiver's session on arrival; making one of its
+/// reasons mean "still here" would put a branch on the reason into every place a goodbye is
+/// handled.
+///
+/// Every peer must finish at the same tick. Two that do not have disagreed about what the run
+/// was, and that is a protocol violation.
+struct Finish {
+    Tick last_tick = 0;
+};
+
+using Message = std::variant<Hello, Welcome, Turn, HashCheck, Bye, Finish>;
 
 /// The type tag of a message, without decoding the rest of it.
 ///

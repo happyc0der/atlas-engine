@@ -427,6 +427,14 @@ Status Session::handle(std::size_t peer, const Message& message, Tick now, sim::
                   std::format("peer {} left: {} ({})", peer, to_string(bye->reason), bye->detail)));
     }
 
+    if (std::holds_alternative<Finish>(message)) {
+        // Named rather than falling through to the welcome refusal below, which would report a
+        // finish as a message it is not. M21 slice 2 gives it its meaning (ADR-0020).
+        return std::unexpected(Error(
+            ErrorCode::NotSupported,
+            std::format("peer {} sent a finish, which this build does not act on yet", peer)));
+    }
+
     // A welcome is not part of this handshake: every peer announces and every peer agrees, so
     // there is nobody to be welcomed by. The message exists in the protocol because a session
     // with a host assigning identities is the shape a transport will want, and adding it later

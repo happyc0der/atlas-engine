@@ -27,7 +27,11 @@ namespace atlas::net {
 
 /// Bumped when the meaning of any message changes. A peer speaking a different version is
 /// refused at the handshake rather than half-understood, exactly as a save or a replay is.
-inline constexpr std::uint32_t kProtocolVersion = 1;
+///
+/// Version 2 (M21) added `Finish`: a session can end because its run is over rather than only
+/// because something failed (ADR-0020). A version 1 peer would read a finish as a type it does
+/// not have, which is a violation, so the two cannot be mixed and the handshake says so first.
+inline constexpr std::uint32_t kProtocolVersion = 2;
 
 /// Leading bytes of every message. Distinct from the save and replay magics, so a file handed
 /// to a socket, or a message handed to a loader, fails immediately and says which it was.
@@ -44,6 +48,8 @@ enum class MessageType : std::uint32_t {
     Turn = 3,
     HashCheck = 4,
     Bye = 5,
+    /// This peer will run no tick after the one named (ADR-0020). Added in version 2.
+    Finish = 6,
 };
 
 /// Why a session ended. Zero is unused for the same reason as above.

@@ -11,8 +11,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-TEST_CASE("the protocol version is one", "[net][protocol]") {
-    STATIC_REQUIRE(atlas::net::kProtocolVersion == 1);
+TEST_CASE("the protocol version is two", "[net][protocol]") {
+    // Bumped in M21 by ADR-0020, for the finish message. One was M14's.
+    STATIC_REQUIRE(atlas::net::kProtocolVersion == 2);
 }
 
 TEST_CASE("the magic is not any other format's magic", "[net][protocol]") {

@@ -20,6 +20,7 @@ using atlas::net::Bye;
 using atlas::net::ByeReason;
 using atlas::net::decode;
 using atlas::net::encode;
+using atlas::net::Finish;
 using atlas::net::HashCheck;
 using atlas::net::Hello;
 using atlas::net::kMaxBuildIdBytes;
@@ -90,8 +91,11 @@ namespace {
         .system_hashes = {{SystemId{11}, 111}, {SystemId{22}, 222}},
     };
     Bye bye{.reason = ByeReason::Diverged, .detail = "the first system to differ is 'drift'"};
+    // Past 2^32, so a writer or reader that narrowed the tick to 32 bits is caught.
+    Finish finish{.last_tick = 0x1'0000'0029ULL};
 
-    return {Message{hello}, Message{welcome}, Message{turn}, Message{check}, Message{bye}};
+    return {Message{hello}, Message{welcome}, Message{turn},
+            Message{check}, Message{bye},     Message{finish}};
 }
 
 }  // namespace
@@ -220,6 +224,18 @@ TEST_CASE("every message survives a round trip, field by field", "[net][message]
         REQUIRE(back != nullptr);
         CHECK(back->reason == original.reason);
         CHECK(back->detail == original.detail);
+    }
+
+    SECTION("finish") {
+        const auto original = std::get<Finish>(every_message()[5]);
+        const auto bytes = encode(Message{original});
+        REQUIRE(bytes.has_value());
+        const auto restored = decode(*bytes);
+        REQUIRE(restored.has_value());
+        const auto* back = std::get_if<Finish>(&*restored);
+        REQUIRE(back != nullptr);
+        CHECK(back->last_tick == original.last_tick);
+        CHECK(peek_type(*bytes).value() == atlas::net::MessageType::Finish);
     }
 
     // The turn has its own case below, because it is the one whose contents are applied.

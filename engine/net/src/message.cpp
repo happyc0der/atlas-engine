@@ -62,7 +62,8 @@ void write_header(SaveWriter& writer, MessageType type) {
     case MessageType::Welcome:
     case MessageType::Turn:
     case MessageType::HashCheck:
-    case MessageType::Bye: return static_cast<MessageType>(*type);
+    case MessageType::Bye:
+    case MessageType::Finish: return static_cast<MessageType>(*type);
     }
     // Refused rather than skipped. A protocol that ignores what it does not understand cannot
     // be versioned later without silently changing meaning, and a peer able to make another
@@ -171,6 +172,12 @@ void write_header(SaveWriter& writer, MessageType type) {
     write_header(writer, MessageType::Bye);
     writer.write_u32(static_cast<std::uint32_t>(bye.reason));
     writer.write_string(bye.detail);
+    return {};
+}
+
+[[nodiscard]] Status write_body(SaveWriter& writer, const Finish& finish) {
+    write_header(writer, MessageType::Finish);
+    writer.write_u64(finish.last_tick);
     return {};
 }
 
@@ -374,6 +381,14 @@ void write_header(SaveWriter& writer, MessageType type) {
     return Message{std::move(bye)};
 }
 
+[[nodiscard]] Result<Message> read_finish(SaveReader& reader) {
+    auto last_tick = reader.read_u64();
+    if (!last_tick) {
+        return std::unexpected(std::move(last_tick).error().context("a finish tick"));
+    }
+    return Message{Finish{.last_tick = *last_tick}};
+}
+
 }  // namespace
 
 Result<MessageType> peek_type(std::span<const std::byte> bytes) {
@@ -422,6 +437,7 @@ Result<Message> decode(std::span<const std::byte> bytes) {
     case MessageType::Turn: message = read_turn(reader); break;
     case MessageType::HashCheck: message = read_hash_check(reader); break;
     case MessageType::Bye: message = read_bye(reader); break;
+    case MessageType::Finish: message = read_finish(reader); break;
     }
     if (!message) {
         return message;
