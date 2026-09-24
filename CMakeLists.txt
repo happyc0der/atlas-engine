@@ -88,6 +88,13 @@ if(ATLAS_BUILD_TESTS)
                          "${PROJECT_SOURCE_DIR}/tools/check_spdx.py")
         set_tests_properties(licence_headers PROPERTIES LABELS "lint")
 
+        # The vcpkg pin, recorded three times, names one commit (M23). The binary cache is keyed
+        # on vcpkg.json, so this is what makes that key follow the submodule too.
+        add_test(NAME vcpkg_pin
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/tools/check_vcpkg_pin.py")
+        set_tests_properties(vcpkg_pin PROPERTIES LABELS "lint")
+
         # Skips itself, rather than failing, on a machine without the shader toolchain: a
         # machine that cannot compile shaders is a machine that cannot have changed them.
         add_test(NAME shaders_current

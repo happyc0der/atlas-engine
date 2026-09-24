@@ -82,11 +82,11 @@ jobs:
       # every push. Keyed on the manifest, the submodule declaration and the overlay ports, so
       # a dependency change invalidates it and nothing else does.
       #
-      # It does NOT hash the pinned vcpkg commit, which this comment claimed until M17.
-      # `.gitmodules` holds a path and a URL; the commit lives in the gitlink and, separately,
-      # in vcpkg.json's `builtin-baseline`. The key tracks the baseline in practice, through
-      # vcpkg.json — so bumping the submodule without bumping `builtin-baseline` would reuse a
-      # cache built against different port trees. See docs/DEFERRED.md.
+      # It follows the pinned vcpkg commit through vcpkg.json's `builtin-baseline`, which
+      # `tools/check_vcpkg_pin.py` holds equal to the submodule's gitlink. Until M23 nothing
+      # did, and bumping the submodule without the baseline would have restored a cache built
+      # against a different port tree with nothing to say so. The lint workflow and precheck
+      # run the check; a bump that moves one record and not the other fails there first.
       - name: Cache vcpkg binaries
         uses: actions/cache@v4
         with:

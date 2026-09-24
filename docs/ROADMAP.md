@@ -31,7 +31,10 @@ Status legend: **done**, *in progress*, planned.
 | M20 | Chess: the rules library | M–L | **done** |
 | M21 | A session can finish | M | **done** |
 | M22 | Chess: the application, two people, a socket | L | **done** |
-| M23 | Chess: a mod as the opponent | ? | planned |
+| M23 | One pin for vcpkg | S | **done** |
+| M24 | A string API for mods | M | planned |
+| M25 | Dropping a peer and playing on | L | planned |
+| — | Chess: a mod as the opponent | ? | deferred; numbered when scheduled |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1347,6 +1350,37 @@ the empty schedule ticks, and the replay and save paths carried a real game the 
 synthetic one. The hypothesis that a map engine's simulation generalises to a board game has
 now been tested with the game itself rather than with a survey, and it held.
 
+## M21 — A session can finish
+
+Full report: [reports/M21.md](reports/M21.md).
+
+Slices: [ADR-0020](adr/0020-session-finish.md) at a gate; the finish message and protocol
+version 2; the two states and the finished condition; the lab finishing in both modes; a fix to
+where a mismatched run is named; the documents.
+
+**Exit criteria**
+- A session that ends because its run is over, with both peers exiting zero.
+- The condition decided from messages, with no clock, and every clause tested by removing it.
+- Two peers told to run different lengths both fail, and say why.
+- M17's end-of-run window closed rather than narrowed.
+
+| Criterion | Status |
+|---|---|
+| A clean ending | **Met.** Both socket processes and every loopback peer log an agreed finish at the bound and exit zero. |
+| The condition | **Met, with one clause fewer than the record proposed.** "Every partner's turns have arrived" is "this peer has run the last tick" in other words, and is written once. Seven session mutations and four lab mutations caught — three after fixes to the tests, each written up. |
+| A mismatch named | **Met, and it took a second attempt.** The first version passed because of a timing, not a guarantee; a mutation removing the fix survived three runs. The application compares a partner's declared finish with its own bound, and the case runs at the input delay where the stall is the usual timing. |
+| The window closed | **Met.** A partner leaves only once it is finished, which needs this peer's finish first, so a hang-up after it carries nothing — and the lab asks `finished()` before it asks whether the link ended. |
+
+### What the second engine change found
+
+The record was wrong twice and a test found both. One clause of the finished condition was
+another clause restated, and a test built to fail without it could not, because the other one
+masked it. And the record's claim that the transport's deadline covers a partner that never
+finishes was false for the one case that mattered: a partner told to run longer is connected,
+answering keep-alives, and waiting. Only the application knows how long a run was meant to be,
+which is why the fix lives there. Both corrections are dated in the record rather than edited
+into it.
+
 ## M22 — Chess: the application, two people, a socket
 
 Full report: [reports/M22.md](reports/M22.md).
@@ -1380,36 +1414,22 @@ the move found a port parser that had accepted trailing characters. A branch cop
 unreachable for chess, where the only way two games differ is a divergence the session already
 refuses, and it was removed rather than kept as decoration.
 
-## M21 — A session can finish
+## M23 — One pin for vcpkg
 
-Full report: [reports/M21.md](reports/M21.md).
+Full report: [reports/M23.md](reports/M23.md).
 
-Slices: [ADR-0020](adr/0020-session-finish.md) at a gate; the finish message and protocol
-version 2; the two states and the finished condition; the lab finishing in both modes; a fix to
-where a mismatched run is named; the documents.
+The first of the three items M17 left open, taken in the order the owner chose on 2026-09-24:
+this, then a string API for mods (M24), then dropping a peer and playing on (M25), one milestone
+each.
 
 **Exit criteria**
-- A session that ends because its run is over, with both peers exiting zero.
-- The condition decided from messages, with no clock, and every clause tested by removing it.
-- Two peers told to run different lengths both fail, and say why.
-- M17's end-of-run window closed rather than narrowed.
+- The binary cache key cannot follow one vcpkg pin while the build uses another.
+- The fix checked where every other check runs, and shown to fail when it should.
 
 | Criterion | Status |
 |---|---|
-| A clean ending | **Met.** Both socket processes and every loopback peer log an agreed finish at the bound and exit zero. |
-| The condition | **Met, with one clause fewer than the record proposed.** "Every partner's turns have arrived" is "this peer has run the last tick" in other words, and is written once. Seven session mutations and four lab mutations caught — three after fixes to the tests, each written up. |
-| A mismatch named | **Met, and it took a second attempt.** The first version passed because of a timing, not a guarantee; a mutation removing the fix survived three runs. The application compares a partner's declared finish with its own bound, and the case runs at the input delay where the stall is the usual timing. |
-| The window closed | **Met.** A partner leaves only once it is finished, which needs this peer's finish first, so a hang-up after it carries nothing — and the lab asks `finished()` before it asks whether the link ended. |
-
-### What the second engine change found
-
-The record was wrong twice and a test found both. One clause of the finished condition was
-another clause restated, and a test built to fail without it could not, because the other one
-masked it. And the record's claim that the transport's deadline covers a partner that never
-finishes was false for the one case that mattered: a partner told to run longer is connected,
-answering keep-alives, and waiting. Only the application knows how long a run was meant to be,
-which is why the fix lives there. Both corrections are dated in the record rather than edited
-into it.
+| The key follows the pin | **Met, by removing the possibility of two pins rather than by hashing both.** The key already hashes `vcpkg.json`; `tools/check_vcpkg_pin.py` holds its baseline equal to the submodule's gitlink, and to the commit `DEPENDENCIES.md` names, so the key cannot follow one while the checkout is the other. |
+| Checked everywhere | **Met.** A lint test, a precheck step, and a step in the lint workflow. Moving each of the three records alone fails the check, the gitlink tested by staging a different commit in the index. |
 
 ## First continuous integration
 

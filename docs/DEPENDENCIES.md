@@ -5,6 +5,11 @@ Every dependency is pinned. Versions come from vcpkg manifest mode with a fixed
 changes a version. vcpkg itself is a git submodule at `external/vcpkg`, pinned to the
 commit below, so a fresh clone reproduces the dependency set with no environment variables.
 
+**The pin is recorded three times and they must move together**: the submodule's gitlink,
+`builtin-baseline` in `vcpkg.json`, and the vcpkg row below. `tools/check_vcpkg_pin.py` fails
+when they disagree, because the continuous-integration binary cache is keyed on `vcpkg.json` and
+would otherwise follow one pin while the build used another (M23).
+
 Atlas is GPL-3.0-or-later. Every dependency must be licence-compatible with GPLv3
 distribution. All current dependencies are permissive and therefore compatible.
 

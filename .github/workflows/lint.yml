@@ -56,6 +56,11 @@ jobs:
       - name: Module boundaries
         run: python3 tools/check_module_deps.py
 
+      # Every workflow keys its vcpkg binary cache on vcpkg.json. This is what makes that key
+      # follow the submodule as well: the gitlink and the baseline cannot disagree (M23).
+      - name: vcpkg pin
+        run: python3 tools/check_vcpkg_pin.py
+
       - name: Formatting
         env:
           CLANG_FORMAT: /usr/local/bin/clang-format

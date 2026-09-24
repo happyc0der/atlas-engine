@@ -10,6 +10,10 @@ later record in the series cites it, so it cannot be Proposed while they proceed
 governs is M18 to M23; the two engine changes it names are decided by their own records, 0019
 and 0020, which are Proposed until built.
 
+*2026-09-24:* M18 to M22 landed. The mod opponent D7 numbers M23 stays deferred by the owner's
+decision and loses the number, because milestone numbers follow landing order and M23 went to
+the first of the three items M17 had left open. It is numbered when it is scheduled.
+
 ## Context
 
 The owner's request, 2026-09-23: *"make the first ever game on this engine … chess, since a map

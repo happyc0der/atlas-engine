@@ -32,6 +32,7 @@ step() {
 
 step "SPDX headers"      python3 tools/check_spdx.py
 step "Module boundaries" python3 tools/check_module_deps.py
+step "vcpkg pin"         python3 tools/check_vcpkg_pin.py
 step "Formatting"        ./tools/format.sh --check
 step "Configure"         cmake --preset "${PRESET}"
 step "Build"             cmake --build --preset "${PRESET}"

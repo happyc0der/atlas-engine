@@ -534,7 +534,13 @@ fact about the tree today rather than a consequence of the milestone.
   addressed by `SourceId` rather than by a socket. Trigger: a consumer that cannot exchange an
   address out of band.
 
-- **Closing the submodule-versus-baseline gap in the continuous-integration cache key.** The
+- ~~**Closing the submodule-versus-baseline gap in the continuous-integration cache key.**~~
+  **Closed in M23** by the honest version named below: `tools/check_vcpkg_pin.py` holds the
+  gitlink, `builtin-baseline` and the commit `DEPENDENCIES.md` names to one value, so the key,
+  which hashes `vcpkg.json`, follows the submodule too. The trigger had not fired; the owner took
+  it anyway, first of the three items M17 left open. The original entry follows.
+
+  The
   three build workflows key their vcpkg binary cache on
   `hashFiles('vcpkg.json', '.gitmodules', 'external/vcpkg-overlays/**')`. None of those is the
   pinned vcpkg commit: `.gitmodules` holds a path and a URL, and the commit lives in the gitlink
@@ -556,7 +562,8 @@ fact about the tree today rather than a consequence of the milestone.
   is about a game that cannot. Deferred because the engine has no install or export target;
   without one an out-of-tree consumer is a submodule pointing at a source tree. Condition: that
   target exists. Chess is then the first thing to build against it.
-- **A mod as the chess opponent** (M23). ADR-0018 D7. A mod that reads the board, generates
+- **A mod as the chess opponent** (unnumbered until scheduled; it was M23 until 2026-09-24).
+  ADR-0018 D7. A mod that reads the board, generates
   legal moves inside the sandbox and submits one cannot be written with `tools/gen_mods.py`,
   which assembles bytes by hand with no loops, branches or locals. The decision it forces — an
   AssemblyScript or C-to-wasm toolchain in the tree, or Lua compiled to WASM as ADR-0015
@@ -612,7 +619,7 @@ fact about the tree today rather than a consequence of the milestone.
 - **An incremental position update.** Legality is checked by copy-make on a seventy-two byte
   value, and perft to the depths the tests run takes well under a second in a debug build. An
   engine that searched would want make/unmake and hashed move ordering; this library does not
-  search. Condition: a mod opponent (M23) that needs to, in which case it belongs in the mod.
+  search. Condition: a mod opponent that needs to, in which case it belongs in the mod.
 - **A deeper perft in continuous integration.** The tests run the published positions to depths
   a sanitiser build finishes quickly; each case lists its deeper counts in a comment for anyone
   who wants them. Condition: a generation bug that the shallow depths miss, which none has yet.
