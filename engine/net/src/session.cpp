@@ -38,6 +38,8 @@ constexpr std::size_t kMaxPendingChecks = 8;
 Session::Session(LinkEnd link, SessionConfig config)
     : m_link(link), m_config(std::move(config)), m_agreed_delay(m_config.input_delay) {
     m_heard.resize(m_link.peer_count());
+    m_peer_finish.resize(m_link.peer_count());
+    m_compared_through.resize(m_link.peer_count());
 }
 
 Hello Session::own_hello() const {
@@ -148,7 +150,8 @@ Status Session::check_compatible(std::size_t peer, const Hello& hello) const {
 }
 
 void Session::end(ByeReason reason, std::string detail) {
-    if (m_state == SessionState::Ended) {
+    // A finished session has nothing left to say; see `quit`.
+    if (m_state == SessionState::Ended || m_state == SessionState::Finished) {
         return;
     }
     m_state = SessionState::Ended;
@@ -169,8 +172,140 @@ void Session::quit() {
     end(ByeReason::Quit, "this peer left");
 }
 
-Status Session::send_turn(Tick tick, std::span<const sim::Command> commands, sim::TurnGate& turns) {
+Status Session::finish(Tick last_tick) {
     if (m_state != SessionState::Running) {
+        return std::unexpected(
+            Error(ErrorCode::Unavailable, "a session finishes only while it is running"));
+    }
+    if (!m_last_turn_sent.has_value() || *m_last_turn_sent < last_tick) {
+        return std::unexpected(Error(
+            ErrorCode::InvalidArgument,
+            std::format("cannot finish at tick {}: this peer has announced turns only up to {}, "
+                        "so its partners could not run the tick it says is its last",
+                        last_tick,
+                        m_last_turn_sent.has_value() ? std::format("tick {}", *m_last_turn_sent)
+                                                     : std::string{"no tick at all"})));
+    }
+    for (std::size_t peer = 0; peer < m_peer_finish.size(); ++peer) {
+        const std::optional<Tick>& theirs = m_peer_finish[peer];
+        if (theirs.has_value() && *theirs != last_tick) {
+            const auto detail =
+                std::format("this peer finishes at tick {} and peer {} at tick {}; the two "
+                            "disagree about what the run was",
+                            last_tick, peer, *theirs);
+            end(ByeReason::ProtocolError, detail);
+            return std::unexpected(Error(ErrorCode::InvalidArgument, detail));
+        }
+    }
+
+    const auto bytes = encode(Message{Finish{.last_tick = last_tick}});
+    if (!bytes) {
+        return std::unexpected(bytes.error());
+    }
+    if (auto status = m_link.broadcast(*bytes); !status) {
+        return status;
+    }
+    m_finish_tick = last_tick;
+    m_state = SessionState::Finishing;
+    ATLAS_LOG_INFO(kNet, "source {} finishing at tick {}", static_cast<std::uint32_t>(m_self),
+                   last_tick);
+    return {};
+}
+
+bool Session::peers_have_finished() const noexcept {
+    for (std::size_t peer = 0; peer < m_peer_finish.size(); ++peer) {
+        if (peer != m_link.index() && !m_peer_finish[peer].has_value()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Status Session::accept_finish(std::size_t peer, const Finish& finish, Tick now) {
+    if (m_state == SessionState::Handshaking) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("peer {} finished before the session was agreed", peer)));
+    }
+    const std::optional<Tick>& earlier = m_peer_finish[peer];
+    if (earlier.has_value() && *earlier != finish.last_tick) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("peer {} finished twice, at tick {} and at tick {}", peer, *earlier,
+                              finish.last_tick)));
+    }
+    if (m_finish_tick.has_value() && *m_finish_tick != finish.last_tick) {
+        return std::unexpected(Error(
+            ErrorCode::InvalidArgument,
+            std::format("peer {} finishes at tick {} and this peer at tick {}; the two disagree "
+                        "about what the run was",
+                        peer, finish.last_tick, *m_finish_tick)));
+    }
+    for (std::size_t other = 0; other < m_peer_finish.size(); ++other) {
+        const std::optional<Tick>& theirs = m_peer_finish[other];
+        if (theirs.has_value() && *theirs != finish.last_tick) {
+            return std::unexpected(
+                Error(ErrorCode::InvalidArgument,
+                      std::format("peer {} finishes at tick {} and peer {} at tick {}", peer,
+                                  finish.last_tick, other, *theirs)));
+        }
+    }
+    m_peer_finish[peer] = finish.last_tick;
+    // Checked here as well as at the top of every poll, because the tick that is already past
+    // may be this one.
+    if (now > finish.last_tick + 1) {
+        return std::unexpected(Error(
+            ErrorCode::InvalidArgument,
+            std::format("peer {} finishes at tick {} and this peer has already run tick {}; the "
+                        "two disagree about what the run was",
+                        peer, finish.last_tick, now - 1)));
+    }
+    return {};
+}
+
+bool Session::finish_is_complete(Tick now) const noexcept {
+    if (m_state != SessionState::Finishing || !m_finish_tick.has_value()) {
+        return false;
+    }
+    const Tick last = *m_finish_tick;
+
+    // This peer has run its last tick. **That is also the turn clause**: the kernel runs a tick
+    // only when the gate has every source's turn for it, so a peer past its last tick has had
+    // every partner's turn up to it. Written once rather than twice, because a second check of
+    // the same fact through the gate would be a clause no test could make fail.
+    if (now <= last) {
+        return false;
+    }
+
+    // The last tick anybody checked at or before the finish. Every peer checks on the same
+    // interval from the same start, so this is a tick every peer has a hash for.
+    const Tick last_check = last - (last % m_config.hash_check_interval);
+
+    for (std::size_t peer = 0; peer < m_peer_finish.size(); ++peer) {
+        if (peer == m_link.index()) {
+            continue;
+        }
+        if (!m_peer_finish[peer].has_value()) {
+            return false;
+        }
+        // Without this a peer could stop before learning that the last stretch diverged, and
+        // report as agreed a run whose final hashes nobody compared.
+        const std::optional<Tick>& compared = m_compared_through[peer];
+        if (!compared.has_value() || *compared < last_check) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Status Session::send_turn(Tick tick, std::span<const sim::Command> commands, sim::TurnGate& turns) {
+    if (m_state == SessionState::Finishing && m_finish_tick.has_value() && tick > *m_finish_tick) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("this peer finished at tick {} and cannot announce tick {}",
+                              *m_finish_tick, tick)));
+    }
+    if (m_state != SessionState::Running && m_state != SessionState::Finishing) {
         return std::unexpected(Error(ErrorCode::Unavailable, "the session is not running"));
     }
 
@@ -183,6 +318,7 @@ Status Session::send_turn(Tick tick, std::span<const sim::Command> commands, sim
         return status;
     }
     ++m_stats.turns_sent;
+    m_last_turn_sent = std::max(m_last_turn_sent.value_or(tick), tick);
 
     // Marked here rather than waiting for it to come back over the link: a peer does not need
     // the network to learn what it did. At the same point in the frame as a remote turn, so the
@@ -247,6 +383,8 @@ Status Session::compare_or_hold(std::size_t peer, const HashCheck& check) {
 Status Session::compare_check(std::size_t peer, const HashCheck& check, const Checkpoint& mine) {
     if (mine.state_hash == check.state_hash) {
         ++m_stats.hash_checks_agreed;
+        m_compared_through[peer] =
+            std::max(m_compared_through[peer].value_or(check.tick), check.tick);
         return {};
     }
 
@@ -264,7 +402,13 @@ Status Session::compare_check(std::size_t peer, const HashCheck& check, const Ch
 
 Status Session::send_hash_check(Tick tick, std::uint64_t state_hash,
                                 std::span<const sim::SystemHash> system_hashes) {
-    if (m_state != SessionState::Running) {
+    if (m_state == SessionState::Finishing && m_finish_tick.has_value() && tick > *m_finish_tick) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("this peer finished at tick {} and cannot check tick {}",
+                              *m_finish_tick, tick)));
+    }
+    if (m_state != SessionState::Running && m_state != SessionState::Finishing) {
         return std::unexpected(Error(ErrorCode::Unavailable, "the session is not running"));
     }
     if (tick % m_config.hash_check_interval != 0) {
@@ -427,12 +571,8 @@ Status Session::handle(std::size_t peer, const Message& message, Tick now, sim::
                   std::format("peer {} left: {} ({})", peer, to_string(bye->reason), bye->detail)));
     }
 
-    if (std::holds_alternative<Finish>(message)) {
-        // Named rather than falling through to the welcome refusal below, which would report a
-        // finish as a message it is not. M21 slice 2 gives it its meaning (ADR-0020).
-        return std::unexpected(Error(
-            ErrorCode::NotSupported,
-            std::format("peer {} sent a finish, which this build does not act on yet", peer)));
+    if (const auto* finish = std::get_if<Finish>(&message)) {
+        return accept_finish(peer, *finish, now);
     }
 
     // A welcome is not part of this handshake: every peer announces and every peer agrees, so
@@ -448,13 +588,41 @@ Status Session::handle(std::size_t peer, const Message& message, Tick now, sim::
 Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::TurnGate& turns) {
     sim::PollReport report;
     if (m_state == SessionState::Ended) {
-        report.closed = true;
         return std::unexpected(Error(ErrorCode::Unavailable, "the session has ended"));
     }
 
     // Deliver whatever the link owes this peer. Done every poll whether or not a tick ran,
     // which is what makes a stalled peer able to receive the turn it is waiting for.
     m_link.pump();
+
+    if (m_state == SessionState::Finished) {
+        // Still pumped, so a transport that needs servicing to deliver what this peer already
+        // sent goes on being serviced. What arrives now is read and discarded: a partner may
+        // have announced turns past the finish before it knew where the run ended, and none of
+        // them will ever be run.
+        for (std::size_t peer = 0; peer < m_link.peer_count(); ++peer) {
+            if (peer != m_link.index()) {
+                m_link.inbox(peer).drain(m_incoming);
+            }
+        }
+        report.finished = true;
+        return report;
+    }
+
+    // Nobody may run a tick past a finish any peer has declared. A peer that already has was
+    // told to run a different length of game from its partner, which no later message can
+    // reconcile.
+    for (std::size_t peer = 0; peer < m_peer_finish.size(); ++peer) {
+        const std::optional<Tick>& theirs = m_peer_finish[peer];
+        if (theirs.has_value() && now > *theirs + 1) {
+            const auto detail =
+                std::format("peer {} finishes at tick {} and this peer has already run tick {}; "
+                            "the two disagree about what the run was",
+                            peer, *theirs, now - 1);
+            end(ByeReason::ProtocolError, detail);
+            return std::unexpected(Error(ErrorCode::InvalidArgument, detail));
+        }
+    }
 
     for (std::size_t peer = 0; peer < m_link.peer_count(); ++peer) {
         if (peer == m_link.index()) {
@@ -464,7 +632,6 @@ Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::T
         if (inbox.overflowed()) {
             end(ByeReason::Overflow,
                 std::format("peer {} sent faster than it could be read", peer));
-            report.closed = true;
             return std::unexpected(
                 Error(ErrorCode::Exhausted,
                       std::format("peer {} overran its inbox; a lockstep stream with a hole in it "
@@ -485,7 +652,6 @@ Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::T
             auto message = decode(bytes);
             if (!message) {
                 end(ByeReason::ProtocolError, message.error().message());
-                report.closed = true;
                 return std::unexpected(std::move(message).error().context(
                     std::format("decoding a message from peer {}", peer)));
             }
@@ -493,7 +659,6 @@ Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::T
                 const bool diverged = m_divergence.has_value();
                 end(diverged ? ByeReason::Diverged : ByeReason::ProtocolError,
                     status.error().message());
-                report.closed = true;
                 return std::unexpected(std::move(status).error());
             }
         }
@@ -505,6 +670,12 @@ Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::T
         }
     }
 
+    if (finish_is_complete(now)) {
+        m_state = SessionState::Finished;
+        report.finished = true;
+        ATLAS_LOG_INFO(kNet, "source {} finished at tick {}, agreed with every peer",
+                       static_cast<std::uint32_t>(m_self), m_finish_tick.value_or(0));
+    }
     return report;
 }
 

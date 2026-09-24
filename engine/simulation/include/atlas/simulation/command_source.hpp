@@ -51,7 +51,20 @@ struct PollReport {
     /// looks. The gate has no timeout by design, so a source that simply stops reporting stalls
     /// every later tick for ever. This is the driver's cue to take it out of the expectation
     /// set, and it is the only way a gate with no clock can be told that waiting is pointless.
+    ///
+    /// **Who reports it.** A source that runs out — a replay at its end, a mod that broke and was
+    /// disabled. Not a lockstep session: there a peer that leaves ends the session (ADR-0017 D5),
+    /// which is an error, and a run that is over is `finished`. Until M21 `net::Session` set this
+    /// flag in four places immediately before returning an error, so the report it was set on
+    /// was discarded and no caller ever saw it; those assignments are gone rather than wired up,
+    /// because a session has nothing this means.
     bool closed = false;
+
+    /// The run this source belongs to is over and every participant agreed where (ADR-0020).
+    ///
+    /// Not a failure and not a close: a finished source was not lost, it completed. Reported on
+    /// the poll that decided it and on every poll after.
+    bool finished = false;
 };
 
 /// Something outside the simulation that submits commands and completes turns.

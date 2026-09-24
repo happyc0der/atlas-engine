@@ -16,8 +16,10 @@
 #include "net_harness.hpp"
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <memory>
+#include <optional>
 #include <vector>
 
 using atlas::net::LinkFault;
@@ -64,6 +66,8 @@ struct Table {
     std::uint32_t delay = 2;
     /// Which claim every peer submits: the recorded contest by default, or the declining one.
     atlas::sim::CommandType claim_type = kClaimCell;
+    /// When set, no peer runs a tick at or past this one, so a finish can be placed exactly.
+    std::optional<atlas::Tick> stop_at;
 
     Table(std::size_t count, const atlas::net::LoopbackConfig& link, SessionConfig config) {
         auto made = LoopbackHub::create(link);
@@ -173,7 +177,8 @@ struct Table {
         }
 
         for (auto& participant : peers) {
-            while (participant->kernel->ready()) {
+            while (participant->kernel->ready() &&
+                   (!stop_at.has_value() || participant->kernel->current_tick() < *stop_at)) {
                 const auto report = participant->kernel->step();
                 if (!report) {
                     return false;
@@ -189,6 +194,42 @@ struct Table {
             }
         }
         return true;
+    }
+
+    /// Frames until every peer has reached `tick`, or give up loudly.
+    void run_to(atlas::Tick tick) {
+        stop_at = tick;
+        for (int frame = 0; frame < 2000; ++frame) {
+            if (std::ranges::all_of(
+                    peers, [tick](const auto& p) { return p->kernel->current_tick() >= tick; })) {
+                // One more, so every peer has announced its turns `delay` ticks past the stop.
+                REQUIRE(this->frame());
+                return;
+            }
+            REQUIRE(this->frame());
+        }
+        FAIL("the peers never reached tick " << tick);
+    }
+
+    /// Run one peer's next tick, if the gate allows it, and send its hash check.
+    [[nodiscard]] static bool step_one(Participant& participant) {
+        if (!participant.kernel->ready()) {
+            return false;
+        }
+        const auto report = participant.kernel->step();
+        REQUIRE(report.has_value());
+        participant.hashes.push_back(report->state_hash);
+        participant.gate.retire_before(report->tick);
+        REQUIRE(participant.session
+                    ->send_hash_check(report->tick, report->state_hash, report->system_hashes)
+                    .has_value());
+        return true;
+    }
+
+    /// Poll one peer, returning the report or the error.
+    [[nodiscard]] static atlas::Result<atlas::sim::PollReport> poll_one(Participant& participant) {
+        return participant.session->poll(participant.kernel->current_tick(),
+                                         participant.peer.commands, participant.gate);
     }
 };
 
@@ -427,4 +468,198 @@ TEST_CASE("a declined claim leaves the world as a twin that never saw it", "[net
     CHECK(report->commands_declined == 1);
     CHECK(report->commands_applied == 0);
     CHECK(report->state_hash == twin_report->state_hash);
+}
+
+// ------------------------------------------------------------------------------------ finishing
+//
+// ADR-0020. A session ends because its run is over, and each clause of "over" has a case here
+// that removing it would fail: every partner said where it finishes and at the same tick, this
+// peer has run that tick, and the last hash check at or before it has been compared.
+
+namespace {
+
+using atlas::net::SessionState;
+
+/// Two peers, delay two, checks every eight ticks, no latency games: these cases are about
+/// the finish, and the link's unkindness is covered above.
+[[nodiscard]] Table finishing_table() {
+    return Table(2, {.peer_count = 2, .latency_polls = 0, .reorder = false},
+                 SessionConfig{.input_delay = 2, .hash_check_interval = 8, .seed = 21});
+}
+
+/// Poll both peers `rounds` times, requiring every poll to succeed.
+void poll_both(Table& table, int rounds) {
+    for (int round = 0; round < rounds; ++round) {
+        for (auto& participant : table.peers) {
+            REQUIRE(Table::poll_one(*participant).has_value());
+        }
+    }
+}
+
+}  // namespace
+
+TEST_CASE("two peers that finish at the same tick both report it, and it is not a failure",
+          "[net][lockstep][finish]") {
+    Table table = finishing_table();
+    table.settle();
+    table.run_to(25);  // ticks 0..24 run
+    auto& a = *table.peers[0];
+    auto& b = *table.peers[1];
+
+    REQUIRE(a.session->finish(24).has_value());
+    CHECK(a.session->state() == SessionState::Finishing);
+    CHECK_FALSE(a.session->running());
+    REQUIRE(b.session->finish(24).has_value());
+
+    poll_both(table, 4);
+    CHECK(a.session->finished());
+    CHECK(b.session->finished());
+    CHECK(a.hashes == b.hashes);
+
+    // Finished is a state a poll reports rather than an error it returns, on every poll after.
+    const auto again = Table::poll_one(a);
+    REQUIRE(again.has_value());
+    CHECK(again->finished);
+    CHECK_FALSE(again->closed);
+}
+
+TEST_CASE("a peer is not finished until its partner says where it finishes",
+          "[net][lockstep][finish]") {
+    Table table = finishing_table();
+    table.settle();
+    table.run_to(25);
+    auto& a = *table.peers[0];
+    auto& b = *table.peers[1];
+
+    REQUIRE(a.session->finish(24).has_value());
+    poll_both(table, 8);
+    CHECK(a.session->state() == SessionState::Finishing);
+    CHECK_FALSE(a.session->peers_have_finished());
+    CHECK(b.session->peers_have_finished());
+
+    REQUIRE(b.session->finish(24).has_value());
+    poll_both(table, 4);
+    CHECK(a.session->finished());
+    CHECK(b.session->finished());
+}
+
+TEST_CASE("a peer is not finished until it has run its last tick", "[net][lockstep][finish]") {
+    // Finishing may be declared early — the turns are announced — but "over" means the last
+    // tick has run here. This clause is also the turn clause: the gate lets a tick run only
+    // once every partner's turn for it has arrived.
+    //
+    // **The last tick is off the check interval on purpose.** A first draft finished at 24,
+    // which is a check tick, and a mutation removing this clause survived it: the hash-check
+    // clause also waits for tick 24 to run, and masked the one under test. At 26 the last check
+    // is 24, already run and compared, so nothing but this clause stands in the way.
+    Table table = finishing_table();
+    table.settle();
+    table.run_to(26);  // ticks 0..25 run; 26 announced
+    auto& a = *table.peers[0];
+    auto& b = *table.peers[1];
+
+    REQUIRE(a.session->finish(26).has_value());
+    REQUIRE(b.session->finish(26).has_value());
+    poll_both(table, 6);
+    CHECK(a.session->state() == SessionState::Finishing);
+    CHECK(b.session->state() == SessionState::Finishing);
+
+    REQUIRE(Table::step_one(a));
+    REQUIRE(Table::step_one(b));
+    poll_both(table, 4);
+    CHECK(a.session->finished());
+    CHECK(b.session->finished());
+}
+
+TEST_CASE("a peer is not finished until its partner's last hash check has been compared",
+          "[net][lockstep][finish]") {
+    // Tick 24 is on the interval, so it is the last check. Peer 1's check for it is held on the
+    // way to peer 0; peer 1 learns everything it needs and finishes, peer 0 cannot — it has not
+    // compared the last stretch of the run — until the check is released. Without this clause
+    // peer 0 would report as agreed a run whose final hashes it never saw.
+    Table table = finishing_table();
+    table.settle();
+    table.run_to(24);
+    auto& a = *table.peers[0];
+    auto& b = *table.peers[1];
+
+    REQUIRE(table.hub->arm_fault(1, 0, LinkFault::Hold).has_value());
+    REQUIRE(Table::step_one(b));  // its check for tick 24 is the message held
+    REQUIRE(Table::step_one(a));
+    REQUIRE(a.session->finish(24).has_value());
+    REQUIRE(b.session->finish(24).has_value());
+
+    poll_both(table, 8);
+    CHECK(b.session->finished());
+    CHECK(a.session->state() == SessionState::Finishing);
+
+    // And a finished peer's goodbye is not sent: its partner is still finishing, and would
+    // otherwise read a completed run as a peer that left.
+    b.session->quit();
+    CHECK(b.session->finished());
+
+    table.hub->release_held();
+    poll_both(table, 4);
+    CHECK(a.session->finished());
+}
+
+TEST_CASE("two peers that finish at different ticks end the session", "[net][lockstep][finish]") {
+    // They were told to run different games. No later message can reconcile that, so it is a
+    // protocol violation on both sides rather than a wait.
+    Table table = finishing_table();
+    table.settle();
+    table.run_to(25);
+    auto& a = *table.peers[0];
+    auto& b = *table.peers[1];
+
+    REQUIRE(a.session->finish(24).has_value());
+    REQUIRE(b.session->finish(25).has_value());  // announced through 26, so this is allowed
+
+    const auto from_a = Table::poll_one(a);
+    const auto from_b = Table::poll_one(b);
+    REQUIRE_FALSE(from_a.has_value());
+    REQUIRE_FALSE(from_b.has_value());
+    CHECK(from_a.error().message().contains("disagree"));
+    CHECK(a.session->state() == SessionState::Ended);
+    CHECK(b.session->state() == SessionState::Ended);
+}
+
+TEST_CASE("a peer that runs past its partner's finish ends the session",
+          "[net][lockstep][finish]") {
+    // The other half of the mismatch. Peer 0 finishes at 24; peer 1 had already been told the
+    // turns for 25 and 26, runs 24 and 25, and at its next poll has run a tick nobody else will.
+    Table table = finishing_table();
+    table.settle();
+    table.run_to(24);
+    auto& a = *table.peers[0];
+    auto& b = *table.peers[1];
+
+    REQUIRE(Table::step_one(a));
+    REQUIRE(a.session->finish(24).has_value());
+    REQUIRE(Table::poll_one(b).has_value());  // the finish arrives; tick 24 is not yet past
+    REQUIRE(Table::step_one(b));
+    REQUIRE(Table::step_one(b));  // tick 25: past the finish
+
+    const auto refused = Table::poll_one(b);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message().contains("already run tick 25"));
+    CHECK_FALSE(Table::poll_one(a).has_value());  // and peer 0 hears that it left
+}
+
+TEST_CASE("finish is refused before the session runs and past what was announced",
+          "[net][lockstep][finish]") {
+    Table unsettled = finishing_table();
+    const auto early = unsettled.peers[0]->session->finish(0);
+    REQUIRE_FALSE(early.has_value());
+    CHECK(early.error().code() == atlas::ErrorCode::Unavailable);
+
+    Table table = finishing_table();
+    table.settle();
+    table.run_to(24);  // announced through 26
+    const auto ahead = table.peers[0]->session->finish(40);
+    REQUIRE_FALSE(ahead.has_value());
+    CHECK(ahead.error().code() == atlas::ErrorCode::InvalidArgument);
+    // Refused, not ended: the peer can still finish somewhere it has announced.
+    CHECK(table.peers[0]->session->running());
+    CHECK(table.peers[0]->session->finish(26).has_value());
 }

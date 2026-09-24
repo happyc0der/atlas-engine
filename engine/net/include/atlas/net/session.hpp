@@ -74,6 +74,13 @@ enum class SessionState : std::uint8_t {
     Handshaking,
     /// Every peer is agreed and the gate is expecting them.
     Running,
+    /// This peer has said its last tick and is waiting for its partners to say theirs, and for
+    /// what they still owe it up to that tick (ADR-0020). Turns and hash checks up to the last
+    /// tick are still sent and still compared.
+    Finishing,
+    /// The run is over and every peer agreed where. Not a failure: `poll` succeeds, reports
+    /// `finished`, and delivers nothing. A disconnect after this carries no information.
+    Finished,
     /// Over, for the recorded reason. Nothing further is sent or accepted.
     Ended,
 };
@@ -159,7 +166,39 @@ class Session final : public sim::CommandSource {
                                          std::span<const sim::SystemHash> system_hashes);
 
     /// Say goodbye and stop. Idempotent.
+    ///
+    /// **Does nothing once the session is `Finished`.** A finished peer has said everything its
+    /// partners need, and a goodbye after that would reach a partner still finishing as a peer
+    /// that left — turning a completed run into a failed one on the other side.
     void quit();
+
+    /// Declare that this peer will run no tick after `last_tick` (ADR-0020).
+    ///
+    /// Allowed only while `Running`, and only once this peer has announced its turns up to
+    /// `last_tick`: a peer that finished before saying what it would do on its last tick would
+    /// leave its partners unable to run it. Sends `Finish` and moves to `Finishing`.
+    ///
+    /// Fails, and ends the session as a protocol violation, when a partner has already said it
+    /// finishes at a different tick — two peers that disagree about where the run ends have
+    /// disagreed about what the run was.
+    ///
+    /// The session becomes `Finished` in a later `poll`, decided by this peer alone from what has
+    /// arrived: every partner has finished at the same tick, this peer has run that tick — which
+    /// the gate allows only once every partner's turns up to it have arrived — and the last
+    /// hash check at or before it has been compared with every partner. No clock is involved: a
+    /// partner that never finishes is a silent peer, and the transport's deadline ends the
+    /// session exactly as it would have while running.
+    [[nodiscard]] Status finish(Tick last_tick);
+
+    /// True once the run is over and agreed. See `finish`.
+    [[nodiscard]] bool finished() const noexcept { return m_state == SessionState::Finished; }
+
+    /// True once every other peer has said where it finishes.
+    ///
+    /// What a driver asks when its link ends: a partner that finished and then hung up has
+    /// already sent everything it will send, so the hang-up carries no information and the run
+    /// can be completed from what arrived. A partner that hung up without finishing has left.
+    [[nodiscard]] bool peers_have_finished() const noexcept;
 
     [[nodiscard]] SessionState state() const noexcept { return m_state; }
 
@@ -198,6 +237,12 @@ class Session final : public sim::CommandSource {
     /// flooded us may well not be listening, and the authoritative act is the local transition.
     void end(ByeReason reason, std::string detail);
 
+    /// A received finish, checked against every other finish this peer knows of.
+    [[nodiscard]] Status accept_finish(std::size_t peer, const Finish& finish, Tick now);
+
+    /// Whether `Finishing` has become `Finished`. See `finish`.
+    [[nodiscard]] bool finish_is_complete(Tick now) const noexcept;
+
     LinkEnd m_link;
     SessionConfig m_config;
     SessionState m_state = SessionState::Handshaking;
@@ -207,6 +252,20 @@ class Session final : public sim::CommandSource {
 
     /// The host collects one of these per peer before it can agree a delay.
     std::vector<std::optional<Hello>> m_heard;
+
+    /// The highest tick this peer has announced a turn for, so `finish` can refuse a last tick
+    /// its partners have not been told about.
+    std::optional<Tick> m_last_turn_sent;
+
+    /// Where this peer finishes, once it has said so.
+    std::optional<Tick> m_finish_tick;
+
+    /// Where each peer said it finishes, by link index. This peer's own entry stays empty.
+    std::vector<std::optional<Tick>> m_peer_finish;
+
+    /// The highest hash check each peer has had compared and agreed, by link index. What the
+    /// finished condition asks, so a peer cannot finish without having compared its last one.
+    std::vector<std::optional<Tick>> m_compared_through;
 
     /// The last few hashes this peer computed, so a remote check has something to compare
     /// against. Checkpoints rather than ticks: every peer checks on the same interval from the
