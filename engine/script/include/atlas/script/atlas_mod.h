@@ -147,6 +147,34 @@ ATLAS_MOD_IMPORT("atlas_view_size") int32_t atlas_view_size(int32_t view);
 ATLAS_MOD_IMPORT("atlas_view_read")
 int32_t atlas_view_read(int32_t view, int32_t offset, void* dest, int32_t len);
 
+/** The most integers one `atlas_say` may carry. */
+#define ATLAS_MOD_MAX_SAY_ARGS 4
+/** The longest key suffix `atlas_say` accepts, in bytes. */
+#define ATLAS_MOD_MAX_SAY_KEY 64
+
+/**
+ * Put a message in front of the person watching (ADR-0021).
+ *
+ * `key` is the **suffix** of a string-table key: the host prepends `mod.<this mod's name>.`, so a
+ * mod names only its own words and never the engine's or another mod's. Its text comes from the
+ * table the mod ships beside itself, `<name>.strings.json`, in whatever language the application
+ * has loaded. The suffix is 1 to ATLAS_MOD_MAX_SAY_KEY bytes of `a`-`z`, `0`-`9`, `_` and `.`.
+ *
+ * `args` points at `arg_count` 64-bit integers, at most ATLAS_MOD_MAX_SAY_ARGS, substituted into
+ * the text as `{0}`, `{1}` and on. Integers only: a mod has no words of its own to pass.
+ *
+ * **Nothing comes back.** No import returns text, a text's length, or whether a key exists,
+ * because text depends on the language of the machine it is shown on and two peers need not
+ * share one. A mod that could read what it said could decide differently on each.
+ *
+ * Presentation only: what a mod says is never hashed, saved, replayed or sent, so a message
+ * cannot change the simulation. Returns 0, ATLAS_ERR_RANGE for a malformed key or too many
+ * arguments, or ATLAS_ERR_EXHAUSTED when this tick's budget of messages is spent. An `args`
+ * pointer outside the mod's memory traps, as any bad pointer does.
+ */
+ATLAS_MOD_IMPORT("atlas_say")
+int32_t atlas_say(const char* key, int32_t key_len, const int64_t* args, int32_t arg_count);
+
 /*
  * What a mod must export. The loader refuses a module missing any of them. Exporting more than
  * this is a mod's own business and is not refused: an export offers the host something, where

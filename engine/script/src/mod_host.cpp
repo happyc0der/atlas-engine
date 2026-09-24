@@ -159,6 +159,66 @@ std::int32_t native_view_read(wasm_exec_env_t exec_env, std::int32_t view, std::
     return static_cast<std::int32_t>(count);
 }
 
+/// Whether a key suffix is one a mod may say: short, lowercase, and no empty segment.
+[[nodiscard]] bool valid_key_suffix(std::string_view suffix) noexcept {
+    if (suffix.empty() || suffix.size() > ATLAS_MOD_MAX_SAY_KEY || suffix.front() == '.' ||
+        suffix.back() == '.' || suffix.contains("..")) {
+        return false;
+    }
+    return std::ranges::all_of(suffix, [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.';
+    });
+}
+
+std::int32_t native_say(wasm_exec_env_t exec_env, const char* key, std::uint32_t key_len,
+                        std::int32_t args_offset, std::int32_t arg_count) {
+    auto* call = current(exec_env);
+    if (call == nullptr || key == nullptr || call->messages == nullptr) {
+        return ATLAS_ERR_REFUSED;
+    }
+    // Everything that can be judged without touching memory is judged first, so a malformed
+    // call is a refusal the mod can see rather than a trap that disables it.
+    const std::string_view suffix(key, key_len);
+    if (!valid_key_suffix(suffix) || arg_count < 0 || arg_count > ATLAS_MOD_MAX_SAY_ARGS) {
+        return ATLAS_ERR_RANGE;
+    }
+    if (call->messages_left == 0) {
+        ++call->messages_dropped;
+        return ATLAS_ERR_EXHAUSTED;
+    }
+
+    ModMessage message;
+    message.tick = call->tick;
+    message.arg_count = static_cast<std::uint8_t>(arg_count);
+    if (arg_count > 0) {
+        // Validated here rather than by the signature, because the count is of integers and the
+        // signature's buffer form counts bytes. An address outside the mod's memory raises the
+        // runtime's own out-of-bounds exception, and the mod traps — ADR-0015's rule for a bad
+        // pointer, applied the same way the signature would have applied it.
+        const auto bytes = static_cast<std::uint64_t>(arg_count) * sizeof(std::int64_t);
+        wasm_module_inst_t instance = wasm_runtime_get_module_inst(exec_env);
+        if (!wasm_runtime_validate_app_addr(
+                instance, static_cast<std::uint64_t>(static_cast<std::uint32_t>(args_offset)),
+                bytes)) {
+            return ATLAS_ERR_RANGE;
+        }
+        const void* native = wasm_runtime_addr_app_to_native(
+            instance, static_cast<std::uint64_t>(static_cast<std::uint32_t>(args_offset)));
+        // memcpy rather than a cast: a guest's integers need not be aligned for the host.
+        std::memcpy(message.args.data(), native, bytes);
+    }
+
+    --call->messages_left;
+    if (call->messages->size() >= call->queue_capacity) {
+        ++call->messages_dropped;
+        return ATLAS_ERR_EXHAUSTED;
+    }
+    message.key = std::format("{}{}", call->key_prefix, suffix);
+    call->messages->push_back(std::move(message));
+    ++call->said;
+    return 0;
+}
+
 /// A host clock, offered only when something explicitly asked for it.
 ///
 /// **This exists so that a test can prove why the interface has no clock.** Under lockstep two
@@ -193,7 +253,7 @@ bool g_debug_imports = false;
 /// there is no conversion from a function pointer that is not a reinterpret_cast. The
 /// alternative to both is a different runtime.
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-type-reinterpret-cast)
-std::array<NativeSymbol, 9> g_imports{{
+std::array<NativeSymbol, 10> g_imports{{
     {"atlas_tick", reinterpret_cast<void*>(&native_tick), "()I", nullptr},
     {"atlas_command_type", reinterpret_cast<void*>(&native_command_type), "(*~)i", nullptr},
     {"atlas_submit", reinterpret_cast<void*>(&native_submit), "(i*~)i", nullptr},
@@ -202,13 +262,17 @@ std::array<NativeSymbol, 9> g_imports{{
     {"atlas_view_count", reinterpret_cast<void*>(&native_view_count), "()i", nullptr},
     {"atlas_view_size", reinterpret_cast<void*>(&native_view_size), "(i)i", nullptr},
     {"atlas_view_read", reinterpret_cast<void*>(&native_view_read), "(ii*~)i", nullptr},
+    // The key is a buffer the runtime checks; the arguments are a count of integers, which the
+    // signature's buffer form cannot express, so they arrive as an offset and are checked by
+    // the import itself (ADR-0021).
+    {"atlas_say", reinterpret_cast<void*>(&native_say), "(*~ii)i", nullptr},
     // Last on purpose: registering the first N-1 is how the clock is withheld, so it must be
     // the one on the end. A new import goes **before** this line.
     {"atlas_debug_clock_ns", reinterpret_cast<void*>(&native_debug_clock_ns), "()I", nullptr},
 }};
 
 /// How many of the table are safe to offer. Everything but the clock.
-constexpr std::size_t kSafeImportCount = 8;
+constexpr std::size_t kSafeImportCount = 9;
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-type-reinterpret-cast)
 
 }  // namespace
@@ -261,6 +325,8 @@ struct ModHost::Impl {
     std::vector<ModView> views;
     ModHostStats stats;
     bool started = false;
+    std::vector<ModMessage> messages;
+    std::string key_prefix;
 
     explicit Impl(Mod loaded) : mod(std::move(loaded)) {}
 };
@@ -302,6 +368,7 @@ Result<std::unique_ptr<ModHost>> ModHost::create(Runtime& runtime, std::uint32_t
     host->m_impl = std::make_unique<Impl>(*std::move(loaded));
     host->m_impl->source = sim::mod_source(mod_index);
     host->m_impl->config = config;
+    host->m_impl->key_prefix = mod_key_prefix(host->m_impl->mod.name());
     return host;
 }
 
@@ -344,6 +411,10 @@ Result<sim::PollReport> ModHost::poll(Tick now, sim::CommandQueue& queue, sim::T
     call.mod_name = m_impl->mod.name();
     call.commands_left = m_impl->config.max_commands_per_tick;
     call.log_bytes_left = m_impl->config.max_log_bytes_per_tick;
+    call.messages = &m_impl->messages;
+    call.key_prefix = m_impl->key_prefix;
+    call.messages_left = m_impl->config.max_messages_per_tick;
+    call.queue_capacity = m_impl->config.max_queued_messages;
 
     m_impl->mod.set_call_context(&call);
     const auto ran = m_impl->mod.tick(static_cast<std::int64_t>(now));
@@ -355,6 +426,8 @@ Result<sim::PollReport> ModHost::poll(Tick now, sim::CommandQueue& queue, sim::T
     m_impl->stats.commands_submitted += call.submitted;
     m_impl->stats.commands_refused += call.refused;
     m_impl->stats.log_lines_dropped += call.log_dropped;
+    m_impl->stats.messages_said += call.said;
+    m_impl->stats.messages_dropped += call.messages_dropped;
     ++m_impl->stats.ticks_run;
 
     if (!ran) {
@@ -383,6 +456,34 @@ std::string_view ModHost::name() const noexcept {
 
 ModHostStats ModHost::stats() const noexcept {
     return m_impl->stats;
+}
+
+std::vector<ModMessage> ModHost::take_messages() {
+    std::vector<ModMessage> out;
+    out.swap(m_impl->messages);
+    return out;
+}
+
+std::string mod_key_prefix(std::string_view mod_name) {
+    constexpr std::string_view kExtension = ".wasm";
+    std::string_view stem = mod_name;
+    if (stem.size() > kExtension.size() && stem.ends_with(kExtension)) {
+        stem.remove_suffix(kExtension.size());
+    }
+    return std::format("mod.{}.", stem);
+}
+
+Status check_mod_table(const assets::ImportedStringTable& table, std::string_view mod_name) {
+    const std::string prefix = mod_key_prefix(mod_name);
+    for (const auto& [key, value] : table.strings) {
+        if (!key.starts_with(prefix) || key.size() == prefix.size()) {
+            return std::unexpected(Error(
+                ErrorCode::PermissionDenied,
+                std::format("mod '{}' may add strings only under '{}', and its table names '{}'",
+                            mod_name, prefix, key)));
+        }
+    }
+    return {};
 }
 
 }  // namespace atlas::script

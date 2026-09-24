@@ -22,6 +22,7 @@
 #include <map>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace atlas::script {
 
@@ -70,6 +71,14 @@ struct HostCall {
     std::uint64_t refused = 0;
     std::uint64_t log_dropped = 0;
     Tick highest_target = 0;
+
+    /// Where `atlas_say` puts what the mod says: the host's own queue, which outlives the call.
+    std::vector<ModMessage>* messages = nullptr;
+    std::string_view key_prefix;
+    std::uint32_t messages_left = 0;
+    std::size_t queue_capacity = 0;
+    std::uint64_t said = 0;
+    std::uint64_t messages_dropped = 0;
 };
 
 }  // namespace atlas::script

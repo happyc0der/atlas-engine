@@ -25,18 +25,23 @@
 /// Ownership: move-only, and must not outlive the `Runtime` it was built against.
 /// Thread affinity: the main thread, with the kernel.
 
+#include <atlas/assets/importer.hpp>
 #include <atlas/core/error.hpp>
 #include <atlas/core/result.hpp>
+#include <atlas/script/atlas_mod.h>
 #include <atlas/script/limits.hpp>
 #include <atlas/script/runtime.hpp>
 #include <atlas/simulation/command.hpp>
 #include <atlas/simulation/command_source.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace atlas::script {
 
@@ -86,7 +91,44 @@ struct ModHostConfig {
     /// Bytes of log one mod may produce in one tick, after which lines are dropped and counted.
     /// A mod that logs every cell it looks at should not be able to fill a disk.
     std::size_t max_log_bytes_per_tick = 4096;
+    /// Messages one mod may say in one tick, after which `atlas_say` refuses (ADR-0021 D4).
+    /// A person reads perhaps one a second; a mod saying more than a few in a single tick has
+    /// gone wrong, so this disables a runaway rather than rationing a conversation.
+    std::uint32_t max_messages_per_tick = 4;
+    /// Messages held for the application between drains. Past this a message is dropped and
+    /// counted rather than queued, so an application that never drains cannot be made to grow
+    /// without bound by a mod that talks.
+    std::size_t max_queued_messages = 64;
 };
+
+/// One thing a mod said, for the application to resolve through its catalogue and show.
+///
+/// The key is complete — the host has prefixed the mod's namespace — and the arguments are the
+/// integers the mod passed, to be formatted and substituted by `text::substitute`. Nothing here
+/// is text a person reads until the application has looked it up.
+struct ModMessage {
+    Tick tick = 0;
+    std::string key;
+    std::array<std::int64_t, ATLAS_MOD_MAX_SAY_ARGS> args{};
+    std::uint8_t arg_count = 0;
+
+    [[nodiscard]] std::span<const std::int64_t> arguments() const noexcept {
+        return std::span(args).first(arg_count);
+    }
+};
+
+/// The namespace every key a mod says or ships lives under: `mod.<stem>.`, where the stem is the
+/// mod's name without a `.wasm` extension. Computed in one place so what the host prefixes and
+/// what a table is checked against cannot disagree.
+[[nodiscard]] std::string mod_key_prefix(std::string_view mod_name);
+
+/// Whether a mod's own string table may be added to an application's catalogue (ADR-0021 D3).
+///
+/// Fails, naming the first offender, when any key does not begin with `mod_key_prefix`: a mod
+/// may add words under its own name and nobody else's. The application refuses the whole table
+/// on failure and loads the mod anyway, whose keys then show as themselves.
+[[nodiscard]] Status check_mod_table(const assets::ImportedStringTable& table,
+                                     std::string_view mod_name);
 
 /// What one mod did, cumulatively. For statistics, for tests, and for a report.
 struct ModHostStats {
@@ -94,6 +136,10 @@ struct ModHostStats {
     std::uint64_t commands_refused = 0;
     std::uint64_t log_lines_dropped = 0;
     std::uint64_t ticks_run = 0;
+    /// Messages queued for the application, and messages refused for the budget or dropped for
+    /// a full queue.
+    std::uint64_t messages_said = 0;
+    std::uint64_t messages_dropped = 0;
 };
 
 class ModHost final : public sim::CommandSource {
@@ -148,6 +194,10 @@ class ModHost final : public sim::CommandSource {
     [[nodiscard]] std::string_view disabled_because() const noexcept;
     [[nodiscard]] std::string_view name() const noexcept;
     [[nodiscard]] ModHostStats stats() const noexcept;
+
+    /// Everything the mod has said since the last call, oldest first, and the queue emptied.
+    /// Called by the application once a frame; what it does with them is its own (ADR-0021 D5).
+    [[nodiscard]] std::vector<ModMessage> take_messages();
 
   private:
     ModHost();

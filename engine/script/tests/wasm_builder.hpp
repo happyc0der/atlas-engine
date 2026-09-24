@@ -352,6 +352,11 @@ namespace imports {
     return {.field = "atlas_view_size", .params = {kValI32}, .results = {kValI32}};
 }
 
+[[nodiscard]] inline ImportSpec say() {
+    return {
+        .field = "atlas_say", .params = {kValI32, kValI32, kValI32, kValI32}, .results = {kValI32}};
+}
+
 [[nodiscard]] inline ImportSpec view_read() {
     return {.field = "atlas_view_read",
             .params = {kValI32, kValI32, kValI32, kValI32},
