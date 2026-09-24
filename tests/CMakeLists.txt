@@ -116,6 +116,7 @@ set(_atlas_chess_cases
     move_after_the_end_is_declined
     fen_is_validated
     same_game_same_hash
+    text_check
 )
 if(TARGET atlas_chess)
     foreach(case IN LISTS _atlas_chess_cases)

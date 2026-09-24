@@ -23,4 +23,6 @@ atlas_add_app(chess
         atlas::platform
         atlas::renderer
         atlas::rhi
+        atlas::text
+        atlas::tools
 )

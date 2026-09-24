@@ -16,6 +16,7 @@
 #include <atlas/app/log_options.hpp>
 #include <atlas/app/main_guard.hpp>
 #include <atlas/app/ppm.hpp>
+#include <atlas/assets/importer.hpp>
 #include <atlas/assets/registry.hpp>
 #include <atlas/chess/board_layout.hpp>
 #include <atlas/chess/board_quads.hpp>
@@ -29,12 +30,18 @@
 #include <atlas/core/log.hpp>
 #include <atlas/core/profile.hpp>
 #include <atlas/core/result.hpp>
+#include <atlas/core/time.hpp>
 #include <atlas/math/camera.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/renderer/quad_batch.hpp>
 #include <atlas/renderer/texture_cache.hpp>
 #include <atlas/rhi/device.hpp>
 #include <atlas/simulation/kernel.hpp>
+#include <atlas/text/catalog.hpp>
+#include <atlas/text/substitute.hpp>
+#include <atlas/tools/debug_ui.hpp>
+
+#include "chess_text_keys.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -97,6 +104,7 @@ Usage: atlas_chess [options]
   --shader-dir PATH      Where the cooked shaders are. Default: assets/cooked/shaders.
   --log-level LEVEL      trace, debug, info, warning, error. Default: info.
   --log-file PATH        Also write the log to PATH.
+  --text-check           Resolve every chess string against the loaded tables, then exit.
   --version              Print build identity and exit.
   --help                 Print this message and exit.
 
@@ -308,6 +316,121 @@ class Selection {
     std::vector<atlas::chess::Move> m_targets;
 };
 
+/// Read one string table through a validated path.
+[[nodiscard]] atlas::Result<atlas::assets::ImportedStringTable>
+read_table(const atlas::assets::FileSystem& files, std::string_view name) {
+    auto path = atlas::assets::VirtualPath::parse(name);
+    if (!path) {
+        return std::unexpected(std::move(path).error());
+    }
+    auto bytes = files.read(*path);
+    if (!bytes) {
+        return std::unexpected(std::move(bytes).error().context(name));
+    }
+    return atlas::assets::import_string_table(*bytes, path->text());
+}
+
+/// The engine's table, then the application's own beside it (ADR-0018). Read directly rather
+/// than through a registry, as the lab reads its table: a validated path is what is needed, and
+/// hot reload of the interface's text is not something a game of chess wants.
+[[nodiscard]] atlas::Status load_strings(atlas::text::Catalog& catalog,
+                                         std::string_view assets_dir) {
+    atlas::assets::FileSystem files;
+    if (auto status = files.mount("strings", std::filesystem::path{assets_dir} / "strings");
+        !status) {
+        return status;
+    }
+    auto engine = read_table(files, "en.json");
+    if (!engine) {
+        return std::unexpected(std::move(engine).error().context("the engine's string table"));
+    }
+    if (auto status = catalog.load(*engine); !status) {
+        return status;
+    }
+    auto own = read_table(files, "chess.en.json");
+    if (!own) {
+        return std::unexpected(std::move(own).error().context("the chess string table"));
+    }
+    if (auto status = catalog.add_table(*own); !status) {
+        return std::unexpected(std::move(status).error().context("the chess string table"));
+    }
+    return atlas::ok();
+}
+
+/// Resolve every chess key against what is loaded, and fail naming any that is missing.
+[[nodiscard]] atlas::Status run_text_check(std::string_view assets_dir) {
+    atlas::text::Catalog catalog;
+    if (auto status = load_strings(catalog, assets_dir); !status) {
+        return status;
+    }
+    for (const std::string_view key : atlas::chess::keys::kAllKeys) {
+        (void)catalog.lookup(key);
+    }
+    const std::size_t missing = catalog.distinct_misses();
+    if (missing > 0) {
+        (void)catalog.log_new_misses();
+        return atlas::fail(atlas::ErrorCode::NotFound,
+                           std::format("{} of {} chess keys have no string", missing,
+                                       atlas::chess::keys::kAllKeys.size()));
+    }
+    std::printf("text check: %zu chess keys, all resolved in '%s', %zu entries in the tables\n",
+                atlas::chess::keys::kAllKeys.size(), std::string{catalog.locale()}.c_str(),
+                catalog.size());
+    return atlas::ok();
+}
+
+/// The key naming how a game ended, or that it has not.
+[[nodiscard]] std::string_view result_key(const atlas::chess::ResultTable& result) {
+    namespace keys = atlas::chess::keys;
+    using atlas::chess::Outcome;
+    using atlas::chess::Reason;
+    switch (result.reason) {
+    case Reason::None: return keys::kResultOngoing;
+    case Reason::Checkmate:
+        return result.outcome == Outcome::WhiteWins ? keys::kResultWhiteMates
+                                                    : keys::kResultBlackMates;
+    case Reason::Stalemate: return keys::kResultStalemate;
+    case Reason::FiftyMoves: return keys::kResultFiftyMoves;
+    case Reason::Threefold: return keys::kResultThreefold;
+    case Reason::InsufficientMaterial: return keys::kResultInsufficient;
+    }
+    return keys::kResultOngoing;
+}
+
+/// The status panel's four values, resolved here rather than in the panel: a value is the
+/// application's to compose, and M18 found what happens when one is handed over as a key.
+struct StatusValues {
+    std::string to_move;
+    std::string move;
+    std::string last_move;
+    std::string result;
+};
+
+[[nodiscard]] StatusValues status_values(const Game& game, const atlas::text::Catalog& catalog) {
+    namespace keys = atlas::chess::keys;
+    const atlas::chess::Position position = game.position();
+    StatusValues values;
+    if (game.result().outcome != atlas::chess::Outcome::Ongoing) {
+        values.to_move = std::string{catalog.lookup(keys::kGameOver)};
+    } else {
+        const std::string_view side =
+            catalog.lookup(position.side_to_move == atlas::chess::Colour::White ? keys::kSideWhite
+                                                                                : keys::kSideBlack);
+        if (position.in_check(position.side_to_move)) {
+            const std::array<std::string_view, 1> args{side};
+            values.to_move = atlas::text::substitute(catalog.lookup(keys::kInCheck), args);
+        } else {
+            values.to_move = std::string{side};
+        }
+    }
+    values.move = std::format("{}", position.fullmove_number);
+    // A move in coordinates is notation, like a FEN: an identifier rather than prose.
+    values.last_move = game.last_move.has_value() ? atlas::chess::to_string(*game.last_move)
+                                                  : std::string{catalog.lookup(keys::kNoMoveYet)};
+    values.result = std::string{catalog.lookup(result_key(game.result()))};
+    return values;
+}
+
 /// Fit the whole board in the window with a margin.
 void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
     camera.set_viewport(width, height);
@@ -371,6 +494,24 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
         batch = std::move(*quads);
     }
 
+    // The interface's text. A table that fails to load is not fatal: the panel then shows its
+    // keys, which is what a missing key does everywhere else and is legible rather than blank.
+    atlas::text::Catalog catalog;
+    if (auto status = load_strings(catalog, options.assets_dir); !status) {
+        ATLAS_LOG_WARN(kApp, "no string tables: {}", status.error());
+    }
+    std::optional<atlas::tools::DebugUi> overlay;
+    if (device.has_value()) {
+        auto ui = atlas::tools::DebugUi::create(*device, *window);
+        if (ui) {
+            overlay = std::move(*ui);
+            overlay->set_catalog(&catalog);
+        } else {
+            ATLAS_LOG_WARN(kApp, "the status panel is unavailable: {}", ui.error());
+        }
+    }
+    atlas::SteadyClock clock;
+
     const atlas::chess::BoardLayout layout{.flipped = options.flip};
     atlas::math::OrthoCamera camera;
     Selection selection;
@@ -384,11 +525,16 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
     while (!quit) {
         ATLAS_ZONE_NAMED("frame");
         ++frame_index;
+        const std::uint64_t frame_ns = atlas::to_unsigned_ns(clock.tick());
         const auto size = window->pixel_size();
         frame_board(camera, static_cast<float>(size.width), static_cast<float>(size.height));
 
         std::optional<atlas::chess::Move> chosen;
         for (const auto& event : platform->pump()) {
+            // The panel sees every event first: a click on it must not also land on the board.
+            if (overlay.has_value() && overlay->handle_event(event)) {
+                continue;
+            }
             if (std::holds_alternative<atlas::platform::QuitRequested>(event) ||
                 std::holds_alternative<atlas::platform::WindowCloseRequested>(event)) {
                 quit = true;
@@ -467,6 +613,22 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
                                                  .in_check = in_check},
                                                 layout, quads);
 
+                atlas::tools::DebugUi::PreparedFrame prepared;
+                if (overlay.has_value()) {
+                    namespace keys = atlas::chess::keys;
+                    const StatusValues values = status_values(game, catalog);
+                    const std::array<atlas::tools::Stat, 4> stats{{
+                        {.label = keys::kStatToMove, .value = values.to_move},
+                        {.label = keys::kStatMove, .value = values.move},
+                        {.label = keys::kStatLastMove, .value = values.last_move},
+                        {.label = keys::kStatResult, .value = values.result},
+                    }};
+                    overlay->begin_frame(static_cast<float>(frame_ns) / 1'000'000'000.0F,
+                                         size.width, size.height);
+                    overlay->stats_panel(keys::kTitleGame, stats);
+                    prepared = overlay->end_frame(*frame);
+                }
+
                 auto pass = frame->begin_render_pass({
                     .colour = {.load = atlas::rhi::LoadOp::Clear,
                                .clear_colour = {.r = 0.10F, .g = 0.11F, .b = 0.13F}},
@@ -479,6 +641,9 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
                 batch->set_texture(textures->texture_for(*sheet), textures->sampler());
                 batch->add(quads);
                 (void)batch->end();
+                if (overlay.has_value()) {
+                    overlay->draw(*pass, prepared);
+                }
             }
             if (auto status = device->end_frame(std::move(*frame)); !status) {
                 return std::unexpected(std::move(status).error().context("ending a frame"));
@@ -514,6 +679,9 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
     if (args->has("version")) {
         std::printf("%s\n", std::string{atlas::build_info::summary()}.c_str());
         return atlas::ok();
+    }
+    if (args->has("text-check")) {
+        return run_text_check(args->value_or("assets-dir", std::string_view{"assets/source"}));
     }
     const auto options = read_options(*args);
     if (!options) {

@@ -131,6 +131,15 @@ def check_same_game_same_hash(binary: str) -> None:
         raise CheckFailed("the same game hashed differently on two runs")
 
 
+def check_text_check(binary: str) -> None:
+    # Every chess key resolves against the two tables actually loaded: the engine's, and the
+    # application's own beside it (ADR-0018). A game adding its strings must not have to edit the
+    # engine's table, and this is the check that it did not.
+    result = run(binary, ["--text-check"])
+    expect_exit(result, 0, "--text-check")
+    expect_contains(output_of(result), "all resolved in 'en'", "every chess key resolved")
+
+
 def check_window_under_dummy_driver(binary: str) -> None:
     # A window, no device: the event loop runs and the program shuts down in order.
     result = run(binary, ["--video-driver", "dummy", "--no-render", "--frames", "10",
@@ -151,6 +160,7 @@ CASES = {
     "move_after_the_end_is_declined": check_move_after_the_end_is_declined,
     "fen_is_validated": check_fen_is_validated,
     "same_game_same_hash": check_same_game_same_hash,
+    "text_check": check_text_check,
     "window_under_dummy_driver": check_window_under_dummy_driver,
 }
 

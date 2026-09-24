@@ -1,0 +1,32 @@
+{
+  // The chess application's own strings (ADR-0018). Loaded beside the engine's table rather
+  // than into it: a game that had to edit strings/en.json to say "White to move" would be
+  // patching the engine. Every key here is named in apps/chess/chess_text_keys.hpp, and
+  // `atlas_chess --text-check` resolves the whole list against what is loaded.
+  "format": "atlas-strings",
+  "version": 1,
+  "locale": "en",
+
+  "strings": {
+    "chess.title.game": "Chess",
+
+    "chess.stat.to_move": "to move",
+    "chess.stat.move": "move",
+    "chess.stat.last_move": "last move",
+    "chess.stat.result": "result",
+
+    "chess.side.white": "White",
+    "chess.side.black": "Black",
+    "chess.value.in_check": "{0}, in check",
+    "chess.value.no_move_yet": "none yet",
+    "chess.value.game_over": "nobody",
+
+    "chess.result.ongoing": "in progress",
+    "chess.result.white_mates": "White wins by checkmate",
+    "chess.result.black_mates": "Black wins by checkmate",
+    "chess.result.stalemate": "Draw by stalemate",
+    "chess.result.fifty_moves": "Draw by the fifty-move rule",
+    "chess.result.threefold": "Draw by threefold repetition",
+    "chess.result.insufficient": "Draw: neither side can mate"
+  }
+}
