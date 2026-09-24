@@ -90,28 +90,24 @@ std::vector<Result> run() {
         }
         atlas::sim::Kernel kernel(chess.world, schedule, commands, atlas::sim::KernelConfig{});
         const atlas::chess::Position start = atlas::chess::Position::start();
-        const auto payload =
-            atlas::chess::encode_move({.from = atlas::chess::square(4, 1),
-                                       .to = atlas::chess::square(4, 3)});
+        const auto payload = atlas::chess::encode_move(
+            {.from = atlas::chess::square(4, 1), .to = atlas::chess::square(4, 3)});
 
         // Each iteration puts the starting position back and plays e2e4. Resetting is inside
         // the timed region, and costs one table write and one key; it is small beside two legal
         // move generations, and a ply cannot be measured without a position to make it from.
-        results.push_back(atlas::bench::measure("chess/ply", "e2e4 from the start", 20'000, 2'000,
-                                                [&] {
-                                                    atlas::chess::set_position(chess.world,
-                                                                               chess.ids, start);
-                                                    if (!commands.submit(kernel.current_tick(),
-                                                                         atlas::sim::SourceId::Local,
-                                                                         atlas::chess::kMoveCommand,
-                                                                         payload)) {
-                                                        die("submitting");
-                                                    }
-                                                    const auto report = kernel.step();
-                                                    if (!report || report->commands_applied != 1) {
-                                                        die("the move was not applied");
-                                                    }
-                                                }));
+        results.push_back(
+            atlas::bench::measure("chess/ply", "e2e4 from the start", 20'000, 2'000, [&] {
+                atlas::chess::set_position(chess.world, chess.ids, start);
+                if (!commands.submit(kernel.current_tick(), atlas::sim::SourceId::Local,
+                                     atlas::chess::kMoveCommand, payload)) {
+                    die("submitting");
+                }
+                const auto report = kernel.step();
+                if (!report || report->commands_applied != 1) {
+                    die("the move was not applied");
+                }
+            }));
     }
 
     return results;
