@@ -66,6 +66,16 @@ struct SessionConfig {
 
     /// Logged on a mismatch rather than refused. See the file comment.
     std::string build_id;
+    /// What happens when a peer is lost (ADR-0022 D4).
+    ///
+    /// `End`, the default, ends the session, as ADR-0017 D5 decided and as it did before M25.
+    /// `Drop` lets the session go on without the peer: peer zero, which relays everything,
+    /// decides the drop and says how many of the lost peer's turns it received, and every other
+    /// peer checks it holds exactly those before it stops expecting the lost one. Needs a star
+    /// link, and every peer in the session must be configured alike — a peer set to `End` that
+    /// receives a drop ends rather than continuing. Peer zero itself can never be dropped: it is
+    /// the relay, and without it nobody reaches anybody.
+    PeerLoss on_peer_lost = PeerLoss::End;
 };
 
 /// What the session is doing.
@@ -218,7 +228,8 @@ class Session final : public sim::CommandSource {
         return m_divergence;
     }
 
-    /// Every participant, this peer included, in identifier order. Empty until `Running`.
+    /// Every participant still in the session, this peer included, in identifier order. Empty
+    /// until `Running`. A dropped peer is no longer listed (ADR-0022).
     [[nodiscard]] std::span<const sim::SourceId> peers() const noexcept { return m_peers; }
 
     [[nodiscard]] std::uint32_t agreed_delay() const noexcept { return m_agreed_delay; }
@@ -252,6 +263,33 @@ class Session final : public sim::CommandSource {
     /// Whether `Finishing` has become `Finished`. See `finish`.
     [[nodiscard]] bool finish_is_complete(Tick now) const noexcept;
 
+    /// Read and handle everything waiting from one peer, however much there is: the per-poll
+    /// cap does not apply, because a drop must count every turn of the lost peer's that has
+    /// arrived before it decides.
+    [[nodiscard]] Status read_everything_from(std::size_t peer, Tick now, sim::CommandQueue& queue,
+                                              sim::TurnGate& turns, sim::PollReport& report);
+
+    /// On peer zero: every peer the link has lost, or that said goodbye, is dropped, and the
+    /// others are told how many of its turns the relay received (ADR-0022 D2). On any other
+    /// peer, or under `PeerLoss::End`, a lost peer ends the session.
+    [[nodiscard]] Status handle_lost_peers(Tick now, sim::CommandQueue& queue, sim::TurnGate& turns,
+                                           sim::PollReport& report);
+
+    /// A drop from the relay: checked for who sent it and whom it names, and held until the
+    /// end of the poll, when `complete_drops` compares it with what this peer holds. Held
+    /// rather than completed here because completing it reads the dropped peer's inbox, which
+    /// is a call back into `handle`.
+    [[nodiscard]] Status accept_drop(std::size_t peer, const Drop& drop);
+
+    /// Every drop accepted in this poll: read everything the dropped peer sent, compare the
+    /// count with the relay's, and stop expecting it.
+    [[nodiscard]] Status complete_drops(Tick now, sim::CommandQueue& queue, sim::TurnGate& turns,
+                                        sim::PollReport& report);
+
+    /// Stop expecting `peer`, forget what it said about finishing and hashes, and report it.
+    [[nodiscard]] Status apply_drop(std::size_t peer, sim::TurnGate& turns,
+                                    sim::PollReport& report);
+
     LinkEnd m_link;
     SessionConfig m_config;
     SessionState m_state = SessionState::Handshaking;
@@ -271,6 +309,18 @@ class Session final : public sim::CommandSource {
 
     /// Where each peer said it finishes, by link index. This peer's own entry stays empty.
     std::vector<std::optional<Tick>> m_peer_finish;
+
+    /// Turns received from each peer, by link index. What a drop is agreed on: the relay says
+    /// how many of the lost peer's it received, which is how many it forwarded, and every other
+    /// peer checks it has the same number (ADR-0022 D2).
+    std::vector<std::uint64_t> m_turns_from;
+    /// Peers this session has stopped expecting, by link index.
+    std::vector<bool> m_dropped;
+    /// Peers that said goodbye under `PeerLoss::Drop`, by link index. Not an end: the relay
+    /// drops them as it drops a peer the link lost, and everyone else waits to be told.
+    std::vector<bool> m_left;
+    /// Drops accepted during this poll and not yet completed. See `accept_drop`.
+    std::vector<Drop> m_pending_drops;
 
     /// The highest hash check each peer has had compared and agreed, by link index. What the
     /// finished condition asks, so a peer cannot finish without having compared its last one.

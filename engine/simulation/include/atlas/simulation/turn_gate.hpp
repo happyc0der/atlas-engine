@@ -45,6 +45,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -101,6 +102,14 @@ class TurnGate {
     [[nodiscard]] std::span<const SourceId> expected_sources() const noexcept;
 
     [[nodiscard]] bool expects(SourceId source) const noexcept;
+
+    /// The first tick `source` has not completed, or empty when it is not expected.
+    ///
+    /// Everything below this has been marked; ticks above it may have been marked too, out of
+    /// order, and are not counted here. What a session reports when it stops expecting a peer
+    /// (ADR-0022), so a person reading the log learns how far the lost peer's turns reached
+    /// without the gap-filling that "the highest tick it sent" would imply.
+    [[nodiscard]] std::optional<Tick> completed_before(SourceId source) const noexcept;
 
     /// Record that `source` has submitted everything it will submit for `tick`.
     ///

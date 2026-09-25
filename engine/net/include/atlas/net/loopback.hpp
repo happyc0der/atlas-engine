@@ -72,6 +72,11 @@ struct LoopbackConfig {
     /// Permute the messages released in one poll.
     bool reorder = false;
     std::uint64_t reorder_seed = 0;
+    /// A mesh by default. A star routes as the socket hub does since M25 (ADR-0022 D9): peer
+    /// zero files every broadcast it receives and forwards it to everyone else in the same step,
+    /// and no other pair has a direct connection. What lets the drop agreement be tested under
+    /// this link's latency, reordering and holds, in one process.
+    Topology topology = Topology::Mesh;
 };
 
 /// What the link did, for a test that needs to know a fault actually fired.
@@ -106,8 +111,23 @@ class LoopbackHub final : public Link {
     [[nodiscard]] Status send(std::size_t from, std::size_t to,
                               std::span<const std::byte> message) override;
 
-    /// Every peer reaches every other directly.
-    [[nodiscard]] Topology topology() const noexcept override { return Topology::Mesh; }
+    /// Send to every other peer: a loop over `send` on a mesh, and on a star one message to
+    /// peer zero, which forwards it when it arrives.
+    [[nodiscard]] Status broadcast(std::size_t from, std::span<const std::byte> message) override;
+
+    [[nodiscard]] Topology topology() const noexcept override { return m_config.topology; }
+
+    [[nodiscard]] bool lost(std::size_t peer) const noexcept override;
+
+    /// Lose one peer, as a process that died would be lost: what it had sent and was still in
+    /// flight never arrives, anything it sends from now on vanishes, and nothing reaches it.
+    ///
+    /// **What a relay has already forwarded is not recalled.** On a star, a message of the lost
+    /// peer's that peer zero received was filed and forwarded in the same step, and the forwarded
+    /// copies stay in flight — exactly as packets the listener has already queued would.
+    ///
+    /// Fails for an index this hub does not have.
+    [[nodiscard]] Status lose(std::size_t peer);
 
     /// Advance one peer's poll counter and deliver whatever is now due.
     void pump(std::size_t peer) override;
@@ -145,6 +165,10 @@ class LoopbackHub final : public Link {
         std::uint64_t release_at_poll = 0;
         std::uint64_t order = 0;
         bool held = false;
+        /// Whose message this is. The sender, except for one peer zero forwarded on a star.
+        std::size_t origin = 0;
+        /// On a star, a broadcast on its way to peer zero, to be forwarded when it arrives.
+        bool everyone = false;
     };
 
     /// One ordered pair's state: what is in flight, and what fault is armed on it.
@@ -165,10 +189,16 @@ class LoopbackHub final : public Link {
 
     [[nodiscard]] Pipe& pipe(std::size_t from, std::size_t to);
 
+    /// Put one message in flight on one pipe, applying whatever fault is armed on it.
+    void enqueue(std::size_t from, std::size_t to, std::vector<std::byte> bytes, std::size_t origin,
+                 bool everyone);
+
     LoopbackConfig m_config;
     std::vector<Peer> m_peers;
     /// Row-major by (from, to), so a pair is one multiplication away.
     std::vector<Pipe> m_pipes;
+    /// Peers this hub has been told to lose, by index.
+    std::vector<bool> m_lost;
     std::uint64_t m_next_order = 0;
     LinkStats m_stats;
 };

@@ -19,6 +19,7 @@
 using atlas::net::Bye;
 using atlas::net::ByeReason;
 using atlas::net::decode;
+using atlas::net::Drop;
 using atlas::net::encode;
 using atlas::net::Finish;
 using atlas::net::HashCheck;
@@ -93,9 +94,11 @@ namespace {
     Bye bye{.reason = ByeReason::Diverged, .detail = "the first system to differ is 'drift'"};
     // Past 2^32, so a writer or reader that narrowed the tick to 32 bits is caught.
     Finish finish{.last_tick = 0x1'0000'0029ULL};
+    // Past 2^32 for the same reason: a count narrowed to 32 bits would be caught.
+    Drop drop{.source = SourceId{2}, .turns = 0x1'0000'0007ULL};
 
-    return {Message{hello}, Message{welcome}, Message{turn},
-            Message{check}, Message{bye},     Message{finish}};
+    return {Message{hello}, Message{welcome}, Message{turn}, Message{check},
+            Message{bye},   Message{finish},  Message{drop}};
 }
 
 }  // namespace
@@ -236,6 +239,19 @@ TEST_CASE("every message survives a round trip, field by field", "[net][message]
         REQUIRE(back != nullptr);
         CHECK(back->last_tick == original.last_tick);
         CHECK(peek_type(*bytes).value() == atlas::net::MessageType::Finish);
+    }
+
+    SECTION("drop") {
+        const auto original = std::get<Drop>(every_message()[6]);
+        const auto bytes = encode(Message{original});
+        REQUIRE(bytes.has_value());
+        const auto restored = decode(*bytes);
+        REQUIRE(restored.has_value());
+        const auto* back = std::get_if<Drop>(&*restored);
+        REQUIRE(back != nullptr);
+        CHECK(back->source == original.source);
+        CHECK(back->turns == original.turns);
+        CHECK(peek_type(*bytes).value() == atlas::net::MessageType::Drop);
     }
 
     // The turn has its own case below, because it is the one whose contents are applied.
@@ -440,6 +456,20 @@ TEST_CASE("a farewell reason this build does not have is refused", "[net][messag
     REQUIRE(bytes.has_value());
     (*bytes)[16] = std::byte{0x2A};  // the reason, immediately after the header
     CHECK_FALSE(decode(*bytes).has_value());
+}
+
+TEST_CASE("a drop naming no peer a session could have is refused", "[net][message]") {
+    // A peer's index, never a mod's: mod identifiers are never sent on the wire, and an index
+    // past the protocol's ceiling names nobody. The encoder writes whatever it is given, so the
+    // reader is where this is enforced.
+    for (const std::uint32_t source : {std::uint32_t{16}, std::uint32_t{0x8000'0000U}}) {
+        auto bytes = encode(Message{Drop{.source = SourceId{source}, .turns = 1}});
+        REQUIRE(bytes.has_value());
+        CHECK_FALSE(decode(*bytes).has_value());
+    }
+    auto fine = encode(Message{Drop{.source = SourceId{15}, .turns = 1}});
+    REQUIRE(fine.has_value());
+    CHECK(decode(*fine).has_value());
 }
 
 TEST_CASE("a claimed count larger than the buffer is refused before it is reserved",

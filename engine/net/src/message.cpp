@@ -63,7 +63,8 @@ void write_header(SaveWriter& writer, MessageType type) {
     case MessageType::Turn:
     case MessageType::HashCheck:
     case MessageType::Bye:
-    case MessageType::Finish: return static_cast<MessageType>(*type);
+    case MessageType::Finish:
+    case MessageType::Drop: return static_cast<MessageType>(*type);
     }
     // Refused rather than skipped. A protocol that ignores what it does not understand cannot
     // be versioned later without silently changing meaning, and a peer able to make another
@@ -178,6 +179,13 @@ void write_header(SaveWriter& writer, MessageType type) {
 [[nodiscard]] Status write_body(SaveWriter& writer, const Finish& finish) {
     write_header(writer, MessageType::Finish);
     writer.write_u64(finish.last_tick);
+    return {};
+}
+
+[[nodiscard]] Status write_body(SaveWriter& writer, const Drop& drop) {
+    write_header(writer, MessageType::Drop);
+    writer.write_u32(static_cast<std::uint32_t>(drop.source));
+    writer.write_u64(drop.turns);
     return {};
 }
 
@@ -389,6 +397,26 @@ void write_header(SaveWriter& writer, MessageType type) {
     return Message{Finish{.last_tick = *last_tick}};
 }
 
+[[nodiscard]] Result<Message> read_drop(SaveReader& reader) {
+    auto source = reader.read_u32();
+    if (!source) {
+        return std::unexpected(std::move(source).error().context("a dropped source"));
+    }
+    // A peer's index, never a mod's: mod identifiers are never sent on the wire (ADR-0015), and
+    // a peer index past the protocol's ceiling names nobody.
+    if (*source >= kMaxPeers) {
+        return std::unexpected(
+            Error(ErrorCode::MalformedData,
+                  std::format("a drop names source {}, which no session of at most {} peers has",
+                              *source, kMaxPeers)));
+    }
+    auto turns = reader.read_u64();
+    if (!turns) {
+        return std::unexpected(std::move(turns).error().context("a dropped peer's turn count"));
+    }
+    return Message{Drop{.source = sim::SourceId{*source}, .turns = *turns}};
+}
+
 }  // namespace
 
 Result<MessageType> peek_type(std::span<const std::byte> bytes) {
@@ -438,6 +466,7 @@ Result<Message> decode(std::span<const std::byte> bytes) {
     case MessageType::HashCheck: message = read_hash_check(reader); break;
     case MessageType::Bye: message = read_bye(reader); break;
     case MessageType::Finish: message = read_finish(reader); break;
+    case MessageType::Drop: message = read_drop(reader); break;
     }
     if (!message) {
         return message;

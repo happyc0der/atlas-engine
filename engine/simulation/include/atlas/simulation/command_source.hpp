@@ -23,8 +23,18 @@
 #include <atlas/simulation/turn_gate.hpp>
 
 #include <cstddef>
+#include <vector>
 
 namespace atlas::sim {
+
+/// A source the driver's session has stopped expecting, and how far its turns had reached.
+struct DroppedSource {
+    SourceId source = SourceId::Local;
+    /// The first tick the source had not completed when it was dropped. Ticks from here on run
+    /// without it — except that a turn of its that arrived out of order, ahead of a gap, is still
+    /// in the queue on every peer alike and is still applied.
+    Tick first_missing_turn = 0;
+};
 
 /// What one poll took in.
 struct PollReport {
@@ -65,6 +75,11 @@ struct PollReport {
     /// Not a failure and not a close: a finished source was not lost, it completed. Reported on
     /// the poll that decided it and on every poll after.
     bool finished = false;
+
+    /// Sources the session stopped expecting during this poll (ADR-0022). The gate has already
+    /// been told; this is for the application, which is the one that knows what a peer leaving
+    /// means. Empty on almost every poll, and an empty vector allocates nothing.
+    std::vector<DroppedSource> dropped;
 };
 
 /// Something outside the simulation that submits commands and completes turns.

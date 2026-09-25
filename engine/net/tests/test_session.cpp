@@ -635,3 +635,175 @@ TEST_CASE("a turn that arrives before every announcement waits for them", "[net]
     CHECK(std::ranges::find(waiting, SourceId{0}) == waiting.end());
     CHECK(std::ranges::find(waiting, SourceId{2}) != waiting.end());
 }
+
+// ---------------------------------------------------------------------------------------------
+// What a peer checks before it accepts a drop (ADR-0022 D2). Each case sends one crafted drop
+// over a star and asks what the receiving session made of it.
+
+namespace {
+
+/// Three sessions over a star, agreed and running.
+struct Star {
+    std::unique_ptr<LoopbackHub> hub;
+    std::array<CommandQueue, 3> queues;
+    std::array<TurnGate, 3> gates;
+    std::array<std::unique_ptr<Session>, 3> sessions;
+
+    explicit Star(atlas::net::PeerLoss policy) {
+        auto made = LoopbackHub::create({.peer_count = 3, .topology = atlas::net::Topology::Star});
+        REQUIRE(made.has_value());
+        hub = *std::move(made);
+        for (std::size_t i = 0; i < 3; ++i) {
+            REQUIRE(queues[i].register_handler(kPoke, poke_handler()).has_value());
+            auto session = Session::create(hub->end(i), {.on_peer_lost = policy});
+            REQUIRE(session.has_value());
+            sessions[i] = *std::move(session);
+        }
+        for (int round = 0; round < 6; ++round) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                REQUIRE(sessions[i]->poll(0, queues[i], gates[i]).has_value());
+            }
+        }
+        for (const auto& session : sessions) {
+            REQUIRE(session->running());
+        }
+    }
+
+    [[nodiscard]] atlas::Result<atlas::sim::PollReport> poll(std::size_t peer) {
+        return sessions[peer]->poll(0, queues[peer], gates[peer]);
+    }
+};
+
+[[nodiscard]] std::vector<std::byte> drop_bytes(std::uint32_t source, std::uint64_t turns) {
+    auto bytes = encode(Message{atlas::net::Drop{.source = SourceId{source}, .turns = turns}});
+    REQUIRE(bytes.has_value());
+    return *bytes;
+}
+
+}  // namespace
+
+TEST_CASE("a drop is refused when this peer holds a different count of the dropped peer's turns",
+          "[net][session][drop]") {
+    // The check the whole agreement rests on. Peer 2 announces two turns, so peer 1 holds two;
+    // a relay claiming to have forwarded three has described a different set.
+    Star star(atlas::net::PeerLoss::Drop);
+    REQUIRE(star.sessions[2]->send_turn(0, {}, star.gates[2]).has_value());
+    REQUIRE(star.sessions[2]->send_turn(1, {}, star.gates[2]).has_value());
+    for (int round = 0; round < 3; ++round) {
+        REQUIRE(star.poll(0).has_value());
+        REQUIRE(star.poll(1).has_value());
+    }
+    REQUIRE(star.hub->send(0, 1, drop_bytes(2, 3)).has_value());
+    const auto refused = star.poll(1);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message().contains("holds 2"));
+
+    // And the count it does hold is accepted, which is what makes the refusal above mean
+    // something rather than every drop being refused.
+    Star agreeing(atlas::net::PeerLoss::Drop);
+    REQUIRE(agreeing.sessions[2]->send_turn(0, {}, agreeing.gates[2]).has_value());
+    for (int round = 0; round < 3; ++round) {
+        REQUIRE(agreeing.poll(0).has_value());
+        REQUIRE(agreeing.poll(1).has_value());
+    }
+    REQUIRE(agreeing.hub->send(0, 1, drop_bytes(2, 1)).has_value());
+    const auto accepted = agreeing.poll(1);
+    REQUIRE(accepted.has_value());
+    REQUIRE(accepted->dropped.size() == 1);
+    CHECK(accepted->dropped.front().source == SourceId{2});
+    CHECK(accepted->dropped.front().first_missing_turn == 1);
+    CHECK(agreeing.sessions[1]->peers().size() == 2);
+}
+
+TEST_CASE("only the relay may drop a peer", "[net][session][drop]") {
+    Star star(atlas::net::PeerLoss::Drop);
+    // Peer 2 broadcasts a drop of peer 1. The relay forwards it like anything else, and peer 1
+    // must refuse it for where it came from.
+    REQUIRE(star.hub->broadcast(2, drop_bytes(1, 0)).has_value());
+    CHECK_FALSE(star.poll(0).has_value());
+    const auto refused = star.poll(1);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message().contains("only the relay"));
+}
+
+TEST_CASE("a peer the relay dropped learns it and stops", "[net][session][drop]") {
+    Star star(atlas::net::PeerLoss::Drop);
+    REQUIRE(star.hub->send(0, 2, drop_bytes(2, 0)).has_value());
+    const auto refused = star.poll(2);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message().contains("went on without it"));
+}
+
+TEST_CASE("a peer set to end rather than drop ends on receiving a drop", "[net][session][drop]") {
+    // Every peer must be configured alike. One that was not ends, rather than running a session
+    // whose rules it did not agree to.
+    Star star(atlas::net::PeerLoss::End);
+    REQUIRE(star.hub->send(0, 1, drop_bytes(2, 0)).has_value());
+    const auto refused = star.poll(1);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message().contains("set alike"));
+}
+
+namespace {
+
+[[nodiscard]] std::vector<std::byte> empty_turn_bytes(atlas::Tick tick, std::uint32_t source) {
+    auto bytes = encode(Message{Turn{.tick = tick, .source = SourceId{source}, .commands = {}}});
+    REQUIRE(bytes.has_value());
+    return *bytes;
+}
+
+}  // namespace
+
+TEST_CASE("a peer reads everything the relay forwarded before it compares a drop",
+          "[net][session][drop]") {
+    // The order a socket really produces: the lost peer's last turn is forwarded, and in the
+    // same breath the relay notices it has gone and says so. Both reach peer 1 in one poll, in
+    // two different inboxes — and the drop's inbox, the relay's, is read first. A peer that
+    // compared before reading the dropped peer's own inbox would count one turn short and
+    // refuse a drop that was right.
+    Star star(atlas::net::PeerLoss::Drop);
+    REQUIRE(star.hub->broadcast(2, empty_turn_bytes(0, 2)).has_value());
+    REQUIRE(star.poll(0).has_value());  // filed by the relay, and forwarded to peer 1
+    REQUIRE(star.hub->lose(2).has_value());
+    const auto decided = star.poll(0);  // the relay drops peer 2 having received one turn
+    REQUIRE(decided.has_value());
+    REQUIRE(decided->dropped.size() == 1);
+
+    const auto accepted = star.poll(1);
+    REQUIRE(accepted.has_value());
+    REQUIRE(accepted->dropped.size() == 1);
+    CHECK(accepted->dropped.front().first_missing_turn == 1);
+}
+
+TEST_CASE("the relay counts every turn of a lost peer, past the per-poll cap",
+          "[net][session][drop]") {
+    // A poll reads at most sixty-four messages from one peer and leaves the rest for the next.
+    // A relay deciding a drop with more than that waiting must read them all first, or it
+    // announces a count lower than it forwarded.
+    Star star(atlas::net::PeerLoss::Drop);
+    constexpr std::uint32_t kTurns = 70;
+    for (std::uint32_t tick = 0; tick < kTurns; ++tick) {
+        REQUIRE(star.hub->broadcast(2, empty_turn_bytes(tick, 2)).has_value());
+    }
+    // Delivered to the relay and forwarded, all seventy, before the relay's session reads any.
+    star.hub->pump(0);
+    REQUIRE(star.hub->lose(2).has_value());
+
+    const auto decided = star.poll(0);
+    REQUIRE(decided.has_value());
+    REQUIRE(decided->dropped.size() == 1);
+    CHECK(decided->dropped.front().first_missing_turn == kTurns);
+
+    // Peer 1 received all seventy, forwarded, and agrees with the count the relay announced.
+    atlas::Result<atlas::sim::PollReport> accepted =
+        std::unexpected(atlas::Error(atlas::ErrorCode::Internal, "not polled"));
+    for (int round = 0; round < 3; ++round) {
+        accepted = star.poll(1);
+        REQUIRE(accepted.has_value());
+        if (!accepted->dropped.empty()) {
+            break;
+        }
+    }
+    REQUIRE(accepted->dropped.size() == 1);
+    CHECK(accepted->dropped.front().first_missing_turn == kTurns);
+}

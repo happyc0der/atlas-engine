@@ -44,4 +44,12 @@ std::size_t LinkEnd::peer_count() const noexcept {
     return m_link->peer_count();
 }
 
+Topology LinkEnd::topology() const noexcept {
+    return m_link->topology();
+}
+
+bool LinkEnd::lost(std::size_t peer) const noexcept {
+    return m_link->lost(peer);
+}
+
 }  // namespace atlas::net

@@ -26,6 +26,7 @@ LoopbackHub::LoopbackHub(const LoopbackConfig& config) : m_config(config) {
         }
     }
     m_pipes.resize(config.peer_count * config.peer_count);
+    m_lost.assign(config.peer_count, false);
 }
 
 Result<std::unique_ptr<LoopbackHub>> LoopbackHub::create(const LoopbackConfig& config) {
@@ -66,6 +67,24 @@ std::uint64_t LoopbackHub::polls(std::size_t peer) const noexcept {
     return peer < m_peers.size() ? m_peers[peer].polls : 0;
 }
 
+bool LoopbackHub::lost(std::size_t peer) const noexcept {
+    return peer < m_lost.size() && m_lost[peer];
+}
+
+Status LoopbackHub::lose(std::size_t peer) {
+    if (peer >= m_peers.size()) {
+        return std::unexpected(Error(ErrorCode::OutOfRange, "no such peer"));
+    }
+    m_lost[peer] = true;
+    for (std::size_t other = 0; other < m_peers.size(); ++other) {
+        if (other != peer) {
+            pipe(peer, other).in_flight.clear();
+            pipe(other, peer).in_flight.clear();
+        }
+    }
+    return {};
+}
+
 CommandInbox& LoopbackHub::inbox(std::size_t peer, std::size_t from) {
     return *m_peers[peer].inboxes[from];
 }
@@ -89,20 +108,67 @@ Status LoopbackHub::send(std::size_t from, std::size_t to, std::span<const std::
                                      "already and needs no link to learn of it"));
     }
 
+    if (m_config.topology == Topology::Star && from != 0 && to != 0) {
+        // As on the socket hub: no connection between two peers other than zero, so a message
+        // for one of them alone would have to be forwarded by a relay that does not keep it.
+        return std::unexpected(Error(
+            ErrorCode::InvalidArgument,
+            std::format("on a star, peer {} reaches peer {} only by broadcast, through peer zero",
+                        from, to)));
+    }
+    if (m_lost[to]) {
+        return std::unexpected(Error(ErrorCode::Unavailable, "that peer has gone"));
+    }
+    if (m_lost[from]) {
+        // A lost peer is a process that died: what it "sends" goes nowhere.
+        return {};
+    }
+    enqueue(from, to, {message.begin(), message.end()}, from, false);
+    return {};
+}
+
+Status LoopbackHub::broadcast(std::size_t from, std::span<const std::byte> message) {
+    if (m_config.topology == Topology::Mesh) {
+        return Link::broadcast(from, message);
+    }
+    if (from >= m_peers.size()) {
+        return std::unexpected(Error(ErrorCode::OutOfRange, "no such peer"));
+    }
+    if (m_lost[from]) {
+        return {};
+    }
+    if (from != 0) {
+        // Once, to the relay, marked for everyone. Forwarded when peer zero receives it.
+        enqueue(from, 0, {message.begin(), message.end()}, from, true);
+        return {};
+    }
+    for (std::size_t to = 1; to < m_peers.size(); ++to) {
+        if (m_lost[to]) {
+            continue;
+        }
+        enqueue(0, to, {message.begin(), message.end()}, 0, false);
+    }
+    return {};
+}
+
+void LoopbackHub::enqueue(std::size_t from, std::size_t to, std::vector<std::byte> bytes,
+                          std::size_t origin, bool everyone) {
     ++m_stats.sent;
     Pipe& p = pipe(from, to);
 
     Pending pending;
-    pending.bytes.assign(message.begin(), message.end());
+    pending.bytes = std::move(bytes);
     // Counted in the receiver's polls, because that is the thing a stalled peer still does.
     pending.release_at_poll = m_peers[to].polls + m_config.latency_polls;
     pending.order = m_next_order++;
+    pending.origin = origin;
+    pending.everyone = everyone;
 
     if (p.armed.has_value()) {
         const LinkFault fault = *p.armed;
         p.armed.reset();
         switch (fault) {
-        case LinkFault::Drop: ++m_stats.dropped; return {};
+        case LinkFault::Drop: ++m_stats.dropped; return;
         case LinkFault::Corrupt:
             if (pending.bytes.size() > kCorruptionFloor) {
                 // The **last** byte, which in a turn carrying commands is inside a payload.
@@ -126,7 +192,6 @@ Status LoopbackHub::send(std::size_t from, std::size_t to, std::span<const std::
     }
 
     p.in_flight.push_back(std::move(pending));
-    return {};
 }
 
 void LoopbackHub::pump(std::size_t peer) {
@@ -135,6 +200,9 @@ void LoopbackHub::pump(std::size_t peer) {
 
     ++m_peers[peer].polls;
     const std::uint64_t now = m_peers[peer].polls;
+    if (m_lost[peer]) {
+        return;
+    }
 
     for (std::size_t from = 0; from < m_peers.size(); ++from) {
         if (from == peer) {
@@ -171,14 +239,21 @@ void LoopbackHub::pump(std::size_t peer) {
         }
 
         for (Pending& pending : releasable) {
-            const std::size_t bytes = pending.bytes.size();
-            if (m_peers[peer].inboxes[from]->push(std::move(pending.bytes)) ==
+            // **Filed and forwarded in the same step**, as the socket hub's listener does
+            // (ADR-0022 D1): nothing reaches another peer that peer zero has not filed itself.
+            if (pending.everyone && peer == 0) {
+                for (std::size_t to = 1; to < m_peers.size(); ++to) {
+                    if (to != pending.origin && !m_lost[to]) {
+                        enqueue(0, to, pending.bytes, pending.origin, false);
+                    }
+                }
+            }
+            if (m_peers[peer].inboxes[pending.origin]->push(std::move(pending.bytes)) ==
                 CommandInbox::Push::Accepted) {
                 ++m_stats.delivered;
             } else {
                 ++m_stats.refused;
             }
-            (void)bytes;
         }
     }
 }

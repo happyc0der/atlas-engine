@@ -48,6 +48,16 @@ enum class Topology : std::uint8_t {
     Star,
 };
 
+/// What a session does when a peer is lost (ADR-0022 D4).
+enum class PeerLoss : std::uint8_t {
+    /// End the session, as a divergence or a late turn does (ADR-0017 D5). The default.
+    End,
+    /// Peer zero drops the lost peer, every other peer checks it holds the same turns of it that
+    /// peer zero does, and the session goes on without it. Needs a star: the agreement rests on
+    /// every message reaching the others through peer zero.
+    Drop,
+};
+
 /// Whatever moves messages between peers: an in-memory hub, or a socket.
 class Link {
   public:
@@ -79,6 +89,18 @@ class Link {
 
     /// Which kind of link this is. See `Topology`.
     [[nodiscard]] virtual Topology topology() const noexcept = 0;
+
+    /// Whether this link has given up on `peer`: nothing further from it will be delivered, and
+    /// nothing sent to it will arrive.
+    ///
+    /// **Only a link that was asked to report losses rather than end on them says so** — a
+    /// socket hub configured with `PeerLoss::Drop`, or a loopback told to lose a peer. Every
+    /// other link ends outright, or never loses anybody, and answers false. What the session
+    /// does about a lost peer is its own policy; the link only says what happened.
+    [[nodiscard]] virtual bool lost(std::size_t peer) const noexcept {
+        (void)peer;
+        return false;
+    }
 
     /// Give `peer` whatever has arrived for it.
     ///
@@ -124,6 +146,12 @@ class LinkEnd {
     [[nodiscard]] std::size_t index() const noexcept { return m_index; }
 
     [[nodiscard]] std::size_t peer_count() const noexcept;
+
+    /// The link's topology. See `Link::topology`.
+    [[nodiscard]] Topology topology() const noexcept;
+
+    /// Whether the link has given up on `peer`. See `Link::lost`.
+    [[nodiscard]] bool lost(std::size_t peer) const noexcept;
 
   private:
     friend class Link;

@@ -156,10 +156,32 @@ struct EnetHub::Impl {
         for (auto& box : inboxes) {
             box = std::make_unique<CommandInbox>();
         }
+        lost_peers.assign(count, false);
         heard_everyone_now();
     }
 
     void heard_everyone_now() { last_heard.assign(peers.size(), std::chrono::steady_clock::now()); }
+
+    /// Connectors given up on under `PeerLoss::Drop`, by index. Only the listener has any.
+    std::vector<bool> lost_peers;
+
+    /// Whether losing `peer` ends the hub or only marks it lost.
+    [[nodiscard]] bool keeps_going_without(std::size_t peer) const noexcept {
+        return config.on_peer_lost == PeerLoss::Drop && local == 0 && peer != 0;
+    }
+
+    /// Give up on one connector without ending: stop filing and forwarding its messages, and
+    /// close the connection if it is still open, so a connector that was only slow learns it
+    /// has been left rather than waiting on a listener that no longer relays for it.
+    void lose(std::size_t peer, const std::string& why) {
+        lost_peers[peer] = true;
+        status.closed.push_back(peer);
+        if (peers[peer] != nullptr) {
+            enet_peer_disconnect_now(peers[peer], 0);
+            peers[peer] = nullptr;
+        }
+        ATLAS_LOG_WARN(kNet, "peer {} lost: {}; this hub carries on without it", peer, why);
+    }
 
     /// Queue one framed packet for one peer. The only place a packet is built.
     [[nodiscard]] static Status send_packet(ENetPeer* peer, std::size_t origin, std::uint8_t scope,
@@ -268,6 +290,10 @@ std::size_t EnetHub::peer_count() const noexcept {
     return m_impl->peers.size();
 }
 
+bool EnetHub::lost(std::size_t peer) const noexcept {
+    return peer < m_impl->lost_peers.size() && m_impl->lost_peers[peer];
+}
+
 std::size_t EnetHub::local_index() const noexcept {
     return m_impl->local;
 }
@@ -348,6 +374,9 @@ Status EnetHub::broadcast(std::size_t from, std::span<const std::byte> message) 
 
     for (std::size_t to = 1; to < m_impl->peers.size(); ++to) {
         ENetPeer* peer = m_impl->peers[to];
+        if (m_impl->lost_peers[to]) {
+            continue;
+        }
         if (peer == nullptr) {
             return std::unexpected(Error(ErrorCode::Unavailable, "that peer has gone"));
         }
@@ -386,13 +415,18 @@ void EnetHub::pump(std::size_t peer) {
         case ENET_EVENT_TYPE_DISCONNECT: {
             const std::size_t gone = m_impl->index_of(event.peer);
             if (gone < m_impl->peers.size()) {
+                // ENet has already reset the peer, so it must not be disconnected again.
                 m_impl->peers[gone] = nullptr;
+                if (m_impl->keeps_going_without(gone)) {
+                    m_impl->lose(gone, "it disconnected");
+                    break;
+                }
                 m_impl->status.closed.push_back(gone);
             }
-            // **Ends the session rather than dropping the peer** (ADR-0017 D5). Continuing is
-            // simulation-visible: every remaining peer would have to apply the drop at the
-            // identical tick or diverge, which needs an agreement protocol this milestone
-            // deliberately does not build.
+            // **Ends the session rather than dropping the peer** unless this listener was told
+            // to carry on (ADR-0017 D5, ADR-0022 D4). Continuing is simulation-visible: every
+            // remaining peer must stop expecting it at the same point, which the session agrees
+            // through the relay rather than this hub deciding it alone.
             m_impl->end(std::format("peer {} disconnected", gone));
             break;
         }
@@ -418,9 +452,14 @@ void EnetHub::pump(std::size_t peer) {
         }
         const auto quiet = now - m_impl->last_heard[peer_index];
         if (quiet > m_impl->config.peer_timeout) {
-            m_impl->end(
+            const auto why =
                 std::format("peer {} has not been heard from for {}ms", peer_index,
-                            std::chrono::duration_cast<std::chrono::milliseconds>(quiet).count()));
+                            std::chrono::duration_cast<std::chrono::milliseconds>(quiet).count());
+            if (m_impl->keeps_going_without(peer_index)) {
+                m_impl->lose(peer_index, why);
+            } else {
+                m_impl->end(why);
+            }
         }
     }
 }

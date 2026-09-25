@@ -20,6 +20,7 @@
 #include <array>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 using atlas::net::LinkFault;
@@ -57,6 +58,12 @@ struct Participant {
     /// The next tick this peer has still to announce. Tracks its own kernel rather than the
     /// frame count, which is what keeps a stalled peer from running ahead in announcements.
     atlas::Tick next_turn = 0;
+    /// Every drop its session reported, in the order reported (ADR-0022).
+    std::vector<atlas::sim::DroppedSource> drops;
+    /// Gone, as a killed process is: never polled, never stepped, never announces again.
+    bool absent = false;
+    /// Why its session last refused a poll, so a failing case can say.
+    std::string error;
 };
 
 /// A whole session: N participants over one hub, driven together.
@@ -111,11 +118,14 @@ struct Table {
     /// from a failure without inspecting both.
     [[nodiscard]] bool frame(bool submit_commands = true) {
         for (auto& participant : peers) {
+            if (participant->absent) {
+                continue;
+            }
             if (!participant->session->running()) {
+                participant->error = "the session is not running";
                 return false;
             }
-            if (!participant->session->poll(participant->kernel->current_tick(),
-                                            participant->peer.commands, participant->gate)) {
+            if (!poll_and_record(*participant)) {
                 return false;
             }
         }
@@ -134,6 +144,9 @@ struct Table {
         // commands for them.
         for (std::size_t i = 0; i < peers.size(); ++i) {
             auto& participant = *peers[i];
+            if (participant.absent) {
+                continue;
+            }
             const auto source = participant.session->self();
             const atlas::Tick horizon = participant.kernel->current_tick() + delay;
             while (participant.next_turn <= horizon) {
@@ -161,7 +174,9 @@ struct Table {
                     REQUIRE(participant.peer.commands.submit_stamped(command).has_value());
                     commands.push_back(std::move(command));
                 }
-                if (!participant.session->send_turn(tick, commands, participant.gate)) {
+                if (auto sent = participant.session->send_turn(tick, commands, participant.gate);
+                    !sent) {
+                    participant.error = sent.error().message();
                     return false;
                 }
                 ++participant.next_turn;
@@ -170,25 +185,33 @@ struct Table {
 
         // Everyone polls again so the turns just sent are available before anyone steps.
         for (auto& participant : peers) {
-            if (!participant->session->poll(participant->kernel->current_tick(),
-                                            participant->peer.commands, participant->gate)) {
+            if (participant->absent) {
+                continue;
+            }
+            if (!poll_and_record(*participant)) {
                 return false;
             }
         }
 
         for (auto& participant : peers) {
+            if (participant->absent) {
+                continue;
+            }
             while (participant->kernel->ready() &&
                    (!stop_at.has_value() || participant->kernel->current_tick() < *stop_at)) {
                 const auto report = participant->kernel->step();
                 if (!report) {
+                    participant->error = report.error().message();
                     return false;
                 }
                 participant->hashes.push_back(report->state_hash);
                 participant->applied.push_back(report->commands_applied);
                 participant->declined.push_back(report->commands_declined);
                 participant->gate.retire_before(report->tick);
-                if (!participant->session->send_hash_check(report->tick, report->state_hash,
-                                                           report->system_hashes)) {
+                if (auto checked = participant->session->send_hash_check(
+                        report->tick, report->state_hash, report->system_hashes);
+                    !checked) {
+                    participant->error = checked.error().message();
                     return false;
                 }
             }
@@ -200,8 +223,9 @@ struct Table {
     void run_to(atlas::Tick tick) {
         stop_at = tick;
         for (int frame = 0; frame < 2000; ++frame) {
-            if (std::ranges::all_of(
-                    peers, [tick](const auto& p) { return p->kernel->current_tick() >= tick; })) {
+            if (std::ranges::all_of(peers, [tick](const auto& p) {
+                    return p->absent || p->kernel->current_tick() >= tick;
+                })) {
                 // One more, so every peer has announced its turns `delay` ticks past the stop.
                 REQUIRE(this->frame());
                 return;
@@ -223,6 +247,19 @@ struct Table {
         REQUIRE(participant.session
                     ->send_hash_check(report->tick, report->state_hash, report->system_hashes)
                     .has_value());
+        return true;
+    }
+
+    /// Poll one peer, keeping any drop it reports.
+    [[nodiscard]] static bool poll_and_record(Participant& participant) {
+        auto report = participant.session->poll(participant.kernel->current_tick(),
+                                                participant.peer.commands, participant.gate);
+        if (!report) {
+            participant.error = report.error().message();
+            return false;
+        }
+        participant.drops.insert(participant.drops.end(), report->dropped.begin(),
+                                 report->dropped.end());
         return true;
     }
 
@@ -666,4 +703,196 @@ TEST_CASE("finish is refused before the session runs and past what was announced
     // Refused, not ended: the peer can still finish somewhere it has announced.
     CHECK(table.peers[0]->session->running());
     CHECK(table.peers[0]->session->finish(26).has_value());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Dropping a lost peer (ADR-0022). Three kernels over a star, so every message reaches the others
+// through peer zero, which is what the agreement rests on.
+
+namespace {
+
+[[nodiscard]] atlas::net::LoopbackConfig star_link(std::uint64_t reorder_seed) {
+    return {.peer_count = 3,
+            .latency_polls = 2,
+            .reorder = true,
+            .reorder_seed = reorder_seed,
+            .topology = atlas::net::Topology::Star};
+}
+
+[[nodiscard]] SessionConfig dropping(std::uint64_t seed) {
+    return SessionConfig{.input_delay = 2,
+                         .hash_check_interval = 8,
+                         .seed = seed,
+                         .on_peer_lost = atlas::net::PeerLoss::Drop};
+}
+
+/// Peers 0 and 1 reached the same state at every tick either of them ran.
+void require_agreement(const Participant& a, const Participant& b) {
+    const std::size_t common = std::min(a.hashes.size(), b.hashes.size());
+    REQUIRE(common > 100);
+    for (std::size_t tick = 0; tick < common; ++tick) {
+        INFO("tick " << tick);
+        REQUIRE(a.hashes[tick] == b.hashes[tick]);
+        REQUIRE(a.applied[tick] == b.applied[tick]);
+    }
+}
+
+}  // namespace
+
+TEST_CASE("three kernels agree at every tick through a relay", "[net][lockstep][drop]") {
+    // The star on its own, before anybody is lost: peer zero forwards, the others never meet,
+    // and all three still reach the same state at every tick.
+    Table table(3, star_link(5), SessionConfig{.input_delay = 2, .hash_check_interval = 8});
+    table.settle();
+    for (int frame = 0; frame < 300; ++frame) {
+        INFO("frame " << frame);
+        REQUIRE(table.frame());
+    }
+    require_agreement(*table.peers[0], *table.peers[1]);
+    require_agreement(*table.peers[0], *table.peers[2]);
+    // Peer 1 heard from peer 2 without any direct connection between them.
+    CHECK(table.peers[1]->session->stats().turns_received > 200);
+    CHECK(table.hub->stats().sent > 0);
+}
+
+TEST_CASE("a lost peer is dropped, and the others agree at every tick after",
+          "[net][lockstep][drop]") {
+    Table table(3, star_link(7), dropping(31));
+    table.settle();
+    for (int frame = 0; frame < 60; ++frame) {
+        REQUIRE(table.frame());
+    }
+    const auto turns_before = table.peers[1]->session->stats().turns_received;
+
+    // Peer 2 dies, as a killed process does: what it had in flight never arrives.
+    REQUIRE(table.hub->lose(2).has_value());
+    table.peers[2]->absent = true;
+
+    for (int frame = 0; frame < 300; ++frame) {
+        const bool ok = table.frame();
+        INFO("frame " << frame << ": " << table.peers[0]->error << " | " << table.peers[1]->error);
+        REQUIRE(ok);
+    }
+
+    auto& a = *table.peers[0];
+    auto& b = *table.peers[1];
+    require_agreement(a, b);
+    // Well past the point where peer 2 stopped: the session went on rather than stalling.
+    CHECK(a.hashes.size() > table.peers[2]->hashes.size() + 100);
+
+    // Both dropped the same peer at the same point, once.
+    REQUIRE(a.drops.size() == 1);
+    REQUIRE(b.drops.size() == 1);
+    CHECK(a.drops.front().source == atlas::sim::SourceId{2});
+    CHECK(b.drops.front().source == atlas::sim::SourceId{2});
+    CHECK(a.drops.front().first_missing_turn == b.drops.front().first_missing_turn);
+    CHECK(a.session->peers().size() == 2);
+    CHECK(b.session->peers().size() == 2);
+    // Not vacuous: peer 2's turns really did reach peer 1, through the relay, before it went.
+    CHECK(turns_before > 60);
+    CHECK_FALSE(a.session->divergence().has_value());
+}
+
+TEST_CASE("a gap in the lost peer's turns does not split the others", "[net][lockstep][drop]") {
+    // The case "drop at the highest tick the relay holds" would get wrong. One of peer 2's
+    // turns to the relay is parked, later ones arrive past it, and then peer 2 is lost, taking
+    // the parked one with it. The relay holds a set with a hole in it — and so does every other
+    // peer, because the relay forwarded exactly what it received. The drop is agreed on the set,
+    // by counting it, rather than on a tick.
+    Table table(3, star_link(11), dropping(47));
+    table.settle();
+    for (int frame = 0; frame < 40; ++frame) {
+        REQUIRE(table.frame());
+    }
+    REQUIRE(table.hub->arm_fault(2, 0, LinkFault::Hold).has_value());
+    for (int frame = 0; frame < 3; ++frame) {
+        REQUIRE(table.frame());
+    }
+    REQUIRE(table.hub->held_count() == 1);
+    REQUIRE(table.hub->lose(2).has_value());
+    table.peers[2]->absent = true;
+    CHECK(table.hub->held_count() == 0);
+
+    for (int frame = 0; frame < 300; ++frame) {
+        INFO("frame " << frame);
+        REQUIRE(table.frame());
+    }
+    require_agreement(*table.peers[0], *table.peers[1]);
+    REQUIRE(table.peers[0]->drops.size() == 1);
+    REQUIRE(table.peers[1]->drops.size() == 1);
+    CHECK(table.peers[0]->drops.front().first_missing_turn ==
+          table.peers[1]->drops.front().first_missing_turn);
+}
+
+TEST_CASE("a peer that says goodbye is dropped rather than ending everyone",
+          "[net][lockstep][drop]") {
+    Table table(3, star_link(13), dropping(59));
+    table.settle();
+    for (int frame = 0; frame < 50; ++frame) {
+        REQUIRE(table.frame());
+    }
+    table.peers[2]->session->quit();
+    table.peers[2]->absent = true;
+
+    for (int frame = 0; frame < 200; ++frame) {
+        INFO("frame " << frame);
+        REQUIRE(table.frame());
+    }
+    require_agreement(*table.peers[0], *table.peers[1]);
+    CHECK(table.peers[0]->drops.size() == 1);
+    CHECK(table.peers[1]->drops.size() == 1);
+}
+
+TEST_CASE("under the default policy a lost peer still ends the session", "[net][lockstep][drop]") {
+    // ADR-0017 D5 is still the default: nothing about a relay changes it.
+    Table table(3, star_link(17), SessionConfig{.input_delay = 2, .hash_check_interval = 8});
+    table.settle();
+    for (int frame = 0; frame < 30; ++frame) {
+        REQUIRE(table.frame());
+    }
+    REQUIRE(table.hub->lose(2).has_value());
+    table.peers[2]->absent = true;
+
+    bool ended = false;
+    for (int frame = 0; frame < 20 && !ended; ++frame) {
+        ended = !table.frame();
+    }
+    CHECK(ended);
+    CHECK(table.peers[0]->drops.empty());
+}
+
+TEST_CASE("dropping a peer needs a link that relays", "[net][lockstep][drop]") {
+    // On a mesh one peer can hold a turn of the lost one that nobody else ever will, and no
+    // count the others agree on can fix that.
+    auto hub = LoopbackHub::create({.peer_count = 3});
+    REQUIRE(hub.has_value());
+    const auto refused = Session::create((*hub)->end(0), dropping(1));
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message().contains("relays"));
+}
+
+TEST_CASE("the peers left after a drop finish without it", "[net][lockstep][drop][finish]") {
+    // A dropped peer owes nothing: not its turns, not its finish, not its hashes. A finish
+    // condition that still counted it would wait for ever on a peer that is gone (ADR-0022 D7).
+    Table table(3, star_link(19), dropping(71));
+    table.settle();
+    for (int frame = 0; frame < 30; ++frame) {
+        REQUIRE(table.frame());
+    }
+    REQUIRE(table.hub->lose(2).has_value());
+    table.peers[2]->absent = true;
+    table.run_to(80);
+
+    auto& a = *table.peers[0];
+    auto& b = *table.peers[1];
+    REQUIRE(a.drops.size() == 1);
+    REQUIRE(a.session->finish(79).has_value());
+    REQUIRE(b.session->finish(79).has_value());
+    for (int round = 0; round < 6; ++round) {
+        REQUIRE(Table::poll_one(a).has_value());
+        REQUIRE(Table::poll_one(b).has_value());
+    }
+    CHECK(a.session->finished());
+    CHECK(b.session->finished());
+    CHECK(a.hashes == b.hashes);
 }

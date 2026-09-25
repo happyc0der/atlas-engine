@@ -68,6 +68,14 @@ bool TurnGate::expects(SourceId source) const noexcept {
     return std::ranges::binary_search(m_ids, source);
 }
 
+std::optional<Tick> TurnGate::completed_before(SourceId source) const noexcept {
+    const auto at = std::ranges::lower_bound(m_expected, source, {}, &Source::id);
+    if (at == m_expected.end() || at->id != source) {
+        return std::nullopt;
+    }
+    return at->complete_before;
+}
+
 Status TurnGate::mark_complete(SourceId source, Tick tick) {
     const auto at = std::ranges::lower_bound(m_expected, source, {}, &Source::id);
     if (at == m_expected.end() || at->id != source) {

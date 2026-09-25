@@ -40,6 +40,9 @@ Session::Session(LinkEnd link, SessionConfig config)
     m_heard.resize(m_link.peer_count());
     m_peer_finish.resize(m_link.peer_count());
     m_compared_through.resize(m_link.peer_count());
+    m_turns_from.resize(m_link.peer_count());
+    m_dropped.resize(m_link.peer_count());
+    m_left.resize(m_link.peer_count());
 }
 
 Hello Session::own_hello() const {
@@ -69,6 +72,16 @@ Result<std::unique_ptr<Session>> Session::create(LinkEnd link, SessionConfig con
             Error(ErrorCode::InvalidArgument,
                   "an input delay of zero stamps a command for the tick that is already "
                   "running, so it would be late on arrival at every other peer"));
+    }
+
+    if (config.on_peer_lost == PeerLoss::Drop && link.topology() != Topology::Star) {
+        // The drop agreement rests on every message reaching the others through peer zero, so
+        // that peer zero holds everything anybody holds of a lost peer. On a mesh one peer can
+        // hold a turn nobody else ever will (ADR-0022, Alternatives).
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  "dropping a lost peer needs a link that relays through peer zero; on a mesh "
+                  "the remaining peers could hold different turns of the lost one"));
     }
 
     std::unique_ptr<Session> session(new Session(link, std::move(config)));
@@ -285,7 +298,9 @@ bool Session::finish_is_complete(Tick now) const noexcept {
     const Tick last_check = last - (last % m_config.hash_check_interval);
 
     for (std::size_t peer = 0; peer < m_peer_finish.size(); ++peer) {
-        if (peer == m_link.index()) {
+        // A dropped peer owes nothing: the session no longer expects its turns, its finish or
+        // its hashes.
+        if (peer == m_link.index() || m_dropped[peer]) {
             continue;
         }
         if (!m_peer_finish[peer].has_value()) {
@@ -551,6 +566,7 @@ Status Session::handle(std::size_t peer, const Message& message, Tick now, sim::
         }
         ++m_stats.turns_received;
         m_stats.commands_received += turn->commands.size();
+        ++m_turns_from[peer];
 
         if (auto status = turns.mark_complete(peer_source, turn->tick); !status) {
             return status;
@@ -569,9 +585,24 @@ Status Session::handle(std::size_t peer, const Message& message, Tick now, sim::
     }
 
     if (const auto* bye = std::get_if<Bye>(&message)) {
+        // Under `PeerLoss::Drop` a peer other than the relay that says goodbye is a peer the
+        // session goes on without, exactly like one the link lost: the relay drops it, and
+        // everyone else waits to be told how many of its turns to hold (ADR-0022 D2). The relay
+        // saying goodbye is still the end, because nobody reaches anybody without it.
+        if (m_config.on_peer_lost == PeerLoss::Drop && peer != 0 &&
+            m_state != SessionState::Handshaking) {
+            m_left[peer] = true;
+            ATLAS_LOG_WARN(kNet, "peer {} left ({}: {}); the session goes on without it", peer,
+                           to_string(bye->reason), bye->detail);
+            return {};
+        }
         return std::unexpected(
             Error(ErrorCode::Unavailable,
                   std::format("peer {} left: {} ({})", peer, to_string(bye->reason), bye->detail)));
+    }
+
+    if (const auto* drop = std::get_if<Drop>(&message)) {
+        return accept_drop(peer, *drop);
     }
 
     if (const auto* finish = std::get_if<Finish>(&message)) {
@@ -632,6 +663,12 @@ Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::T
             continue;
         }
         CommandInbox& inbox = m_link.inbox(peer);
+        if (m_dropped[peer]) {
+            // Nothing should arrive, and nothing that does is read: the drop already decided
+            // exactly which of its turns every peer runs.
+            inbox.drain(m_incoming);
+            continue;
+        }
         if (inbox.overflowed()) {
             end(ByeReason::Overflow,
                 std::format("peer {} sent faster than it could be read", peer));
@@ -684,13 +721,192 @@ Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::T
         }
     }
 
+    if (auto status = complete_drops(now, queue, turns, report); !status) {
+        end(ByeReason::ProtocolError, status.error().message());
+        return std::unexpected(std::move(status).error());
+    }
+
     if (finish_is_complete(now)) {
         m_state = SessionState::Finished;
         report.finished = true;
         ATLAS_LOG_INFO(kNet, "source {} finished at tick {}, agreed with every peer",
                        static_cast<std::uint32_t>(m_self), m_finish_tick.value_or(0));
+        return report;
+    }
+
+    // After the inboxes, so a peer that finished and then went away has had its last words
+    // read, and a session that finished in this poll is not told about a loss that no longer
+    // matters to it.
+    if (auto status = handle_lost_peers(now, queue, turns, report); !status) {
+        if (m_state != SessionState::Ended) {
+            end(ByeReason::ProtocolError, status.error().message());
+        }
+        return std::unexpected(std::move(status).error());
     }
     return report;
+}
+
+Status Session::read_everything_from(std::size_t peer, Tick now, sim::CommandQueue& queue,
+                                     sim::TurnGate& turns, sim::PollReport& report) {
+    CommandInbox& inbox = m_link.inbox(peer);
+    if (inbox.overflowed()) {
+        return std::unexpected(Error(
+            ErrorCode::Exhausted,
+            std::format("peer {} overran its inbox, so which of its turns arrived is not known",
+                        peer)));
+    }
+    // A buffer of its own: this runs from inside the poll's loop over another peer's messages,
+    // which are held in `m_incoming`. Allocates only when a peer is dropped.
+    std::vector<std::vector<std::byte>> waiting;
+    inbox.drain(waiting);
+    for (const auto& bytes : waiting) {
+        auto message = decode(bytes);
+        if (!message) {
+            return std::unexpected(std::move(message).error().context(
+                std::format("decoding a message from peer {}", peer)));
+        }
+        if (auto status = handle(peer, *message, now, queue, turns, report); !status) {
+            return status;
+        }
+    }
+    return {};
+}
+
+Status Session::handle_lost_peers(Tick now, sim::CommandQueue& queue, sim::TurnGate& turns,
+                                  sim::PollReport& report) {
+    for (std::size_t peer = 0; peer < m_link.peer_count(); ++peer) {
+        if (peer == m_link.index() || m_dropped[peer]) {
+            continue;
+        }
+        const bool gone = m_link.lost(peer);
+        if (!gone && !m_left[peer]) {
+            continue;
+        }
+
+        const bool running = m_state == SessionState::Running || m_state == SessionState::Finishing;
+        if (m_config.on_peer_lost != PeerLoss::Drop || !running) {
+            return std::unexpected(Error(
+                ErrorCode::Unavailable,
+                std::format("peer {} was lost, and this session ends when a peer is lost", peer)));
+        }
+        if (m_link.index() != 0) {
+            // **Only the relay decides.** Losing the relay is the end, because nobody reaches
+            // anybody without it. Any other loss this peer learns of — a goodbye relayed to it,
+            // or a link that reports every loss to every end, as the loopback does — is waited
+            // out until the relay's drop says exactly which of the lost peer's turns to keep.
+            if (peer == 0) {
+                return std::unexpected(Error(ErrorCode::Unavailable,
+                                             "the relay, peer 0, was lost, and without it no "
+                                             "peer reaches any other"));
+            }
+            continue;
+        }
+
+        // **The relay decides** (ADR-0022 D2). Everything the lost peer sent that reached here
+        // was filed here and forwarded in the same step, so after reading all of it, the count
+        // is what every other peer holds too.
+        if (auto status = read_everything_from(peer, now, queue, turns, report); !status) {
+            return status;
+        }
+        const Drop drop{.source = sim::SourceId{static_cast<std::uint32_t>(peer)},
+                        .turns = m_turns_from[peer]};
+        const auto bytes = encode(Message{drop});
+        if (!bytes) {
+            return std::unexpected(bytes.error());
+        }
+        if (auto status = m_link.broadcast(*bytes); !status) {
+            return std::unexpected(std::move(status).error().context("announcing a drop"));
+        }
+        if (auto status = apply_drop(peer, turns, report); !status) {
+            return status;
+        }
+    }
+    return {};
+}
+
+Status Session::accept_drop(std::size_t peer, const Drop& drop) {
+    const auto dropped = static_cast<std::size_t>(drop.source);
+    if (m_config.on_peer_lost != PeerLoss::Drop) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("peer {} dropped peer {}, and this session ends when a peer is lost "
+                              "rather than continuing without it; every peer must be set alike",
+                              peer, dropped)));
+    }
+    if (peer != 0) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("peer {} sent a drop; only the relay, peer 0, decides one", peer)));
+    }
+    if (dropped == m_link.index()) {
+        return std::unexpected(
+            Error(ErrorCode::Unavailable, "the relay lost this peer and went on without it"));
+    }
+    if (dropped == 0 || dropped >= m_link.peer_count()) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("the relay dropped peer {}, which is not a peer this session has",
+                              dropped)));
+    }
+    const bool pending = std::ranges::any_of(
+        m_pending_drops, [&drop](const Drop& held) { return held.source == drop.source; });
+    if (m_dropped[dropped] || pending) {
+        return std::unexpected(Error(ErrorCode::InvalidArgument,
+                                     std::format("the relay dropped peer {} twice", dropped)));
+    }
+    m_pending_drops.push_back(drop);
+    return {};
+}
+
+Status Session::complete_drops(Tick now, sim::CommandQueue& queue, sim::TurnGate& turns,
+                               sim::PollReport& report) {
+    // Swapped out first, so nothing read below can add to the list being walked.
+    std::vector<Drop> drops;
+    drops.swap(m_pending_drops);
+    for (const Drop& drop : drops) {
+        const auto dropped = static_cast<std::size_t>(drop.source);
+        // Everything the relay forwarded from the dropped peer arrived before the drop, on the
+        // relay's one ordered channel, but it sits in that peer's own inbox, which this poll
+        // may have left partly unread. Read all of it first, then compare.
+        if (auto status = read_everything_from(dropped, now, queue, turns, report); !status) {
+            return status;
+        }
+        if (m_turns_from[dropped] != drop.turns) {
+            return std::unexpected(Error(
+                ErrorCode::InvalidArgument,
+                std::format("the relay dropped peer {} having received {} of its turns, and this "
+                            "peer holds {}; the two would no longer run the same commands",
+                            dropped, drop.turns, m_turns_from[dropped])));
+        }
+        if (auto status = apply_drop(dropped, turns, report); !status) {
+            return status;
+        }
+    }
+    return {};
+}
+
+Status Session::apply_drop(std::size_t peer, sim::TurnGate& turns, sim::PollReport& report) {
+    const auto source = sim::SourceId{static_cast<std::uint32_t>(peer)};
+    const Tick first_missing = turns.completed_before(source).value_or(0);
+
+    m_dropped[peer] = true;
+    std::erase(m_peers, source);
+    // The gate keeps every remaining peer's progress and forgets this one (ADR-0014), so ticks
+    // it had completed stay as ready as they were and later ones stop waiting for it.
+    if (auto status = turns.expect_sources(m_peers); !status) {
+        return status;
+    }
+    m_peer_finish[peer].reset();
+    m_compared_through[peer].reset();
+    std::erase_if(m_pending_checks,
+                  [source](const HashCheck& check) { return check.source == source; });
+
+    report.dropped.push_back({.source = source, .first_missing_turn = first_missing});
+    ATLAS_LOG_WARN(kNet,
+                   "source {} goes on without peer {}: {} of its turns were received, complete "
+                   "up to tick {}",
+                   static_cast<std::uint32_t>(m_self), peer, m_turns_from[peer], first_missing);
+    return {};
 }
 
 }  // namespace atlas::net

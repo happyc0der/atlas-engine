@@ -85,6 +85,15 @@ struct EnetConfig {
     /// Largest message this hub will accept from a peer, matching the protocol's own bound so
     /// an oversized packet is refused at the socket rather than deeper in.
     std::size_t max_message_bytes = kMaxMessageBytes;
+
+    /// What the listener does when a connector disconnects or goes quiet (ADR-0022 D4).
+    ///
+    /// `End`, the default, ends the hub, exactly as before M25. `Drop` marks the connector lost
+    /// — nothing further from it is filed or forwarded, it is disconnected, and `lost` reports
+    /// it — and leaves the session to decide, which a session configured with the same policy
+    /// does by dropping it. **Set it to what the session is set to.** A connector losing the
+    /// listener always ends: the listener is the relay, and without it nobody reaches anybody.
+    PeerLoss on_peer_lost = PeerLoss::End;
 };
 
 /// The result of a `pump`, for a caller that wants to know why a session stopped.
@@ -176,6 +185,9 @@ class EnetHub final : public Link {
 
     /// Always a star.
     [[nodiscard]] Topology topology() const noexcept override { return Topology::Star; }
+
+    /// True for a connector the listener has given up on under `PeerLoss::Drop`.
+    [[nodiscard]] bool lost(std::size_t peer) const noexcept override;
 
     void pump(std::size_t peer) override;
     [[nodiscard]] CommandInbox& inbox(std::size_t peer, std::size_t from) override;

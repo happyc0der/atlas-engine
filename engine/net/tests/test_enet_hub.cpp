@@ -399,3 +399,63 @@ TEST_CASE("a quiet connector is noticed although another is still talking", "[ne
     CHECK(trio.listener->status().reason.contains("peer 2"));
     CHECK(trio.listener->status().reason.contains("heard from"));
 }
+
+TEST_CASE("under the drop policy a connector that leaves is lost, not the end", "[net][enet]") {
+    // ADR-0022 D4. The hub reports the loss and carries on; what to do about it is the
+    // session's, which under the same policy drops the peer through the relay.
+    auto trio = connected_trio({.on_peer_lost = atlas::net::PeerLoss::Drop});
+    trio.second.reset();
+
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (std::chrono::steady_clock::now() < deadline && !trio.listener->lost(2)) {
+        trio.listener->pump(0);
+        trio.first->pump(1);
+        std::this_thread::sleep_for(1ms);
+    }
+    REQUIRE(trio.listener->lost(2));
+    CHECK_FALSE(trio.listener->lost(1));
+    CHECK_FALSE(trio.listener->status().ended);
+
+    // The remaining connector still hears the listener, and the listener it.
+    const auto sent = bytes_of(16, std::byte{0x77});
+    REQUIRE(trio.listener->broadcast(0, sent).has_value());
+    REQUIRE(trio.first->broadcast(1, sent).has_value());
+    const auto until = std::chrono::steady_clock::now() + 5s;
+    while (std::chrono::steady_clock::now() < until &&
+           (trio.first->inbox(1, 0).depth() == 0 || trio.listener->inbox(0, 1).depth() == 0)) {
+        trio.listener->pump(0);
+        trio.first->pump(1);
+        std::this_thread::sleep_for(1ms);
+    }
+    CHECK(only_message(trio.first->inbox(1, 0)) == sent);
+    CHECK(only_message(trio.listener->inbox(0, 1)) == sent);
+}
+
+TEST_CASE("under the drop policy a quiet connector is lost, not the end", "[net][enet]") {
+    auto trio = connected_trio({.peer_timeout = 200ms, .on_peer_lost = atlas::net::PeerLoss::Drop});
+
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (std::chrono::steady_clock::now() < deadline && !trio.listener->lost(2)) {
+        REQUIRE(trio.first->broadcast(1, bytes_of(8)).has_value());
+        trio.first->pump(1);
+        trio.listener->pump(0);
+        std::this_thread::sleep_for(5ms);
+    }
+    REQUIRE(trio.listener->lost(2));
+    CHECK_FALSE(trio.listener->status().ended);
+    CHECK_FALSE(trio.listener->lost(1));
+}
+
+TEST_CASE("a connector that loses the listener ends even under the drop policy", "[net][enet]") {
+    // The listener is the relay. Without it nobody reaches anybody, so there is nothing to go
+    // on with.
+    auto trio = connected_trio({.on_peer_lost = atlas::net::PeerLoss::Drop});
+    trio.listener.reset();
+
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (std::chrono::steady_clock::now() < deadline && !trio.first->status().ended) {
+        trio.first->pump(1);
+        std::this_thread::sleep_for(1ms);
+    }
+    CHECK(trio.first->status().ended);
+}

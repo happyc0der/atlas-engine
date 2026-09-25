@@ -123,7 +123,20 @@ struct Finish {
     Tick last_tick = 0;
 };
 
-using Message = std::variant<Hello, Welcome, Turn, HashCheck, Bye, Finish>;
+/// The relay has lost a peer, and the session goes on without it from here (ADR-0022).
+///
+/// Sent only by peer zero, which relays everything, and only under a session whose policy is
+/// to drop rather than end. `turns` is how many of the lost peer's turns the relay received,
+/// which is exactly how many it forwarded: every other peer checks that it holds the same
+/// number before it stops expecting the lost one. A count rather than a tick, because the lost
+/// peer's own stream to the relay may have had gaps or arrived out of order, and a count of a
+/// set is what two peers holding the same set agree on.
+struct Drop {
+    sim::SourceId source = sim::SourceId::Local;
+    std::uint64_t turns = 0;
+};
+
+using Message = std::variant<Hello, Welcome, Turn, HashCheck, Bye, Finish, Drop>;
 
 /// The type tag of a message, without decoding the rest of it.
 ///
