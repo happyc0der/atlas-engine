@@ -13,6 +13,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <vector>
@@ -583,4 +584,54 @@ TEST_CASE("one peer's backlog does not starve another in the same poll", "[net][
     // with no cap at all, which is a test of nothing — the same shape of gap that
     // `seed_changes_hash` exists to close in the lab.
     CHECK((*hub)->end(0).inbox(1).depth() > 0);
+}
+
+TEST_CASE("a turn that arrives before every announcement waits for them", "[net][session]") {
+    // Found by M25's first three-process run, one run in forty under load. A session reads each
+    // peer's inbox in turn, so the order *between* senders is lost: peer 2 could read the host's
+    // first turn before peer 1's announcement, and refused it as coming from a source the
+    // session did not yet expect. Every peer exited 1 before a tick ran. Two peers could never
+    // meet this, because a peer's own announcement precedes its own turns on one channel.
+    auto made = LoopbackHub::create({.peer_count = 3});
+    REQUIRE(made.has_value());
+    auto hub = *std::move(made);
+    // The first message from peer 1 to peer 2 is peer 1's announcement. Parked, it arrives
+    // after everything else, which is the order the three processes met by chance.
+    REQUIRE(hub->arm_fault(1, 2, atlas::net::LinkFault::Hold).has_value());
+
+    std::array<CommandQueue, 3> queues;
+    std::array<TurnGate, 3> gates;
+    std::array<std::unique_ptr<Session>, 3> sessions;
+    for (std::size_t i = 0; i < 3; ++i) {
+        REQUIRE(queues[i].register_handler(kPoke, poke_handler()).has_value());
+        auto session = Session::create(hub->end(i), {});
+        REQUIRE(session.has_value());
+        sessions[i] = *std::move(session);
+    }
+
+    for (int round = 0; round < 4; ++round) {
+        for (std::size_t i = 0; i < 2; ++i) {
+            REQUIRE(sessions[i]->poll(0, queues[i], gates[i]).has_value());
+        }
+    }
+    REQUIRE(sessions[0]->running());
+    REQUIRE(sessions[0]->send_turn(0, {}, gates[0]).has_value());
+
+    // Peer 2 now holds the host's announcement and its first turn, and not peer 1's
+    // announcement. It must wait for it rather than refuse the turn.
+    for (int round = 0; round < 3; ++round) {
+        REQUIRE(sessions[2]->poll(0, queues[2], gates[2]).has_value());
+    }
+    CHECK(sessions[2]->state() == SessionState::Handshaking);
+
+    hub->release_held();
+    for (int round = 0; round < 3; ++round) {
+        REQUIRE(sessions[2]->poll(0, queues[2], gates[2]).has_value());
+    }
+    REQUIRE(sessions[2]->running());
+    // And the turn it waited on was read, not lost: the host is no longer what tick 0 waits for.
+    std::vector<SourceId> waiting;
+    gates[2].waiting_on(0, waiting);
+    CHECK(std::ranges::find(waiting, SourceId{0}) == waiting.end());
+    CHECK(std::ranges::find(waiting, SourceId{2}) != waiting.end());
 }

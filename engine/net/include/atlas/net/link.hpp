@@ -9,10 +9,14 @@
 /// thing is gone. `Session` takes it by value and always has; what must outlive the session is
 /// the `Link` behind it.
 ///
-/// **The interface is four calls, and that is deliberate.** It is exactly what `LinkEnd` already
-/// asked of `LoopbackHub` before M17 gave the asking a name — no more, because every method here
-/// is one a socket has to mean something by. `broadcast` is not among them: it is a loop over
-/// `send`, so it stays on `LinkEnd` where one implementation serves every backend.
+/// **The interface was four calls until M25, and each addition has a reason.** It began as
+/// exactly what `LinkEnd` already asked of `LoopbackHub` before M17 gave the asking a name, with
+/// `broadcast` a loop over `send` on `LinkEnd`. ADR-0022 found that a socket session could not
+/// have a third peer, because the socket hub is a star and a connector reaches only the
+/// listener. The fix is a relay, and a relay needs to know that a message is for everyone rather
+/// than for one peer — so `broadcast` became a call a backend may implement, with the loop as
+/// its default. `topology` says which kind of link this is, because whether a lost peer can be
+/// dropped at an agreed tick depends on it.
 ///
 /// **What is not here is as decided as what is.** No connect, no disconnect, no address, no
 /// notion of a peer arriving or leaving. A session is handed a link with its participants
@@ -27,11 +31,22 @@
 #include <atlas/net/inbox.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
 
 namespace atlas::net {
 
 class LinkEnd;
+
+/// How messages travel between peers (ADR-0022).
+enum class Topology : std::uint8_t {
+    /// Every peer reaches every other directly. The loopback's default.
+    Mesh,
+    /// Every peer reaches the others through peer zero, which forwards what it receives in the
+    /// order it received it. The socket hub, whose connectors hold a connection to the listener
+    /// and to nobody else.
+    Star,
+};
 
 /// Whatever moves messages between peers: an in-memory hub, or a socket.
 class Link {
@@ -54,6 +69,16 @@ class Link {
     /// for sending to oneself.
     [[nodiscard]] virtual Status send(std::size_t from, std::size_t to,
                                       std::span<const std::byte> message) = 0;
+
+    /// Send one whole message from one peer to every other.
+    ///
+    /// The default is a loop over `send`, which is right for a mesh. A star overrides it,
+    /// because there a peer other than zero cannot reach the others except by asking peer zero
+    /// to forward — and peer zero can only do that if it knows the message is for everyone.
+    [[nodiscard]] virtual Status broadcast(std::size_t from, std::span<const std::byte> message);
+
+    /// Which kind of link this is. See `Topology`.
+    [[nodiscard]] virtual Topology topology() const noexcept = 0;
 
     /// Give `peer` whatever has arrived for it.
     ///

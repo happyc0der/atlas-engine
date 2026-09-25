@@ -13,19 +13,22 @@ Status LinkEnd::send_to(std::size_t peer, std::span<const std::byte> message) {
     return m_link->send(m_index, peer, message);
 }
 
-Status LinkEnd::broadcast(std::span<const std::byte> message) {
-    // A loop over `send` rather than a method every backend implements. Broadcasting means the
-    // same thing on every link there could be, so writing it once is the whole reason `Link`
-    // has four calls instead of five.
-    for (std::size_t peer = 0; peer < m_link->peer_count(); ++peer) {
-        if (peer == m_index) {
+Status Link::broadcast(std::size_t from, std::span<const std::byte> message) {
+    // A loop over `send`, which is what broadcasting means on a mesh. A star overrides this,
+    // because there it means asking peer zero to forward (ADR-0022 D1).
+    for (std::size_t peer = 0; peer < peer_count(); ++peer) {
+        if (peer == from) {
             continue;
         }
-        if (auto status = m_link->send(m_index, peer, message); !status) {
+        if (auto status = send(from, peer, message); !status) {
             return status;
         }
     }
     return {};
+}
+
+Status LinkEnd::broadcast(std::span<const std::byte> message) {
+    return m_link->broadcast(m_index, message);
 }
 
 void LinkEnd::pump() {

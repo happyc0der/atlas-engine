@@ -101,6 +101,19 @@ struct EnetStatus {
 ///
 /// **Direct address only** (ADR-0017 D4): connect by host and port. No encryption, no traversal,
 /// no lobby, each deferred with a trigger in `docs/DEFERRED.md`.
+///
+/// **A star, and the listener relays** (ADR-0022 D1). A connector holds one connection, to the
+/// listener. What a connector broadcasts goes to the listener once, marked as for everyone; the
+/// listener files it for itself and forwards it to every other connector in the same step, on
+/// the same reliable ordered channel it uses for its own messages, marked with where it came
+/// from. So the listener holds everything it has forwarded, and every connector receives the
+/// listener's own messages and the forwarded ones in the order the listener produced them —
+/// the two properties a drop at an agreed tick rests on. Until M25 there was no relay, and a
+/// session of three failed before its first tick.
+///
+/// **The listener is trusted.** It can forge any connector's messages, because it relays them.
+/// Nothing here authenticates anybody; ADR-0017 D4 deferred that, and ADR-0022 records the
+/// widening a third peer brings.
 class EnetHub final : public Link {
   public:
     /// Bind a port and prepare for `expected_peers`, without waiting for any of them.
@@ -123,6 +136,14 @@ class EnetHub final : public Link {
     /// need to agree before any `SourceId` is stamped — a `SourceId` reaches the replay and the
     /// hash, so it cannot be provisional.
     ///
+    /// **Nobody is told until everybody has arrived.** A connector cannot send until it knows
+    /// its index, and a message sent before the last connector joined would be forwarded to
+    /// fewer peers than the session has. Holding every index back until the set is complete
+    /// makes that impossible rather than handled. The index message also carries the session's
+    /// size, so a connector knows how many peers there are rather than inferring it from its
+    /// own index — which it did until M25, and which made the second of three connectors
+    /// believe it was in a session of two.
+    ///
     /// This is the one place this class waits: a session cannot begin without its participants,
     /// and there is nothing to poll on behalf of yet. Fails if the deadline passes first,
     /// saying how many arrived.
@@ -144,8 +165,18 @@ class EnetHub final : public Link {
     EnetHub& operator=(EnetHub&&) = delete;
 
     [[nodiscard]] std::size_t peer_count() const noexcept override;
+    /// Send to one peer. A connector may send only to the listener: it has no connection to
+    /// anybody else, and reaches them only by `broadcast`, through the relay.
     [[nodiscard]] Status send(std::size_t from, std::size_t to,
                               std::span<const std::byte> message) override;
+
+    /// Send to every peer. From a connector this is one packet to the listener, which forwards
+    /// it; from the listener it is one packet to each connector.
+    [[nodiscard]] Status broadcast(std::size_t from, std::span<const std::byte> message) override;
+
+    /// Always a star.
+    [[nodiscard]] Topology topology() const noexcept override { return Topology::Star; }
+
     void pump(std::size_t peer) override;
     [[nodiscard]] CommandInbox& inbox(std::size_t peer, std::size_t from) override;
 

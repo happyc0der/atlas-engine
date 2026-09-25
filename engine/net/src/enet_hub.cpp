@@ -39,11 +39,26 @@ constexpr std::size_t kChannelCount = 1;
 
 /// The handshake message the listener sends, before ADR-0014's own `Hello` exchange.
 ///
-/// Four bytes: a marker and the index assigned. Deliberately not a `net::Message` — those are
-/// the session's, and the session cannot start until it knows which `SourceId` it is. This is
-/// the one thing that has to happen before the protocol proper, so it is as small as it can be.
+/// Six bytes: a marker, the index assigned, and the session's size, each index little-endian in
+/// two bytes. Deliberately not a `net::Message` — those are the session's, and the session
+/// cannot start until it knows which `SourceId` it is. This is the one thing that has to happen
+/// before the protocol proper, so it is as small as it can be. The size was added in M25
+/// (ADR-0022): before it a connector inferred the size from its own index, which is right only
+/// for the last connector to join.
 constexpr std::array<std::byte, 2> kIndexMarker{std::byte{'A'}, std::byte{'X'}};
-constexpr std::size_t kIndexMessageBytes = 4;
+constexpr std::size_t kIndexMessageBytes = 6;
+
+/// Every packet after the index message starts with two bytes of transport framing.
+///
+/// **Byte 0 is the origin**: the peer the message came from, which differs from the peer that
+/// sent the packet when the listener forwards. **Byte 1 is the scope**: whether the message is
+/// for the receiver alone or, from a connector, for everyone, which is what tells the listener
+/// to forward it (ADR-0022 D1). Framing rather than a `net::Message` field, for the reason the
+/// index message is: the session owns what a message says, and the transport owns how it
+/// travels (ADR-0017 D6).
+constexpr std::size_t kHeaderBytes = 2;
+constexpr std::uint8_t kScopeReceiver = 0;
+constexpr std::uint8_t kScopeEveryone = 1;
 
 /// At most one runtime, tracked here rather than hidden inside the hub (ADR-0017 D10).
 ///
@@ -119,7 +134,11 @@ struct EnetHub::Impl {
     std::vector<std::unique_ptr<CommandInbox>> inboxes;
 
     EnetStatus status;
-    std::chrono::steady_clock::time_point last_heard;
+
+    /// When each peer was last heard from, by index. Per peer since M25: with a relay the
+    /// listener hears from several connectors, and one that went quiet must not be hidden by
+    /// another that is still talking. A connector has one entry that matters, the listener's.
+    std::vector<std::chrono::steady_clock::time_point> last_heard;
 
     [[nodiscard]] std::size_t index_of(const ENetPeer* peer) const {
         for (std::size_t i = 0; i < peers.size(); ++i) {
@@ -137,7 +156,47 @@ struct EnetHub::Impl {
         for (auto& box : inboxes) {
             box = std::make_unique<CommandInbox>();
         }
-        last_heard = std::chrono::steady_clock::now();
+        heard_everyone_now();
+    }
+
+    void heard_everyone_now() { last_heard.assign(peers.size(), std::chrono::steady_clock::now()); }
+
+    /// Queue one framed packet for one peer. The only place a packet is built.
+    [[nodiscard]] static Status send_packet(ENetPeer* peer, std::size_t origin, std::uint8_t scope,
+                                            std::span<const std::byte> message) {
+        ENetPacket* packet =
+            enet_packet_create(nullptr, kHeaderBytes + message.size(), ENET_PACKET_FLAG_RELIABLE);
+        if (packet == nullptr) {
+            return std::unexpected(Error(ErrorCode::Exhausted, "could not allocate a packet"));
+        }
+        packet->data[0] = static_cast<enet_uint8>(origin);
+        packet->data[1] = scope;
+        if (!message.empty()) {
+            std::memcpy(packet->data + kHeaderBytes, message.data(), message.size());
+        }
+        if (enet_peer_send(peer, kChannel, packet) != 0) {
+            // Ownership passes to ENet on success only, so this is the one path that must
+            // destroy it. Leaking here would be invisible until a session had run for a long
+            // time.
+            enet_packet_destroy(packet);
+            return std::unexpected(Error(ErrorCode::Unavailable, "could not queue the message"));
+        }
+        return {};
+    }
+
+    /// Read one packet from `from`, file it, and forward it if this is the listener and the
+    /// connector asked for that.
+    void receive(std::size_t from, const ENetPacket& packet);
+
+    /// File a message from `origin` for this peer, ending the hub if the inbox refuses it.
+    void deliver(std::size_t origin, std::span<const std::byte> message) {
+        auto& box = *inboxes[(local * peers.size()) + origin];
+        // Copied out of ENet's buffer, which is freed by the caller. The inbox owns what it
+        // holds precisely so the transport's allocation lifetime stops here.
+        std::vector<std::byte> copy(message.begin(), message.end());
+        if (box.push(std::move(copy)) == CommandInbox::Push::Overflowed) {
+            end(std::format("peer {} overran its inbox", origin));
+        }
     }
 
     void end(std::string reason) {
@@ -236,6 +295,17 @@ Status EnetHub::send(std::size_t from, std::size_t to, std::span<const std::byte
     if (to >= m_impl->peers.size() || to == m_impl->local) {
         return std::unexpected(Error(ErrorCode::OutOfRange, "no such peer, or sending to oneself"));
     }
+    if (m_impl->local != 0 && to != 0) {
+        // A connector has one connection, to the listener. It reaches everybody else only by
+        // broadcast, which the listener forwards; a message for one other connector alone would
+        // need the listener to forward something it does not itself receive, and the drop
+        // agreement rests on it holding everything it forwards (ADR-0022 D2).
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument,
+                  std::format("a connector reaches peer {} only by broadcast, through the "
+                              "listener",
+                              to)));
+    }
     if (m_impl->status.ended) {
         return std::unexpected(Error(ErrorCode::Unavailable, m_impl->status.reason));
     }
@@ -249,17 +319,41 @@ Status EnetHub::send(std::size_t from, std::size_t to, std::span<const std::byte
     if (peer == nullptr) {
         return std::unexpected(Error(ErrorCode::Unavailable, "that peer has gone"));
     }
+    return Impl::send_packet(peer, m_impl->local, kScopeReceiver, message);
+}
 
-    ENetPacket* packet =
-        enet_packet_create(message.data(), message.size(), ENET_PACKET_FLAG_RELIABLE);
-    if (packet == nullptr) {
-        return std::unexpected(Error(ErrorCode::Exhausted, "could not allocate a packet"));
+Status EnetHub::broadcast(std::size_t from, std::span<const std::byte> message) {
+    if (from != m_impl->local) {
+        return std::unexpected(
+            Error(ErrorCode::InvalidArgument, "a socket hub sends only as its own peer"));
     }
-    if (enet_peer_send(peer, kChannel, packet) != 0) {
-        // Ownership passes to ENet on success only, so this is the one path that must destroy
-        // it. Leaking here would be invisible until a session had run for a long time.
-        enet_packet_destroy(packet);
-        return std::unexpected(Error(ErrorCode::Unavailable, "could not queue the message"));
+    if (m_impl->status.ended) {
+        return std::unexpected(Error(ErrorCode::Unavailable, m_impl->status.reason));
+    }
+    if (message.size() > m_impl->config.max_message_bytes) {
+        return std::unexpected(Error(
+            ErrorCode::OutOfRange, std::format("a message of {} bytes is past the limit of {}",
+                                               message.size(), m_impl->config.max_message_bytes)));
+    }
+
+    if (m_impl->local != 0) {
+        // Once, to the listener, marked for everyone. The listener files it for itself and
+        // forwards it, so it holds every copy anybody else will receive.
+        ENetPeer* listener = m_impl->peers[0];
+        if (listener == nullptr) {
+            return std::unexpected(Error(ErrorCode::Unavailable, "the listener has gone"));
+        }
+        return Impl::send_packet(listener, m_impl->local, kScopeEveryone, message);
+    }
+
+    for (std::size_t to = 1; to < m_impl->peers.size(); ++to) {
+        ENetPeer* peer = m_impl->peers[to];
+        if (peer == nullptr) {
+            return std::unexpected(Error(ErrorCode::Unavailable, "that peer has gone"));
+        }
+        if (auto status = Impl::send_packet(peer, 0, kScopeReceiver, message); !status) {
+            return status;
+        }
     }
     return {};
 }
@@ -283,21 +377,10 @@ void EnetHub::pump(std::size_t peer) {
         case ENET_EVENT_TYPE_RECEIVE: {
             const std::size_t from = m_impl->index_of(event.peer);
             if (from < m_impl->peers.size()) {
-                // The one place this file crosses from the library's bytes to ours. ENet hands
-                // back `enet_uint8*`; `as_bytes` is the permitted direction and there is no
-                // inverse, so the cast is unavoidable and its extent is the copy below.
-                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-                const auto* data = reinterpret_cast<const std::byte*>(event.packet->data);
-                auto& box = inbox(m_impl->local, from);
-                // Copied out of ENet's buffer, which is freed below. The inbox owns what it
-                // holds precisely so the transport's allocation lifetime stops here.
-                std::vector<std::byte> message(data, data + event.packet->dataLength);
-                if (box.push(std::move(message)) == CommandInbox::Push::Overflowed) {
-                    m_impl->end(std::format("peer {} overran its inbox", from));
-                }
+                m_impl->receive(from, *event.packet);
+                m_impl->last_heard[from] = std::chrono::steady_clock::now();
             }
             enet_packet_destroy(event.packet);
-            m_impl->last_heard = std::chrono::steady_clock::now();
             break;
         }
         case ENET_EVENT_TYPE_DISCONNECT: {
@@ -325,28 +408,102 @@ void EnetHub::pump(std::size_t peer) {
     }
 
     // The one deadline in the design, and it is here rather than in the turn gate, so the gate
-    // still decides readiness from who has reported and never from a clock (ADR-0014).
-    const auto quiet = std::chrono::steady_clock::now() - m_impl->last_heard;
-    if (!m_impl->status.ended && quiet > m_impl->config.peer_timeout) {
-        m_impl->end(
-            std::format("no peer has been heard from for {}ms",
-                        std::chrono::duration_cast<std::chrono::milliseconds>(quiet).count()));
+    // still decides readiness from who has reported and never from a clock (ADR-0014). Per
+    // peer since M25: with a relay, one connector still talking must not hide another that
+    // has gone quiet.
+    const auto now = std::chrono::steady_clock::now();
+    for (std::size_t peer_index = 0; peer_index < m_impl->peers.size(); ++peer_index) {
+        if (m_impl->status.ended || m_impl->peers[peer_index] == nullptr) {
+            continue;
+        }
+        const auto quiet = now - m_impl->last_heard[peer_index];
+        if (quiet > m_impl->config.peer_timeout) {
+            m_impl->end(
+                std::format("peer {} has not been heard from for {}ms", peer_index,
+                            std::chrono::duration_cast<std::chrono::milliseconds>(quiet).count()));
+        }
+    }
+}
+
+void EnetHub::Impl::receive(std::size_t from, const ENetPacket& packet) {
+    if (status.ended) {
+        return;
+    }
+    if (packet.dataLength < kHeaderBytes) {
+        end(std::format("peer {} sent a packet too short to say where it came from", from));
+        return;
+    }
+    // The one place this file crosses from the library's bytes to ours. ENet hands back
+    // `enet_uint8*`; `as_bytes` is the permitted direction and there is no inverse, so the cast
+    // is unavoidable and its extent is the span below.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    const auto* data = reinterpret_cast<const std::byte*>(packet.data);
+    const auto origin = static_cast<std::size_t>(packet.data[0]);
+    const std::uint8_t scope = packet.data[1];
+    const std::span<const std::byte> message(data + kHeaderBytes, packet.dataLength - kHeaderBytes);
+
+    if (local != 0) {
+        // A connector hears only from the listener, which says whose message each one is.
+        if (origin >= peers.size() || origin == local || scope != kScopeReceiver) {
+            end(std::format("the listener sent a packet framed as from peer {} with "
+                            "scope {}, which this connector cannot file",
+                            origin, scope));
+            return;
+        }
+        deliver(origin, message);
+        return;
+    }
+
+    // The listener. A connector speaks only for itself: the origin must be the connection it
+    // arrived on, or one connector could have the relay forward messages in another's name.
+    if (origin != from || scope > kScopeEveryone) {
+        end(std::format("peer {} sent a packet framed as from peer {} with scope {}", from, origin,
+                        scope));
+        return;
+    }
+    deliver(from, message);
+    if (scope != kScopeEveryone) {
+        return;
+    }
+    // **Filed and forwarded in the same step** (ADR-0022 D1). Nothing can reach another
+    // connector that the listener has not itself filed, and each connector receives the
+    // listener's own messages and the forwarded ones in the one order the listener produced.
+    for (std::size_t to = 1; to < peers.size(); ++to) {
+        ENetPeer* peer = peers[to];
+        if (to == from || peer == nullptr) {
+            continue;
+        }
+        if (auto forwarded = send_packet(peer, from, kScopeReceiver, message); !forwarded) {
+            end(std::format("could not forward peer {}'s message to peer {}: {}", from, to,
+                            forwarded.error().message()));
+            return;
+        }
     }
 }
 
 namespace {
 
-/// Pack "you are peer N" into four bytes.
-[[nodiscard]] std::array<std::byte, kIndexMessageBytes> index_message(std::size_t index) {
-    return {kIndexMarker[0], kIndexMarker[1], static_cast<std::byte>(index & 0xFFU),
-            static_cast<std::byte>((index >> 8U) & 0xFFU)};
+/// Pack "you are peer N of M" into six bytes.
+[[nodiscard]] std::array<std::byte, kIndexMessageBytes> index_message(std::size_t index,
+                                                                      std::size_t count) {
+    return {kIndexMarker[0],
+            kIndexMarker[1],
+            static_cast<std::byte>(index & 0xFFU),
+            static_cast<std::byte>((index >> 8U) & 0xFFU),
+            static_cast<std::byte>(count & 0xFFU),
+            static_cast<std::byte>((count >> 8U) & 0xFFU)};
 }
+
+struct Assigned {
+    std::size_t index = 0;
+    std::size_t count = 0;
+};
 
 /// Read one back, refusing anything that is not exactly it.
 ///
 /// Untrusted like every other input: a listener that sent something else, or a stray packet
 /// from an unrelated program on the same port, must not be read as an index.
-[[nodiscard]] Result<std::size_t> read_index_message(const ENetPacket& packet) {
+[[nodiscard]] Result<Assigned> read_index_message(const ENetPacket& packet) {
     if (packet.dataLength != kIndexMessageBytes) {
         return std::unexpected(
             Error(ErrorCode::MalformedData, "the listener's first message was the wrong size"));
@@ -356,14 +513,16 @@ namespace {
         return std::unexpected(
             Error(ErrorCode::MalformedData, "the listener's first message was not one of ours"));
     }
-    const auto low = static_cast<std::size_t>(packet.data[2]);
-    const auto high = static_cast<std::size_t>(packet.data[3]);
-    const std::size_t index = low | (high << 8U);
-    if (index == 0 || index >= kMaxPeers) {
+    const std::size_t index =
+        static_cast<std::size_t>(packet.data[2]) | (static_cast<std::size_t>(packet.data[3]) << 8U);
+    const std::size_t count =
+        static_cast<std::size_t>(packet.data[4]) | (static_cast<std::size_t>(packet.data[5]) << 8U);
+    if (count < 2 || count > kMaxPeers || index == 0 || index >= count) {
         return std::unexpected(
-            Error(ErrorCode::OutOfRange, std::format("the listener assigned index {}", index)));
+            Error(ErrorCode::OutOfRange,
+                  std::format("the listener assigned index {} in a session of {}", index, count)));
     }
-    return index;
+    return Assigned{.index = index, .count = count};
 }
 
 }  // namespace
@@ -411,45 +570,58 @@ Status EnetHub::accept(std::chrono::milliseconds timeout) {
     // **The listener assigns every index, in connection order** (ADR-0017 D8). Somebody must,
     // and both ends need to agree before any SourceId is stamped, because a SourceId reaches
     // the replay and the hash and cannot be provisional.
-    std::size_t next_index = 1;
+    //
+    // **And tells nobody until everybody is here** (ADR-0022 D1). A connector cannot send until
+    // it knows its index, so holding the indices back means no message can be sent while the
+    // relay still has fewer peers to forward it to than the session will have.
+    std::vector<ENetPeer*> arrived;
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (next_index < expected_peers) {
+    while (arrived.size() + 1 < expected_peers) {
         if (std::chrono::steady_clock::now() > deadline) {
             return std::unexpected(
                 Error(ErrorCode::Unavailable,
                       std::format("only {} of {} peer(s) connected before the deadline",
-                                  next_index - 1, expected_peers - 1)));
+                                  arrived.size(), expected_peers - 1)));
         }
 
         ENetEvent event{};
         if (enet_host_service(m_impl->host, &event, 50) <= 0) {
             continue;
         }
-        if (event.type != ENET_EVENT_TYPE_CONNECT) {
-            if (event.type == ENET_EVENT_TYPE_RECEIVE) {
-                enet_packet_destroy(event.packet);
-            }
+        if (event.type == ENET_EVENT_TYPE_RECEIVE) {
+            // Nobody has an index yet, so nothing sent now is one of ours.
+            enet_packet_destroy(event.packet);
             continue;
         }
+        if (event.type == ENET_EVENT_TYPE_DISCONNECT) {
+            // Left before the session began. Its place goes to whoever connects next, which is
+            // safe only because no index has been announced.
+            std::erase(arrived, event.peer);
+            continue;
+        }
+        if (event.type == ENET_EVENT_TYPE_CONNECT) {
+            arrived.push_back(event.peer);
+            ATLAS_LOG_INFO(kNet, "peer {} connected", arrived.size());
+        }
+    }
 
-        const auto assigned = index_message(next_index);
+    for (std::size_t i = 0; i < arrived.size(); ++i) {
+        const std::size_t index = i + 1;
+        const auto assigned = index_message(index, expected_peers);
         ENetPacket* packet =
             enet_packet_create(assigned.data(), assigned.size(), ENET_PACKET_FLAG_RELIABLE);
-        if (packet == nullptr || enet_peer_send(event.peer, kChannel, packet) != 0) {
+        if (packet == nullptr || enet_peer_send(arrived[i], kChannel, packet) != 0) {
             if (packet != nullptr) {
                 enet_packet_destroy(packet);
             }
             return std::unexpected(
                 Error(ErrorCode::Unavailable, "could not tell a peer which index it is"));
         }
-        enet_host_flush(m_impl->host);
-
-        m_impl->peers[next_index] = event.peer;
-        ATLAS_LOG_INFO(kNet, "peer {} connected", next_index);
-        ++next_index;
+        m_impl->peers[index] = arrived[i];
     }
+    enet_host_flush(m_impl->host);
 
-    m_impl->last_heard = std::chrono::steady_clock::now();
+    m_impl->heard_everyone_now();
     return {};
 }
 
@@ -519,11 +691,12 @@ Result<std::unique_ptr<EnetHub>> EnetHub::connect(const EnetRuntime& runtime, st
 
         // The listener is peer zero by construction, so a connector knows the whole shape from
         // its own index alone: it and everyone below it exist.
-        hub->m_impl->local = *index;
-        hub->m_impl->make_inboxes(*index + 1);
+        hub->m_impl->local = index->index;
+        hub->m_impl->make_inboxes(index->count);
         hub->m_impl->peers[0] = listener;
         hub->m_impl->bound_port = hub->m_impl->host->address.port;
-        ATLAS_LOG_INFO(kNet, "connected to {}:{} as peer {}", host_text, port, *index);
+        ATLAS_LOG_INFO(kNet, "connected to {}:{} as peer {} of {}", host_text, port, index->index,
+                       index->count);
         return hub;
     }
 

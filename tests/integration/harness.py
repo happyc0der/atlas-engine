@@ -31,19 +31,24 @@ def run(binary: str, args: list[str], cwd: str | None = None) -> subprocess.Comp
 
 
 class Session:
-    """Two lab processes talking over a socket, and the cleanup that makes them safe to run.
+    """Lab processes talking over a socket, and the cleanup that makes them safe to run.
 
-    **Nothing else in this harness manages two processes at once**, and the reasons it is worth
-    writing carefully rather than inline are all failure modes rather than features:
+    One listener and, by default, one connector. **Nothing else in this harness manages several
+    processes at once**, and the reasons it is worth writing carefully rather than inline are
+    all failure modes rather than features:
 
     - The listener chooses its own port and prints it. Asking for a constant would make two
       cases running concurrently fight over it, and the only thing worse than a flaky network
       test is a flaky network test that is flaky because of another test.
-    - Either process can fail before the other starts, so the port is waited for with a
-      deadline rather than a sleep, and a listener that dies is noticed instead of waited on.
-    - **Both are killed on any exit path.** A test that raises while a peer is still running
-      leaves an orphan holding a port, and the next run of the same case then fails for a
-      reason that has nothing to do with the code under test.
+    - Any process can fail before the others start, so the port is waited for with a deadline
+      rather than a sleep, and a listener that dies is noticed instead of waited on.
+    - **Every process is killed on any exit path.** A test that raises while a peer is still
+      running leaves an orphan holding a port, and the next run of the same case then fails for
+      a reason that has nothing to do with the code under test.
+
+    More than one connector since M25, when the listener began relaying (ADR-0022) and a
+    session of three became possible. Before that no case had ever started three processes,
+    which is how a lab that accepted `--expect 16` could fail at three unnoticed.
     """
 
     #: Long enough for a loaded continuous-integration runner, short enough that a hung pair
@@ -53,23 +58,30 @@ class Session:
 
     PORT_LINE = re.compile(r"^listening on port (\d+)$", re.MULTILINE)
 
-    def __init__(self, binary: str, shared: list[str]):
+    def __init__(self, binary: str, shared: list[str], connectors: int = 1):
         self.binary = binary
         self.shared = shared
         self.listener: subprocess.Popen | None = None
-        self.connector: subprocess.Popen | None = None
+        self.connectors: list[subprocess.Popen] = []
         self.listener_log = tempfile.NamedTemporaryFile(mode="w+", suffix=".listener",
                                                         delete=False)
-        self.connector_log = tempfile.NamedTemporaryFile(mode="w+", suffix=".connector",
-                                                         delete=False)
+        self.connector_logs = [
+            tempfile.NamedTemporaryFile(mode="w+", suffix=f".connector{i + 1}", delete=False)
+            for i in range(connectors)
+        ]
         self._listener_final = ""
-        self._connector_final = ""
+        self._connector_finals: list[str] = []
+
+    @property
+    def connector(self) -> subprocess.Popen | None:
+        """The first connector, which is the only one in a session of two."""
+        return self.connectors[0] if self.connectors else None
 
     def __enter__(self) -> "Session":
         return self
 
     def __exit__(self, *_: object) -> None:
-        for process in (self.listener, self.connector):
+        for process in (self.listener, *self.connectors):
             if process is not None and process.poll() is None:
                 process.kill()
                 process.wait(timeout=10)
@@ -77,23 +89,27 @@ class Session:
         # block that guaranteed the processes were cleaned up -- and every assertion worth
         # writing is about what they said.
         self._listener_final = self._text(self.listener_log)
-        self._connector_final = self._text(self.connector_log)
-        for handle in (self.listener_log, self.connector_log):
+        self._connector_finals = [self._text(handle) for handle in self.connector_logs]
+        for handle in (self.listener_log, *self.connector_logs):
             handle.close()
             pathlib.Path(handle.name).unlink(missing_ok=True)
 
     def start(self, listener_extra: list[str] | None = None,
               connector_extra: list[str] | None = None) -> None:
-        """Start the listener, learn its port, then start the connector."""
+        """Start the listener, learn its port, then start every connector."""
+        expect = ["--expect", str(len(self.connector_logs) + 1)] if len(self.connector_logs) > 1 \
+            else []
         self.listener = subprocess.Popen(
-            [self.binary, "--headless", "--listen", *self.shared, *(listener_extra or [])],
+            [self.binary, "--headless", "--listen", *self.shared, *expect,
+             *(listener_extra or [])],
             stdout=self.listener_log, stderr=subprocess.STDOUT, text=True)
 
         port = self._await_port()
-        self.connector = subprocess.Popen(
-            [self.binary, "--headless", "--connect", f"127.0.0.1:{port}", *self.shared,
-             *(connector_extra or [])],
-            stdout=self.connector_log, stderr=subprocess.STDOUT, text=True)
+        for log in self.connector_logs:
+            self.connectors.append(subprocess.Popen(
+                [self.binary, "--headless", "--connect", f"127.0.0.1:{port}", *self.shared,
+                 *(connector_extra or [])],
+                stdout=log, stderr=subprocess.STDOUT, text=True))
 
     def _await_port(self) -> int:
         deadline = time.monotonic() + self.START_SECONDS
@@ -108,19 +124,27 @@ class Session:
             time.sleep(0.1)
         raise CheckFailed(f"the listener never printed a port:\n{self.listener_text()}")
 
-    def wait(self) -> tuple[int, int]:
-        """Collect both, and return their exit codes as (listener, connector)."""
+    def wait_all(self) -> list[int]:
+        """Collect every process, and return their exit codes, the listener's first."""
+        processes = [self.listener, *self.connectors]
         deadline = time.monotonic() + self.RUN_SECONDS
-        codes: list[int | None] = [None, None]
+        codes: list[int | None] = [None] * len(processes)
         while time.monotonic() < deadline and None in codes:
-            for index, process in enumerate((self.listener, self.connector)):
+            for index, process in enumerate(processes):
                 if codes[index] is None and process is not None:
                     codes[index] = process.poll()
             time.sleep(0.05)
         if None in codes:
+            texts = "\n".join(f"connector {i + 1}:\n{self.connector_text(i)}"
+                              for i in range(len(self.connectors)))
             raise CheckFailed(
                 f"a peer did not finish within {self.RUN_SECONDS}s\n"
-                f"listener:\n{self.listener_text()}\nconnector:\n{self.connector_text()}")
+                f"listener:\n{self.listener_text()}\n{texts}")
+        return [code for code in codes if code is not None]
+
+    def wait(self) -> tuple[int, int]:
+        """Collect every process, and return the listener's and the first connector's codes."""
+        codes = self.wait_all()
         return (codes[0], codes[1])
 
     def _text(self, handle) -> str:
@@ -132,8 +156,10 @@ class Session:
     def listener_text(self) -> str:
         return self._listener_final or self._text(self.listener_log)
 
-    def connector_text(self) -> str:
-        return self._connector_final or self._text(self.connector_log)
+    def connector_text(self, index: int = 0) -> str:
+        if self._connector_finals:
+            return self._connector_finals[index]
+        return self._text(self.connector_logs[index])
 
 
 def output_of(result: subprocess.CompletedProcess) -> str:

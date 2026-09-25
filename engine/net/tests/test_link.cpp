@@ -41,6 +41,10 @@ class RecordingLink final : public Link {
 
     [[nodiscard]] std::size_t peer_count() const noexcept override { return m_peers; }
 
+    [[nodiscard]] atlas::net::Topology topology() const noexcept override {
+        return atlas::net::Topology::Mesh;
+    }
+
     [[nodiscard]] atlas::Status send(std::size_t from, std::size_t to,
                                      std::span<const std::byte> message) override {
         if (from >= m_peers || to >= m_peers || from == to) {

@@ -15,10 +15,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <future>
 #include <memory>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
@@ -251,4 +254,148 @@ TEST_CASE("a peer that disconnects ends the session rather than being dropped", 
 
     // And it stays ended: sending into a finished session is refused rather than queued.
     CHECK_FALSE(pair.listener->send(0, 1, bytes_of(4)).has_value());
+}
+
+// ---------------------------------------------------------------------------------------------
+// The relay (ADR-0022 D1). Until M25 a connector held a connection to the listener and nobody
+// else, and a session of three failed before its first tick.
+
+namespace {
+
+struct Trio {
+    std::unique_ptr<EnetHub> listener;
+    std::unique_ptr<EnetHub> first;
+    std::unique_ptr<EnetHub> second;
+};
+
+[[nodiscard]] Trio connected_trio(const atlas::net::EnetConfig& config = {}) {
+    auto listener = EnetHub::listen(runtime(), 0, 3, config);
+    REQUIRE(listener.has_value());
+    const std::uint16_t port = (*listener)->port();
+
+    // Both connect before the listener has told either its index: the listener holds every
+    // index back until the set is complete, so both calls wait on the same accept.
+    auto first = std::async(std::launch::async, [port, config] {
+        return EnetHub::connect(runtime(), "127.0.0.1", port, 5s, config);
+    });
+    auto second = std::async(std::launch::async, [port, config] {
+        return EnetHub::connect(runtime(), "127.0.0.1", port, 5s, config);
+    });
+    REQUIRE((*listener)->accept(5s).has_value());
+    auto one = first.get();
+    auto two = second.get();
+    REQUIRE(one.has_value());
+    REQUIRE(two.has_value());
+
+    // Connection order decides the indices, and two threads race to connect, so which future
+    // got which index is not fixed. Sort them so the cases below can name peers by index.
+    if ((*one)->local_index() > (*two)->local_index()) {
+        std::swap(one, two);
+    }
+    return {std::move(*listener), std::move(*one), std::move(*two)};
+}
+
+/// Pump all three until every box has something, or give up.
+[[nodiscard]] bool wait_for_all(Trio& trio, std::span<CommandInbox* const> boxes) {
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (std::chrono::steady_clock::now() < deadline) {
+        trio.listener->pump(0);
+        trio.first->pump(1);
+        trio.second->pump(2);
+        if (std::ranges::all_of(boxes, [](const CommandInbox* box) { return box->depth() > 0; })) {
+            return true;
+        }
+        std::this_thread::sleep_for(1ms);
+    }
+    return false;
+}
+
+[[nodiscard]] std::vector<std::byte> only_message(CommandInbox& box) {
+    std::vector<std::vector<std::byte>> drained;
+    box.drain(drained);
+    REQUIRE(drained.size() == 1);
+    return drained.front();
+}
+
+}  // namespace
+
+TEST_CASE("three peers connect and every connector learns the session's size", "[net][enet]") {
+    auto trio = connected_trio();
+
+    // The second of three used to believe it was in a session of two, because it inferred the
+    // size from its own index. Now the listener says.
+    CHECK(trio.first->local_index() == 1);
+    CHECK(trio.second->local_index() == 2);
+    CHECK(trio.listener->peer_count() == 3);
+    CHECK(trio.first->peer_count() == 3);
+    CHECK(trio.second->peer_count() == 3);
+    CHECK(trio.first->topology() == atlas::net::Topology::Star);
+}
+
+TEST_CASE("a connector's broadcast reaches every peer, through the listener", "[net][enet]") {
+    auto trio = connected_trio();
+
+    const auto sent = bytes_of(700, std::byte{0x3C});
+    REQUIRE(trio.first->broadcast(1, sent).has_value());
+
+    // Filed by the listener for itself, and forwarded to the other connector filed under the
+    // peer it came from rather than the peer that delivered it.
+    std::array<CommandInbox*, 2> boxes{&trio.listener->inbox(0, 1), &trio.second->inbox(2, 1)};
+    REQUIRE(wait_for_all(trio, boxes));
+    CHECK(only_message(*boxes[0]) == sent);
+    CHECK(only_message(*boxes[1]) == sent);
+    // And to nobody else: the connector that sent it does not receive its own message back.
+    CHECK(trio.first->inbox(1, 2).depth() == 0);
+    CHECK(trio.second->inbox(2, 0).depth() == 0);
+}
+
+TEST_CASE("the listener's broadcast reaches every connector", "[net][enet]") {
+    auto trio = connected_trio();
+
+    const auto sent = bytes_of(40, std::byte{0x11});
+    REQUIRE(trio.listener->broadcast(0, sent).has_value());
+
+    std::array<CommandInbox*, 2> boxes{&trio.first->inbox(1, 0), &trio.second->inbox(2, 0)};
+    REQUIRE(wait_for_all(trio, boxes));
+    CHECK(only_message(*boxes[0]) == sent);
+    CHECK(only_message(*boxes[1]) == sent);
+}
+
+TEST_CASE("a connector reaches another connector only by broadcast", "[net][enet]") {
+    auto trio = connected_trio();
+
+    // Refused rather than forwarded. The listener holds everything it forwards only because it
+    // forwards nothing but broadcasts, which it files for itself too (ADR-0022 D2).
+    const auto refused = trio.first->send(1, 2, bytes_of(4));
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message().contains("broadcast"));
+    // To the listener alone is still a message, and is not forwarded.
+    REQUIRE(trio.first->send(1, 0, bytes_of(4)).has_value());
+    std::array<CommandInbox*, 1> boxes{&trio.listener->inbox(0, 1)};
+    REQUIRE(wait_for_all(trio, boxes));
+    for (int i = 0; i < 20; ++i) {
+        trio.listener->pump(0);
+        trio.second->pump(2);
+        std::this_thread::sleep_for(1ms);
+    }
+    CHECK(trio.second->inbox(2, 1).depth() == 0);
+}
+
+TEST_CASE("a quiet connector is noticed although another is still talking", "[net][enet]") {
+    // One deadline per peer since M25. With one shared deadline, the listener heard from
+    // somebody every few milliseconds and a silent third peer could never be noticed.
+    auto trio = connected_trio({.peer_timeout = 200ms});
+
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (std::chrono::steady_clock::now() < deadline && !trio.listener->status().ended) {
+        // Peer 1 talks; peer 2 says nothing at all.
+        REQUIRE(trio.first->broadcast(1, bytes_of(8)).has_value());
+        trio.first->pump(1);
+        trio.listener->pump(0);
+        std::this_thread::sleep_for(5ms);
+    }
+
+    REQUIRE(trio.listener->status().ended);
+    CHECK(trio.listener->status().reason.contains("peer 2"));
+    CHECK(trio.listener->status().reason.contains("heard from"));
 }

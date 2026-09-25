@@ -714,6 +714,49 @@ def check_socket_peers_agree(binary: str) -> None:
             raise CheckFailed(f"the {name} ran past the bound it finished at\n{text}")
 
 
+def check_socket_three_peers_agree(binary: str) -> None:
+    """Three processes, relayed through the listener, the same final hash (ADR-0022 D1)."""
+    # **This case fails on every commit before M25.** The socket hub was a star with no relay:
+    # a connector held a connection to the listener and nobody else, so the second connector's
+    # first broadcast failed and all three processes exited 1 before a tick ran, while
+    # `--expect` had accepted up to sixteen since M17.
+    shared = [*SMALL, "--ticks", "120", "--commands-per-tick", "1", "--input-delay", "4"]
+    with Session(binary, shared, connectors=2) as session:
+        session.start()
+        codes = session.wait_all()
+
+    texts = [session.listener_text(), session.connector_text(0), session.connector_text(1)]
+    if codes != [0, 0, 0]:
+        raise CheckFailed(f"a peer exited non-zero: {codes}\n" + "\n---\n".join(texts))
+
+    hashes = [peer_hashes(text) for text in texts]
+    if any(len(found) != 1 for found in hashes):
+        raise CheckFailed("each process should print exactly one peer line\n" +
+                          "\n---\n".join(texts))
+    if len({found[0] for found in hashes}) != 1:
+        raise CheckFailed(f"the three processes finished at different hashes: {hashes}")
+
+    # Three different peers, each knowing the session has three. The second connector used to
+    # believe it was in a session of two. The two connectors race to connect, so which process
+    # is peer 1 is not fixed: each one's index is read from what it printed.
+    indices = []
+    for text in texts:
+        match = re.search(r"socket peer (\d+) of 3", text)
+        if not match:
+            raise CheckFailed(f"a process did not know the session has three peers\n{text}")
+        indices.append(int(match.group(1)))
+        expect_contains(text, f"source={match.group(1)}", f"peer {match.group(1)} is its own source")
+    if indices[0] != 0 or sorted(indices) != [0, 1, 2]:
+        raise CheckFailed(f"expected the listener to be peer 0 and the others 1 and 2: {indices}")
+
+    for index, text in zip(indices, texts):
+        # Every peer heard from both others, which for two of them means through the relay:
+        # 120 turns from each of two peers.
+        expect_contains(text, "turns received=240", f"peer {index} heard from both others")
+        expect_contains(text, "finished at tick 119, agreed with every peer",
+                        f"peer {index} finished")
+
+
 def check_socket_differs_from_solo(binary: str) -> None:
     """The anti-vacuity half: two peers must not reach a solo run's hash."""
     # Two peers submit two command streams and a solo run submits one, so the states must
@@ -853,6 +896,7 @@ CASES = {
     "socket_peers_agree": check_socket_peers_agree,
     "socket_differs_from_solo": check_socket_differs_from_solo,
     "socket_killed_peer_ends_the_session": check_socket_killed_peer_ends_the_session,
+    "socket_three_peers_agree": check_socket_three_peers_agree,
     "socket_mismatched_bounds_end_the_session": check_socket_mismatched_bounds_end_the_session,
     "loopback_differs_from_solo": check_loopback_differs_from_solo,
     "loopback_held_turn_stalls_then_completes": check_loopback_held_turn_stalls_then_completes,

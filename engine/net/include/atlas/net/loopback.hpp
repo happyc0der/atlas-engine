@@ -106,6 +106,9 @@ class LoopbackHub final : public Link {
     [[nodiscard]] Status send(std::size_t from, std::size_t to,
                               std::span<const std::byte> message) override;
 
+    /// Every peer reaches every other directly.
+    [[nodiscard]] Topology topology() const noexcept override { return Topology::Mesh; }
+
     /// Advance one peer's poll counter and deliver whatever is now due.
     void pump(std::size_t peer) override;
 

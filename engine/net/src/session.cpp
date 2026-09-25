@@ -650,7 +650,6 @@ Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::T
                 // that one peer with a backlog cannot starve another in the same poll.
                 break;
             }
-            ++handled;
 
             auto message = decode(bytes);
             if (!message) {
@@ -658,6 +657,18 @@ Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::T
                 return std::unexpected(std::move(message).error().context(
                     std::format("decoding a message from peer {}", peer)));
             }
+
+            // **Until every peer has announced itself, only announcements are read.** Each
+            // peer's inbox is read in turn, so the order between senders is lost: with three
+            // peers, one can hold the host's first turn before a third peer's announcement,
+            // and a turn from a source the session does not yet expect is refused. Anything
+            // else stays where it is, in order, and is read once the session is running.
+            // Found in M25 by the first run of three processes, one run in forty.
+            if (m_state == SessionState::Handshaking && !std::holds_alternative<Hello>(*message)) {
+                break;
+            }
+            ++handled;
+
             if (auto status = handle(peer, *message, now, queue, turns, report); !status) {
                 const bool diverged = m_divergence.has_value();
                 end(diverged ? ByeReason::Diverged : ByeReason::ProtocolError,
@@ -666,8 +677,8 @@ Result<sim::PollReport> Session::poll(Tick now, sim::CommandQueue& queue, sim::T
             }
         }
 
-        // Anything past the per-poll cap is put back, in order, so back-pressure delays a
-        // message rather than losing it.
+        // Anything past the per-poll cap, or waiting for the handshake, is put back, in order,
+        // so it is delayed rather than lost.
         for (std::size_t i = handled; i < m_incoming.size(); ++i) {
             (void)inbox.push(std::move(m_incoming[i]));
         }
