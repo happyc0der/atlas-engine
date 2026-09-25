@@ -32,3 +32,4 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0019](0019-declined-commands.md) | A command may be declined on world state | Accepted |
 | [0020](0020-session-finish.md) | A session can finish | Accepted |
 | [0021](0021-mod-messages.md) | A mod may speak to a person, one way, by key | Accepted; extends 0015 by one import |
+| [0022](0022-dropping-a-peer.md) | A peer may be dropped, at a tick the relay decides | Proposed; written at M25's gate |
