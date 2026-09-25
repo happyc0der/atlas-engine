@@ -47,9 +47,11 @@ struct SocketEndpoint {
 /// A listener prints `listening on port N` and flushes it **before** waiting, because a harness
 /// that asked for port zero reads that line to learn where to send the other process — so it
 /// has to appear while this one is still waiting rather than once it has given up.
+///
+/// `config` is handed to the hub unchanged; its default ends the session on a lost peer.
 [[nodiscard]] Result<std::unique_ptr<net::EnetHub>>
 open_socket_hub(const net::EnetRuntime& runtime, const SocketEndpoint& endpoint,
-                std::chrono::milliseconds timeout);
+                std::chrono::milliseconds timeout, const net::EnetConfig& config = {});
 
 /// Poll until the session has agreed, the link ends, or `timeout` passes.
 ///

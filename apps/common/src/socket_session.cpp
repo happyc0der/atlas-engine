@@ -35,9 +35,10 @@ Result<SocketEndpoint> parse_connect(std::string_view host_port) {
 
 Result<std::unique_ptr<net::EnetHub>> open_socket_hub(const net::EnetRuntime& runtime,
                                                       const SocketEndpoint& endpoint,
-                                                      std::chrono::milliseconds timeout) {
+                                                      std::chrono::milliseconds timeout,
+                                                      const net::EnetConfig& config) {
     if (endpoint.listen) {
-        auto hub = net::EnetHub::listen(runtime, endpoint.port, endpoint.expected_peers);
+        auto hub = net::EnetHub::listen(runtime, endpoint.port, endpoint.expected_peers, config);
         if (!hub) {
             return std::unexpected(std::move(hub).error().context("listening"));
         }
@@ -48,7 +49,7 @@ Result<std::unique_ptr<net::EnetHub>> open_socket_hub(const net::EnetRuntime& ru
         }
         return hub;
     }
-    auto hub = net::EnetHub::connect(runtime, endpoint.host, endpoint.port, timeout);
+    auto hub = net::EnetHub::connect(runtime, endpoint.host, endpoint.port, timeout, config);
     if (!hub) {
         return std::unexpected(std::move(hub).error().context("connecting"));
     }

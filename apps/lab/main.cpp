@@ -116,6 +116,9 @@ struct Options {
     std::uint32_t loopback_peers = 0;
     /// Listen for peers on this port, or 0 with --listen to let the operating system choose.
     bool listen = false;
+    /// Go on without a peer that is lost rather than ending the session (ADR-0022). Every
+    /// process in the session must be given it, or none.
+    bool drop_lost_peers = false;
     std::uint32_t listen_port = 0;
     /// How many peers the session has, this one included. Only meaningful with --listen.
     std::uint32_t expect_peers = 2;
@@ -153,6 +156,9 @@ Options:
   --expect N             How many peers the session has, this one included. 2..16.
                          Only with --listen. Default 2.
   --connect HOST:PORT    Join a session someone else is hosting.
+  --drop-lost-peers      With --listen or --connect: go on without a peer that disconnects
+                         or goes quiet, rather than ending the session. The host decides
+                         and cannot itself be dropped. Give it to every process or none.
   --input-delay N        Ticks between stamping a command and running it. 1..16. Default 2.
   --link-latency N       Delivery delay, in receiver polls rather than ticks. 0..16.
   --link-reorder SEED    Reorder messages within a poll, driven by SEED. 0 is off.
@@ -342,6 +348,12 @@ F5 save, F9 load, Escape quit. Right-drag pans, wheel zooms, left-click recolour
         options.expect_peers = static_cast<std::uint32_t>(*expect);
     }
     options.connect = args.value_or("connect", std::string_view{});
+    options.drop_lost_peers = args.has("drop-lost-peers");
+    if (options.drop_lost_peers && !options.listen && options.connect.empty()) {
+        return std::unexpected(atlas::Error(atlas::ErrorCode::InvalidArgument,
+                                            "--drop-lost-peers is a policy for a session over a "
+                                            "socket, so it needs --listen or --connect"));
+    }
 
     // Both at once would be one process trying to be two ends of the same session, which is
     // what --loopback-peers already does properly and in one process.
@@ -759,7 +771,10 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
         }
         endpoint = *std::move(parsed);
     }
-    auto opened = atlas::app::open_socket_hub(*runtime, endpoint, kConnectTimeout);
+    const auto loss =
+        options.drop_lost_peers ? atlas::net::PeerLoss::Drop : atlas::net::PeerLoss::End;
+    auto opened =
+        atlas::app::open_socket_hub(*runtime, endpoint, kConnectTimeout, {.on_peer_lost = loss});
     if (!opened) {
         return std::unexpected(std::move(opened).error());
     }
@@ -796,6 +811,7 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
                             .initial_state_hash = initial_hash,
                             .tick_rate = options.ticks_per_second,
                             .build_id = std::string{atlas::build_info::summary()},
+                            .on_peer_lost = loss,
                         });
     if (!session) {
         return std::unexpected(std::move(session).error());
@@ -804,6 +820,20 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
 
     ATLAS_LOG_INFO(kApp, "socket peer {} of {}: initial hash {:#018x}", self, hub->peer_count(),
                    initial_hash);
+
+    // What a drop means is the application's (ADR-0022 D4). The lab has no game state that
+    // belongs to a peer, so it says so and goes on; a game would decide what happens to the
+    // dropped player's side here.
+    std::size_t drops = 0;
+    const auto note_drops = [&drops, self](const atlas::sim::PollReport& polled) {
+        for (const auto& dropped : polled.dropped) {
+            ++drops;
+            std::printf("peer %zu: dropped peer %u; its turns were complete up to tick %llu\n",
+                        self, static_cast<unsigned>(dropped.source),
+                        static_cast<unsigned long long>(dropped.first_missing_turn));
+            std::fflush(stdout);
+        }
+    };
 
     if (auto status =
             atlas::app::await_handshake(**session, *hub, sim->commands, gate, kConnectTimeout);
@@ -837,6 +867,7 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
             }
             return std::unexpected(std::move(report).error().context("a socket peer"));
         }
+        note_drops(*report);
 
         const atlas::Tick horizon = sim->kernel->current_tick() + options.input_delay;
         while (next_turn <= horizon) {
@@ -869,6 +900,7 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
         if (!second) {
             return std::unexpected(std::move(second).error().context("a socket peer"));
         }
+        note_drops(*second);
 
         // A partner that finished somewhere other than where this peer was told to has run a
         // different game, and says so the moment its finish arrives. Waiting for this peer's own
@@ -926,6 +958,7 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
             if (!report) {
                 return std::unexpected(std::move(report).error().context("finishing"));
             }
+            note_drops(*report);
             // Finished first, link second: see `Session::finished`.
             if ((*session)->finished()) {
                 break;
@@ -953,7 +986,8 @@ apply_loaded_state(Simulation& simulation, atlas::sim::TickAccumulator& accumula
                 static_cast<unsigned long long>((*session)->stats().turns_sent),
                 static_cast<unsigned long long>((*session)->stats().turns_received));
     report_mod(player, std::format("peer {} ", self));
-    std::printf("socket: peers=%zu agreed hashes=%llu\n", hub->peer_count(),
+    std::printf("socket: peers=%zu remaining=%zu dropped=%zu agreed hashes=%llu\n",
+                hub->peer_count(), (*session)->peers().size(), drops,
                 static_cast<unsigned long long>((*session)->stats().hash_checks_agreed));
     std::fflush(stdout);
 

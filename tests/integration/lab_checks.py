@@ -270,6 +270,10 @@ def check_rejects_bad_values(binary: str) -> None:
     result = run(binary, ["--headless", "--ticks", "1", *SMALL, "--map-mode", "bogus"])
     expect_exit(result, 1, "bad map mode")
     expect_contains(output_of(result), "map mode", "bad map mode")
+    # A policy for a session over a socket, so without one it is refused rather than ignored.
+    result = run(binary, ["--headless", "--ticks", "1", *SMALL, "--drop-lost-peers"])
+    expect_exit(result, 1, "a drop policy with no socket session")
+    expect_contains(output_of(result), "--listen or --connect", "a drop policy with no socket")
 
 
 def check_log_file(binary: str) -> None:
@@ -757,6 +761,85 @@ def check_socket_three_peers_agree(binary: str) -> None:
                         f"peer {index} finished")
 
 
+def _kill_second_connector_after_handshake(session: Session) -> int:
+    """Kill the second connector outright once its session is agreed; return its peer index."""
+    deadline = time.monotonic() + 60.0
+    while time.monotonic() < deadline:
+        if "socket handshake agreed" in session.connector_text(1):
+            break
+        time.sleep(0.05)
+    else:
+        raise CheckFailed(f"the handshake never completed:\n{session.connector_text(1)}")
+    match = re.search(r"socket peer (\d+) of 3", session.connector_text(1))
+    if not match:
+        raise CheckFailed(f"the connector never said which peer it is\n{session.connector_text(1)}")
+    session.connectors[1].kill()
+    session.connectors[1].wait(timeout=10)
+    return int(match.group(1))
+
+
+def check_socket_lost_peer_is_dropped(binary: str) -> None:
+    """Three processes, one killed; the other two drop it and finish agreed (ADR-0022)."""
+    # The whole-program proof of the milestone. The killed process says nothing on its way out,
+    # which is the case a graceful goodbye cannot cover: the listener notices by its socket
+    # closing or by its deadline, decides the drop, and tells the survivor how many of the lost
+    # peer's turns it forwarded. Both go on to the bound and finish together.
+    shared = [*SMALL, "--ticks", "3000", "--commands-per-tick", "1", "--drop-lost-peers"]
+    with Session(binary, shared, connectors=2) as session:
+        session.start()
+        lost = _kill_second_connector_after_handshake(session)
+        deadline = time.monotonic() + Session.RUN_SECONDS
+        while time.monotonic() < deadline and None in (session.listener.poll(),
+                                                        session.connectors[0].poll()):
+            time.sleep(0.05)
+        codes = [session.listener.poll(), session.connectors[0].poll()]
+
+    texts = [session.listener_text(), session.connector_text(0)]
+    if codes != [0, 0]:
+        raise CheckFailed(f"a surviving peer did not exit zero: {codes}\n" +
+                          "\n---\n".join(texts))
+
+    hashes = [peer_hashes(text) for text in texts]
+    if any(len(found) != 1 for found in hashes) or hashes[0][0] != hashes[1][0]:
+        raise CheckFailed(f"the survivors finished at different hashes: {hashes}")
+
+    # Both dropped the same peer -- the one that was killed -- at the same point, once.
+    drops = []
+    for text in texts:
+        found = re.findall(r"dropped peer (\d+); its turns were complete up to tick (\d+)", text)
+        if len(found) != 1:
+            raise CheckFailed(f"expected exactly one drop\n{text}")
+        drops.append(found[0])
+        expect_contains(text, "remaining=2 dropped=1", "the session went on with two")
+        expect_contains(text, "finished at tick 2999, agreed with every peer", "a survivor finished")
+    if drops[0] != drops[1]:
+        raise CheckFailed(f"the survivors dropped differently: {drops}")
+    if int(drops[0][0]) != lost:
+        raise CheckFailed(f"the survivors dropped peer {drops[0][0]}, and peer {lost} was killed")
+    # Not vacuous: the lost peer's turns were received before it went, so the drop removed
+    # something rather than a peer that never took part.
+    if int(drops[0][1]) == 0:
+        raise CheckFailed("the lost peer had completed no turns, so the drop proves nothing")
+
+    # **The other half, and the reason this is one case.** The same kill without the flag must
+    # still end the session, exactly as ADR-0017 D5 decided: dropping is a policy a session
+    # chooses, never what happens by default.
+    ending = [*SMALL, "--ticks", "100000", "--commands-per-tick", "1"]
+    with Session(binary, ending, connectors=2) as session:
+        session.start()
+        _kill_second_connector_after_handshake(session)
+        deadline = time.monotonic() + 90.0
+        while time.monotonic() < deadline and session.listener.poll() is None:
+            time.sleep(0.1)
+        code = session.listener.poll()
+    if code is None or code == 0:
+        raise CheckFailed(f"without --drop-lost-peers the listener should end non-zero, got "
+                          f"{code}\n{session.listener_text()}")
+    if "dropped peer" in session.listener_text():
+        raise CheckFailed("the listener dropped a peer without being told to\n" +
+                          session.listener_text())
+
+
 def check_socket_differs_from_solo(binary: str) -> None:
     """The anti-vacuity half: two peers must not reach a solo run's hash."""
     # Two peers submit two command streams and a solo run submits one, so the states must
@@ -897,6 +980,7 @@ CASES = {
     "socket_differs_from_solo": check_socket_differs_from_solo,
     "socket_killed_peer_ends_the_session": check_socket_killed_peer_ends_the_session,
     "socket_three_peers_agree": check_socket_three_peers_agree,
+    "socket_lost_peer_is_dropped": check_socket_lost_peer_is_dropped,
     "socket_mismatched_bounds_end_the_session": check_socket_mismatched_bounds_end_the_session,
     "loopback_differs_from_solo": check_loopback_differs_from_solo,
     "loopback_held_turn_stalls_then_completes": check_loopback_held_turn_stalls_then_completes,

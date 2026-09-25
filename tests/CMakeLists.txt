@@ -183,6 +183,7 @@ set(_atlas_lab_headless_cases
     socket_differs_from_solo
     socket_killed_peer_ends_the_session
     socket_three_peers_agree
+    socket_lost_peer_is_dropped
     socket_mismatched_bounds_end_the_session
     replay_detects_tampering
     replay_refuses_wrong_seed
