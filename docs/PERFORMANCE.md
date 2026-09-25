@@ -1101,6 +1101,33 @@ engine nothing worth reclaiming, which is what the scenario was there to establi
 choice of copy-make over an incremental position — made for being obviously correct — costs
 nothing a person could notice either.
 
+## A relay, M25: the cost of a hop
+
+Measured in `macos-release` on an idle machine, `atlas_bench --filter net`.
+
+### The prediction, written before the first run
+
+Committed before any number existed, including a debug one.
+
+**`net/socket_relay_roundtrip`: forty to sixty microseconds, inside a range of thirty to a
+hundred and twenty.** It is M17's round trip with four hops instead of two: joiner to host, host
+to the other joiner, and the same back. M17's two hops cost 22.4 µs and were dominated by system
+calls, the kind of prediction this project gets right. Doubling the hops should roughly double
+it. The host's own work on a forward is one packet allocation and one copy of 256 bytes, which is
+noise beside a system call. The failure mode worth naming is the same as M17's: if the answer
+lands in milliseconds, the cause is ENet's pacing holding a forwarded packet until a later
+service call, and the fix is a flush after forwarding.
+
+**`net/gate_and_poll` on a star: within a fifth of the mesh at the same size.** Counting message
+copies per tick at four peers: a mesh makes twelve, each peer sending to three others. A star
+also makes twelve: three from the host, one from each of three joiners, and two forwards of each
+joiner's message. The work is the same count of the same copies, moved to the relay. At two peers
+the star and the mesh do identical work, so any difference there is noise.
+
+### The result
+
+Not yet measured. This section is completed in the commit that runs it.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.

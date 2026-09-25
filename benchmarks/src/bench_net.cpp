@@ -217,67 +217,136 @@ struct Participant {
         die("the message never came back");
     }));
 
+    // **The same round trip between two connectors, through the listener** (ADR-0022 D1). Four
+    // hops rather than two — out to the relay, on to the other connector, and the same back —
+    // plus the relay's copy into a new packet on each forward.
+    auto relay = atlas::net::EnetHub::listen(*runtime, 0, 3);
+    if (!relay) {
+        std::fprintf(stderr, "bench_net: could not listen for three, skipping the relay\n");
+        return results;
+    }
+    const std::uint16_t relay_port = (*relay)->port();
+    auto first = std::async(std::launch::async, [&runtime, relay_port] {
+        return atlas::net::EnetHub::connect(*runtime, "127.0.0.1", relay_port,
+                                            std::chrono::seconds{10});
+    });
+    auto second = std::async(std::launch::async, [&runtime, relay_port] {
+        return atlas::net::EnetHub::connect(*runtime, "127.0.0.1", relay_port,
+                                            std::chrono::seconds{10});
+    });
+    if (!(*relay)->accept(std::chrono::seconds{10})) {
+        die("accept three");
+    }
+    auto one = first.get();
+    auto two = second.get();
+    if (!one || !two) {
+        die("connect three");
+    }
+    if ((*one)->local_index() > (*two)->local_index()) {
+        std::swap(one, two);
+    }
+
+    results.push_back(
+        atlas::bench::measure("net/socket_relay_roundtrip", "bytes=256", 2'000, 200, [&] {
+            if (!(*one)->broadcast(1, message)) {
+                die("relay send");
+            }
+            auto& there = (*two)->inbox(2, 1);
+            auto& back = (*one)->inbox(1, 2);
+            std::vector<std::vector<std::byte>> drained;
+            bool replied = false;
+            for (int spin = 0; spin < 100'000; ++spin) {
+                (*relay)->pump(0);
+                (*one)->pump(1);
+                (*two)->pump(2);
+                if (!replied && there.depth() > 0) {
+                    there.drain(drained);
+                    if (!(*two)->broadcast(2, message)) {
+                        die("relay reply");
+                    }
+                    replied = true;
+                }
+                if (back.depth() > 0) {
+                    back.drain(drained);
+                    // The relay filed both for itself too; emptied so two thousand iterations
+                    // do not fill its inboxes and turn this into a measurement of overflow.
+                    (*relay)->inbox(0, 1).drain(drained);
+                    (*relay)->inbox(0, 2).drain(drained);
+                    return;
+                }
+            }
+            die("the relayed message never came back");
+        }));
+
     return results;
 }
 
 std::vector<Result> run() {
     std::vector<Result> results;
 
-    for (const std::size_t peers : {std::size_t{2}, std::size_t{4}}) {
-        for (const std::size_t commands : {std::size_t{0}, std::size_t{8}}) {
-            auto hub = atlas::net::LoopbackHub::create({.peer_count = peers});
-            if (!hub) {
-                die("no hub");
-            }
-
-            std::vector<std::unique_ptr<Participant>> table;
-            table.reserve(peers);
-            for (std::size_t i = 0; i < peers; ++i) {
-                auto participant = std::make_unique<Participant>();
-                require(participant->queue.register_handler(kPoke, poke_handler()), "handler");
-                auto session = atlas::net::Session::create((*hub)->end(i), {});
-                if (!session) {
-                    die("no session");
+    // The star is M25's (ADR-0022 D9): the same session, with every message relayed through
+    // peer zero. Named apart only by a suffix, so the mesh rows keep the names every earlier
+    // measurement used.
+    for (const auto topology : {atlas::net::Topology::Mesh, atlas::net::Topology::Star}) {
+        for (const std::size_t peers : {std::size_t{2}, std::size_t{4}}) {
+            for (const std::size_t commands : {std::size_t{0}, std::size_t{8}}) {
+                auto hub =
+                    atlas::net::LoopbackHub::create({.peer_count = peers, .topology = topology});
+                if (!hub) {
+                    die("no hub");
                 }
-                participant->session = *std::move(session);
-                table.push_back(std::move(participant));
-            }
 
-            // Settle the handshake outside the timed section: it happens once and is not what
-            // this measures.
-            for (int attempt = 0; attempt < 64; ++attempt) {
-                for (auto& participant : table) {
-                    const auto report =
-                        participant->session->poll(0, participant->queue, participant->gate);
-                    if (!report) {
-                        die("handshake");
+                std::vector<std::unique_ptr<Participant>> table;
+                table.reserve(peers);
+                for (std::size_t i = 0; i < peers; ++i) {
+                    auto participant = std::make_unique<Participant>();
+                    require(participant->queue.register_handler(kPoke, poke_handler()), "handler");
+                    auto session = atlas::net::Session::create((*hub)->end(i), {});
+                    if (!session) {
+                        die("no session");
                     }
+                    participant->session = *std::move(session);
+                    table.push_back(std::move(participant));
                 }
-            }
 
-            // Deliberately no kernel step. Stepping would measure the simulation and report the
-            // network as free.
-            results.push_back(atlas::bench::measure(
-                "net/gate_and_poll", std::format("peers={} commands={}", peers, commands), 2000,
-                200, [&table, commands] {
-                    for (auto& participant : table) {
-                        const auto tick = participant->next_turn++;
-                        auto turn = turn_of(commands, participant->session->self(), tick);
-                        require(participant->session->send_turn(tick, turn, participant->gate),
-                                "send_turn");
-                    }
+                // Settle the handshake outside the timed section: it happens once and is not what
+                // this measures.
+                for (int attempt = 0; attempt < 64; ++attempt) {
                     for (auto& participant : table) {
                         const auto report =
                             participant->session->poll(0, participant->queue, participant->gate);
                         if (!report) {
-                            die("poll");
+                            die("handshake");
                         }
-                        // Retired so the gate's window does not run out over two thousand
-                        // iterations, which would turn this into a measurement of refusals.
-                        participant->gate.retire_before(participant->gate.ready_horizon());
-                        participant->queue.clear();
                     }
-                }));
+                }
+
+                // Deliberately no kernel step. Stepping would measure the simulation and report the
+                // network as free.
+                results.push_back(atlas::bench::measure(
+                    "net/gate_and_poll",
+                    std::format("peers={} commands={}{}", peers, commands,
+                                topology == atlas::net::Topology::Star ? " star" : ""),
+                    2000, 200, [&table, commands] {
+                        for (auto& participant : table) {
+                            const auto tick = participant->next_turn++;
+                            auto turn = turn_of(commands, participant->session->self(), tick);
+                            require(participant->session->send_turn(tick, turn, participant->gate),
+                                    "send_turn");
+                        }
+                        for (auto& participant : table) {
+                            const auto report = participant->session->poll(0, participant->queue,
+                                                                           participant->gate);
+                            if (!report) {
+                                die("poll");
+                            }
+                            // Retired so the gate's window does not run out over two thousand
+                            // iterations, which would turn this into a measurement of refusals.
+                            participant->gate.retire_before(participant->gate.ready_horizon());
+                            participant->queue.clear();
+                        }
+                    }));
+            }
         }
     }
 
