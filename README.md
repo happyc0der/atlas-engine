@@ -7,6 +7,18 @@ diplomacy, economies, historical data, or game rules, and it is not intended to.
 The project is developed in gated milestones. Each milestone ends with a clean
 configure, build, test run, and a runnable demonstration before the next one starts.
 
+## Screenshots
+
+Each frame below was written by the application itself with `--screenshot`, which captures
+the last frame before exit.
+
+| | |
+|---|---|
+| ![The sandbox scene with the overlay open](docs/screenshots/sandbox-scene.png) | ![The Strategy Lab drawing a million cells](docs/screenshots/lab-million-cells.png) |
+| `atlas_sandbox --scene`: the demo scene graph drawn from its loaded copy, with the overlay's counter, scene, asset and log panels. | `atlas_lab --grid 1024`: a million cells in one draw, ticking at 60 Hz, with the counters and time controls beside them. |
+| ![The Strategy Lab at 64 cells a side](docs/screenshots/lab-64-cells.png) | |
+| `atlas_lab --grid 64 --map-mode owner`: the same lab at a size where each cell is a visible square. | |
+
 ## Current status
 
 **Sixteen milestones are done, M0 through M15.** Engine v0.1 was declared at M7 against the
