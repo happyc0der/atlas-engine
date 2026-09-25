@@ -1126,7 +1126,40 @@ the star and the mesh do identical work, so any difference there is noise.
 
 ### The result
 
-Not yet measured. This section is completed in the commit that runs it.
+**The machine was not idle, and that is recorded rather than hidden.** A browser was using about
+two cores throughout, with a load average of eleven, and it was not this project's to close. The
+comparisons below are paired within each run: the relay against the direct round trip, and the
+star against the mesh, each measured moments apart. Three runs; the median is the middle of the
+three runs' medians, and p90 and p99 come from that same run.
+
+| Scenario | Median | p90 | p99 | Predicted |
+|---|---|---|---|---|
+| `net/socket_roundtrip`, for comparison | 21.1 µs | 40.9 µs | 43.6 µs | — |
+| `net/socket_relay_roundtrip` | **42.4 µs** | 48.4 µs | 58.3 µs | 40–60 µs |
+| `net/gate_and_poll` peers=4 commands=8, mesh | 12.0 µs | 12.8 µs | 18.4 µs | — |
+| `net/gate_and_poll` peers=4 commands=8, star | **10.7 µs** | 10.9 µs | 17.5 µs | within a fifth of the mesh |
+| `net/gate_and_poll` peers=4 commands=0, mesh | 2.33 µs | 2.50 µs | 2.71 µs | — |
+| `net/gate_and_poll` peers=4 commands=0, star | **1.75 µs** | 1.79 µs | 1.92 µs | within a fifth of the mesh |
+
+**Both predictions held.** The relayed round trip is twice the direct one, to within a percent,
+in every run: 42.2, 42.4 and 42.8 µs against 21.1 µs. The hops are the cost and the relay's own
+work is not visible, which is what a prediction dominated by system calls should produce. The
+named failure mode, ENet holding a forwarded packet until a later service call, did not happen.
+
+The star came in slightly *cheaper* than the mesh in every run, not merely within a fifth. The
+prediction said the two do the same count of copies, and that is still true. A plausible reason
+for the difference is that a joiner on a star scans one incoming pipe per poll rather than three,
+but nothing here isolates it, so it is recorded as a plausible reason and not as the reason. The
+mesh rows also moved more between runs, 10.7 to 12.8 µs, which is the load showing.
+
+### What it means
+
+**A relayed round trip is 0.26% of a 16.6 ms tick.** The relay doubles the transport's latency
+between two joiners and leaves it two orders of magnitude below the point where it would matter,
+a round trip longer than a tick. What this cannot measure is a real network, where the relay's
+cost is a second trip across the wire rather than a second system call. That is a property of
+where the host sits, and it is why ADR-0022 names the relay's bandwidth and latency as the price
+of the agreement rather than calling them free.
 
 ## Optimisation candidates
 

@@ -27,9 +27,9 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0014](0014-deterministic-lockstep.md) | Deterministic lockstep over the command queue | Accepted; decision 9 superseded by 0017 |
 | [0015](0015-sandboxed-mods.md) | Sandboxed mods: WebAssembly, behind the command queue | Accepted; extended by 0021 |
 | [0016](0016-string-tables.md) | String tables: one lookup, one substituter, English only | Accepted |
-| [0017](0017-lockstep-transport.md) | A transport for lockstep: ENet, polled, direct address only | Accepted |
+| [0017](0017-lockstep-transport.md) | A transport for lockstep: ENet, polled, direct address only | Accepted; amended by 0020 and 0022 |
 | [0018](0018-chess-probe.md) | Chess as the first consumer: an in-tree probe of the engine, not v1.0 | Accepted |
 | [0019](0019-declined-commands.md) | A command may be declined on world state | Accepted |
 | [0020](0020-session-finish.md) | A session can finish | Accepted |
 | [0021](0021-mod-messages.md) | A mod may speak to a person, one way, by key | Accepted; extends 0015 by one import |
-| [0022](0022-dropping-a-peer.md) | A peer may be dropped, at a tick the relay decides | Proposed; written at M25's gate |
+| [0022](0022-dropping-a-peer.md) | A peer may be dropped, at a tick the relay decides | Accepted; amends 0017 D2 and D5 |

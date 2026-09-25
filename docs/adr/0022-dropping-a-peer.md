@@ -3,8 +3,14 @@
 
 ## Status
 
-**Proposed**, 2026-09-25, written at M25's gate. Accepted when M25 lands it. Nothing in
-`engine/net` changes before this record is read.
+**Accepted**, 2026-09-25, implemented in M25.
+
+Proposed the same day at M25's gate. **Implementing it changed what a drop is agreed on**, from a
+tick to a count, and that is the one change that matters. The rest are smaller, and each is
+marked at its own heading with what changed and why, rather than edited to read as if it had
+always said it: D1 gained two rules, D4 a second setting, D6 lost its goodbye reason, D8 its
+tick, and D9 held with a reason it did not give. Implementing it also found a session bug older
+than this record, recorded under Context.
 
 Amends [ADR-0017](0017-lockstep-transport.md) in two places and supersedes nothing. D5's rule
 that a quiet peer ends the session **stays the default**; this record adds a second policy an
@@ -54,6 +60,19 @@ and the hub a full mesh, runs three peers correctly, which is how this went unse
 there is nobody left to agree with. And the relay turns out to answer the agreement question on
 its own, which is the decision below.
 
+### What implementing it found, which predates this record
+
+*Added during M25, 2026-09-25.* The first run of three processes over the relay failed once in
+forty under load. **The session read a turn before a third peer's announcement.** A session reads
+each peer's inbox in turn, so the order *between* senders is lost: peer 2 could read the host's
+first turn before peer 1's announcement, and refused it as coming from a source the session did
+not yet expect. Every process exited 1 before a tick ran. Two peers can never meet this, because
+a peer's own announcement precedes its own turns on one channel, and the in-memory mesh had the
+same window whenever one announcement was slower than another peer's first turn. Nothing had
+ever run three peers with uneven delays. A session still handshaking now reads only announcements
+and leaves everything else queued, in order. A test that holds one announcement back fails
+without the fix, and sixty runs under the same load then passed.
+
 ## Decision
 
 **D1. The listener relays.** A connector sends everything to the listener. The listener forwards
@@ -68,6 +87,14 @@ The header is transport framing, like the index message already is, not a `net::
 session owns messages and the transport owns how they travel (ADR-0017 D6). Nothing about a turn
 changes, and a turn from a connector reaches every other peer exactly once, in the order the
 listener received it.
+
+*Extended during M25, 2026-09-25.* Two rules the relay turned out to need. **No index is
+announced until every connector has arrived.** A connector cannot send until it knows its index,
+so holding the indices back means nothing can be sent while the relay still has fewer peers to
+forward it to than the session will have. And **the deadline is per peer**: with one shared
+deadline, the listener heard from somebody every few milliseconds, and a silent third peer could
+never be noticed. A connector may no longer send to another connector directly, because the relay
+could forward that without filing it; only broadcasts cross the relay.
 
 **D2. The listener decides a drop, and the relay's order is the agreement.** On the listener,
 when the transport reports that connector *k* has gone — silent past the deadline, or
@@ -97,6 +124,26 @@ travels the same reliable ordered channel as everything else, so if it does not 
 connection to the listener has failed. A connector that loses the listener ends the session, as
 it does today.
 
+*Changed during M25, 2026-09-25.* **The drop is agreed on a count of turns, not on a tick H.**
+The argument above holds, but "the highest tick for which it holds *k*'s turn" is not well
+defined when *k*'s own stream to the relay has a gap: a turn held or lost in flight, with later
+ones arriving past it. The relay then holds a set with a hole in it. So does every other peer,
+because the relay forwarded exactly what it received, at the moment it received it. Two peers
+holding the same set agree on its size. So `Drop` carries how many of *k*'s turns the relay
+received, and each connector checks that it received the same number before it stops expecting
+*k*. A turn of *k*'s beyond the gap is in every peer's queue alike and is applied alike. The
+ordering the argument needs is on the relay's outgoing stream to each connector, and *k*'s stream
+to the relay may be anything.
+
+Three smaller things went with it. The relay reads everything *k* sent before counting, past the
+per-poll cap on messages from one peer. A connector likewise reads everything forwarded from *k*
+before comparing, because the forwarded turns sit in *k*'s inbox and the drop in the relay's, and
+a poll reads the relay's first. And a received drop is held until the end of the poll and
+completed there, because completing it reads *k*'s inbox, which would otherwise re-enter the
+message handler. Only the relay's view of a loss counts: a connector ignores every loss but the
+relay's own and waits for the drop. A goodbye from a peer other than the relay is handled as a
+loss under this policy.
+
 **D3. The gate needs nothing new.** `TurnGate::expect_sources` already replaces the set,
 **keeping the progress** of every source that stays and forgetting one that leaves (ADR-0014).
 Removing *k* after its turns through H are marked leaves ticks through H exactly as ready as
@@ -111,6 +158,13 @@ A drop is reported to the application in `PollReport`, naming the source and H, 
 drop *means* is the application's. A game might hand the dropped player's side to nobody, or end
 the game; the engine has no game state to decide with.
 
+*Extended during M25, 2026-09-25.* **The socket hub takes the policy too**, as
+`EnetConfig::on_peer_lost`, because under `End` the hub ends on a lost connector before the
+session sees anything, as it did before M25. Under `Drop` the hub marks the connector lost and
+leaves the decision to the session. The two settings must agree, and the lab sets both from one
+flag. The report names the source and `first_missing_turn`, the first tick its turns had not
+completed, read from `TurnGate::completed_before`.
+
 **D5. The listener is the one peer that cannot be dropped.** If the listener goes, every
 connector loses the relay, and the session ends exactly as it does today. This makes peer zero
 special, which [ADR-0020](0020-session-finish.md) rejected for finishing, in a design where no
@@ -122,6 +176,13 @@ closing the connection, so a peer that was only slow ends with its own reason ra
 disconnect, and exits non-zero. A peer that has gone hears nothing, and nothing depends on it
 hearing.
 
+*Changed during M25, 2026-09-25.* **No `Bye{Dropped}` was added.** The transport decides that a
+connector is lost before the session knows, and at that point it closes the connection. A
+connector that was only slow therefore sees its listener disconnect and ends with that reason,
+non-zero, which is what this decision wanted. A goodbye reason carrying the same news would have
+had to reach a connection the transport had already closed. A drop that names the receiving peer
+itself, should one arrive, ends that peer with its own message.
+
 **D7. What the session no longer waits for.** Hash checks from *k* after H are not expected, and
 the finish condition (ADR-0020 D3) counts only the peers still in the session. A dropped peer
 never rejoins. Joining a session under way is refused today, and a rejoin would need the world
@@ -132,11 +193,24 @@ reason, `Dropped`. The relay header and the size in the index message are transp
 change together with the version. A peer on version 2 is refused at the handshake, as every
 version change has been.
 
+*Changed during M25, 2026-09-25.* The message is `Drop{source, turns}`, for D2's reason, and there
+is no new goodbye reason, for D6's. The decoder refuses a source that no session of sixteen peers
+has, which also refuses any mod identifier. The framing is two bytes: the origin, and whether a
+connector's message is for everyone.
+
 **D9. The loopback can be a star.** The in-memory hub gains a relaying mode that routes as the
 socket hub now does, plus a fault that makes one peer go silent. The drop protocol can then be
 tested under the loopback's existing latency, reordering and holds, in one process, under the
 sanitizers, and at every tick. The default loopback stays a full mesh, so every existing test is
 unchanged.
+
+*Held, with a reason it did not give, 2026-09-25.* The loopback's reordering is compatible with a
+star, which was not obvious. It permutes the messages released to one peer in one poll, and every
+message of that batch is in its inbox before the session reads any. With a constant latency, a
+message sent later is never released earlier. So the relay's outgoing order survives into what
+the session reads, which is the only order the drop needs. A hold on the relay's outgoing pipe
+does break it, deliberately, and a drop then arrives ahead of a forwarded turn and is refused as
+a mismatch rather than accepted wrongly.
 
 ## Alternatives
 
@@ -174,6 +248,9 @@ from the `PollReport` on every peer, the way every peer's mod produces the same 
   connector the session's size. The loopback gains a star mode and a silence fault. `Session`
   gains the drop decision on the listener, the `Drop` message on connectors, `on_peer_lost`, and
   a `PollReport` field. `protocol.hpp` gains the type, the reason and version 3.
+
+  *Corrected during M25, 2026-09-25:* the type and version 3, and no new reason (D6, D8). The gate
+  gained one query, `completed_before`, which is additive.
 - `net`'s module edges stay `core;simulation`, and no socket type reaches a header.
 - **The listener becomes trusted.** It can forge any connector's messages, because it relays
   them. There was no authentication before either (ADR-0017 D4 deferred encryption), and in a

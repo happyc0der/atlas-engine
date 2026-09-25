@@ -33,7 +33,7 @@ Status legend: **done**, *in progress*, planned.
 | M22 | Chess: the application, two people, a socket | L | **done** |
 | M23 | One pin for vcpkg | S | **done** |
 | M24 | A string API for mods | M | **done** |
-| M25 | Dropping a peer and playing on | L | planned |
+| M25 | Dropping a peer and playing on | L | **done** |
 | — | Chess: a mod as the opponent | ? | deferred; numbered when scheduled |
 
 ## M0 — Architecture and reproducible skeleton
@@ -1452,6 +1452,29 @@ namespace, and nothing comes back. The trigger had not fired, and the record say
 | Presentation only | **Met.** The herald's run ends at the hash of a run with no mod. |
 | Refusals through a guest | **Met.** Malformed key, too many arguments, budget, queue bound and an out-of-bounds argument pointer, each in a module built in the test. |
 | A panel in the lab | **Not built, by a dated change to D5.** The log console shows messages in a window; a second list was not worth one demonstration mod. |
+
+## M25 — Dropping a peer
+
+Full report: [reports/M25.md](reports/M25.md).
+
+The last of the three items M17 left open. Decided by
+[ADR-0022](adr/0022-dropping-a-peer.md): the listener relays, and a lost peer can be dropped at a
+point every remaining peer checks for itself. Ending the session stays the default. The trigger
+had not fired, and the record says so first.
+
+**Exit criteria**
+- A socket session of more than two peers works. It did not, and nothing had tried.
+- A lost peer is dropped identically by every remaining peer, and they go on to agree and finish.
+- Ending the session is still what happens unless a session asks otherwise.
+- The agreement holds under latency, reordering and a gap in the lost peer's turns.
+
+| Criterion | Status |
+|---|---|
+| Three peers over sockets | **Met, and it was a bug.** `--expect` accepted sixteen since M17, and a third peer failed before its first tick. Three processes now agree hash for hash, and the case fails on every earlier commit. |
+| A drop, agreed | **Met.** Three processes, one killed after the handshake; the other two drop it at the same point, run to the bound, finish agreed and exit zero at one hash. |
+| Ending by default | **Met.** The same kill without the flag ends the listener non-zero. |
+| An unkind link | **Met, on a count rather than a tick.** Seven lockstep cases over a star with latency and reordering, one with a gap in the lost peer's turns. Agreeing on a tick would have split the peers there. |
+| Found on the way | A session could read a turn before a third peer's announcement and refuse it, one run in forty. Fixed, with a test that holds one announcement back. |
 
 ## First continuous integration
 

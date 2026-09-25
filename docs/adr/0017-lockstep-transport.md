@@ -8,6 +8,12 @@
 *2026-09-23:* decision 5's list of the ways a session ends gains one that is not a failure — a
 session can finish, by [ADR-0020](0020-session-finish.md). Nothing in this record is superseded.
 
+*2026-09-25:* amended in two places by [ADR-0022](0022-dropping-a-peer.md). Decision 2's socket
+hub gains a relay: a connector held a connection to the listener and nobody else, so a session
+of three failed before its first tick, and nothing had ever run three. Decision 5's rule that a
+quiet peer ends the session stays the default, and a session may instead choose to drop the peer,
+agreed through the relay. Nothing here is superseded.
+
 Proposed when it was written on 2026-09-20, because a milestone still had to build it — the
 legend in this index reserves Accepted for a record that is in force.
 

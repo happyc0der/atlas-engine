@@ -85,9 +85,18 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 - Under lockstep a tick runs only when every expected source has reported, and **readiness
   depends on who has reported and never on elapsed time** (ADR-0014). No timeout lives in the
   gate: what to do about a silent peer is a transport policy, and since ADR-0017 that policy is
-  to end the session. Dropping a peer and continuing is simulation-visible — every remaining
-  peer must apply the drop at the identical tick or diverge — so it needs an agreement protocol
-  and is deferred.
+  to end the session by default.
+- **A peer may instead be dropped, and only the relay decides it** (ADR-0022). A drop is
+  simulation-visible, so every remaining peer must stop expecting the lost one at the same point.
+  The socket hub is a star, and the listener files and forwards every connector's broadcast in
+  one step, so it holds everything anybody holds of a lost peer. It announces how many of that
+  peer's turns it received; every other peer reads everything forwarded from it and checks it
+  holds the same count. **The agreement is on a count, never on a tick**: the lost peer's stream
+  to the relay can have gaps. Dropping needs a star, the same policy on every peer and on the
+  hub, and the listener can never be dropped.
+- A session still handshaking reads only announcements and leaves everything else queued. It
+  reads each peer's inbox in turn, so the order between senders is lost, and with three peers a
+  turn can arrive before a third peer's announcement.
 - **A transport decides when a turn arrives, never whether it is applied.** A turn is stamped
   with its tick before it is sent; one that arrives late is a protocol violation rather than a
   command applied at the wrong moment. The transport lives behind `net::Link`, no socket type

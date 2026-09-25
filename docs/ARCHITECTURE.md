@@ -536,9 +536,19 @@ what makes the loopback suite the proof that the seam is real: it did not change
 arrived. No ENet type appears in any header, so replacing the transport would touch one class.
 
 **Direct address only**: connect by host and port. No encryption, no traversal, no lobby, each
-deferred with a trigger. And **a peer that goes quiet ends the session** rather than being
-dropped, because dropping it is simulation-visible — every remaining peer would have to apply
-the drop at the identical tick or diverge, which needs an agreement protocol of its own.
+deferred with a trigger. And **a peer that goes quiet ends the session** by default, because
+dropping it is simulation-visible: every remaining peer must stop expecting it at the same point.
+
+**The socket hub is a star, and the listener relays** ([ADR-0022](adr/0022-dropping-a-peer.md)).
+A connector holds one connection, to the listener, and broadcasts once, marked for everyone. The
+listener files the message for itself and forwards it to every other connector in the same step,
+framed with its origin. Until M25 there was no relay, and a session of three failed before its
+first tick. The relay is also what lets a session **drop a lost peer** when it is configured to.
+The listener holds everything anybody holds of the lost peer, so it announces how many of its
+turns it received. Every other peer reads everything forwarded from it, checks the count, and
+stops expecting it. The listener can never be dropped, because without it nobody reaches anybody,
+and it is trusted: it could forge any connector's messages. The in-memory hub offers the same
+star, so the agreement is tested under latency and reordering in one process.
 
 **A session can finish** ([ADR-0020](adr/0020-session-finish.md)), which is the one ending that
 is not a failure. A peer says `Finish{last_tick}` and goes on delivering what its partners need

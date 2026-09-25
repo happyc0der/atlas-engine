@@ -520,7 +520,14 @@ fact about the tree today rather than a consequence of the milestone.
 
 ### M17 — a transport for lockstep
 
-- **Dropping a peer and playing on.** A quiet peer ends the session (ADR-0017 D5). Continuing
+- ~~**Dropping a peer and playing on.**~~ **Built in M25**, as ADR-0022, and not the default. The
+  agreement the entry feared turned out to need no acknowledgement round: with the listener
+  relaying every message, it holds everything anybody holds of a lost peer, and a count of those
+  turns is what every peer checks. The trigger had not fired; the owner took it anyway, last of
+  the three items M17 left open. Building it found that a socket session could not have a third
+  peer at all. The original entry follows.
+
+  A quiet peer ends the session (ADR-0017 D5). Continuing
   without it sounds like what a session is for, and it is **simulation-visible**: the dropped
   peer's commands stop arriving, so every remaining peer must apply the drop at the identical
   tick or compute different states and diverge. Agreeing that tick is a protocol of its own — a
@@ -666,6 +673,33 @@ fact about the tree today rather than a consequence of the milestone.
 
 - **Reloading a mod's table while it runs.** Mods are not reloaded (M15), and neither are their
   words. Trigger: the same as reloading a mod.
+
+### M25 — dropping a peer
+
+- **A dropped peer rejoining.** A dropped peer's session ends, and joining a session under way is
+  refused. Rejoining needs the world sent over the wire as a save, the save checked against every
+  peer's hash, and a point at which the rejoined peer's turns are expected again, agreed as the
+  drop is. Trigger: a consumer whose sessions are long enough that losing a player for good is
+  worse than the work.
+
+- **Dropping the relay.** The listener cannot be dropped: without it nobody reaches anybody. Going
+  on without it means electing another relay and agreeing what the old one had forwarded to whom,
+  which is a harder agreement than the one built. Trigger: a consumer whose host is as likely to
+  leave as anybody else.
+
+- **A drop on a mesh.** Refused. On a mesh one peer can hold a turn of the lost one that nobody
+  else ever will, and agreeing a drop then needs every peer to report what it holds and to
+  forward what others lack. Trigger: a transport that is not a star, which today means NAT
+  traversal (ADR-0017 D4).
+
+- **Authenticating the relay.** The listener can forge any connector's messages, because it
+  relays them. With two peers it already delivered the only messages a connector read; with three
+  it is a real widening. Trigger: the same as encryption — a session between people who do not
+  trust the network, or here the host.
+
+- **What a drop means to a game.** The engine reports a drop and the lab prints it. Chess, with
+  two players, has nobody to play on with and keeps ending the session. A game deciding what
+  happens to a dropped player's side is the game's work. Trigger: a game with more than two sides.
 
 ## Decided by ADR-0010, planned as milestones
 

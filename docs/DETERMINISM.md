@@ -45,6 +45,15 @@ Dropping a quiet peer and playing on would be the decision that broke this, beca
 simulation-visible: two peers applying the same drop at different ticks compute different
 states, which is why it is deferred rather than defaulted.
 
+*Since M25 (2026-09-25):* it is built and still not the default ([ADR-0022](adr/0022-dropping-a-peer.md)),
+and it does not break this, for a reason worth stating. The deadline still lives in the
+transport, and the gate still learns about peers only through `expect_sources`. Nothing about a
+drop is decided by a clock on more than one machine: only the relay decides, from its own
+transport's deadline, and every other peer applies a decision it is sent. What makes that
+decision the same everywhere is not timing but a count. The relay forwarded exactly the lost
+peer's turns it received, so every peer holds the same set, and each checks the size before it
+stops expecting the lost one.
+
 **A session between different builds is permitted only when both peers produce the same golden
 hashes**, exchanged at the handshake and refused on a mismatch. That is a probe rather than a
 proof: two builds agreeing about the fixed scenario agree about the simulation as far as anything
