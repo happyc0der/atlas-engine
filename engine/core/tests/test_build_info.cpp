@@ -20,7 +20,7 @@ TEST_CASE("build identity is populated at configure time", "[core][build_info]")
 }
 
 TEST_CASE("the version matches the project version", "[core][build_info]") {
-    CHECK(info::version() == "0.0.1");
+    CHECK(info::version() == "0.27.0");
 }
 
 TEST_CASE("the sanitizer field names the configuration actually built", "[core][build_info]") {
@@ -39,6 +39,6 @@ TEST_CASE("profiling state is reported honestly", "[core][build_info]") {
 
 TEST_CASE("the summary mentions the version and the build type", "[core][build_info]") {
     const std::string_view summary = info::summary();
-    CHECK(summary.contains("0.0.1"));
+    CHECK(summary.contains("0.27.0"));
     CHECK(summary.contains(info::build_type()));
 }

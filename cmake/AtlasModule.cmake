@@ -9,6 +9,7 @@
 #       SOURCES      src/log.cpp src/error.cpp
 #       HEADERS      include/atlas/core/log.hpp
 #       DEPENDS      # other Atlas modules, linked PUBLIC
+#       INTERNAL_DEPS # an *_internal target, linked PRIVATE and only inside this build
 #       PRIVATE_DEPS # third-party targets, linked PRIVATE
 #   )
 #
@@ -21,7 +22,7 @@ function(atlas_add_module name)
     cmake_parse_arguments(ARG
         "INTERFACE"
         ""
-        "SOURCES;HEADERS;DEPENDS;PRIVATE_DEPS"
+        "SOURCES;HEADERS;DEPENDS;INTERNAL_DEPS;PRIVATE_DEPS"
         ${ARGN})
 
     if(NOT name IN_LIST ATLAS_MODULES)
@@ -32,7 +33,7 @@ function(atlas_add_module name)
 
     # Every declared dependency must be permitted by the allow-list. This is the boundary
     # check that runs before anything is built.
-    foreach(dep IN LISTS ARG_DEPENDS)
+    foreach(dep IN LISTS ARG_DEPENDS ARG_INTERNAL_DEPS)
         if(NOT dep IN_LIST ATLAS_MODULE_DEPS_${name})
             message(FATAL_ERROR
                 "atlas_add_module(${name}): dependency on 'atlas::${dep}' is not permitted.\n"
@@ -42,9 +43,33 @@ function(atlas_add_module name)
         endif()
     endforeach()
 
+    # An *_internal target reaches past a module's public headers, so it is never part of a
+    # module's interface and never installed (ADR-0024 D3). Named under DEPENDS it would be
+    # linked PUBLIC and handed to every consumer of this module, which is how atlas::rhi came
+    # to give every module above it the native window handle's include path.
+    foreach(dep IN LISTS ARG_DEPENDS)
+        if(dep MATCHES "_internal$")
+            message(FATAL_ERROR
+                "atlas_add_module(${name}): 'atlas::${dep}' is an internal target. Name it "
+                "under INTERNAL_DEPS, which links it privately and only inside this build.")
+        endif()
+    endforeach()
+    foreach(dep IN LISTS ARG_INTERNAL_DEPS)
+        if(NOT dep MATCHES "_internal$")
+            message(FATAL_ERROR
+                "atlas_add_module(${name}): INTERNAL_DEPS names 'atlas::${dep}', which is not an "
+                "internal target. A module that other modules may use goes under DEPENDS.")
+        endif()
+    endforeach()
+
     set(target atlas_${name})
 
     if(ARG_INTERFACE)
+        if(ARG_INTERNAL_DEPS)
+            message(FATAL_ERROR
+                "atlas_add_module(${name}): an INTERFACE module has no sources of its own, so "
+                "nothing in it can use an internal target privately.")
+        endif()
         add_library(${target} INTERFACE)
         add_library(atlas::${name} ALIAS ${target})
         target_include_directories(${target} INTERFACE
@@ -91,6 +116,12 @@ function(atlas_add_module name)
     # tools/check_module_deps.py is the backstop.
     foreach(dep IN LISTS ARG_PRIVATE_DEPS)
         target_link_libraries(${target} PRIVATE ${dep})
+    endforeach()
+
+    # BUILD_LOCAL_INTERFACE: the link exists while this tree builds and vanishes from an
+    # export, so an installed package carries neither the internal target nor its headers.
+    foreach(dep IN LISTS ARG_INTERNAL_DEPS)
+        target_link_libraries(${target} PRIVATE $<BUILD_LOCAL_INTERFACE:atlas::${dep}>)
     endforeach()
 
     atlas_set_warnings(${target})
@@ -207,9 +238,13 @@ function(atlas_add_app_library name)
     add_library(${target} STATIC ${ARG_SOURCES})
     add_library(atlas::${name} ALIAS ${target})
 
+    # The same two forms as a module's, so the app kit can be installed (ADR-0024 D4).
     target_include_directories(${target}
-        PUBLIC  "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
     foreach(dep IN LISTS ARG_DEPENDS)
         target_link_libraries(${target} PUBLIC ${dep})

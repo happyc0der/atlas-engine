@@ -64,6 +64,14 @@ atlas_add_module(core
         include/atlas/core/result.hpp
 )
 
+# Every library in this tree is compiled with /std:c++latest on MSVC (the root CMakeLists.txt and
+# ADR-0001), and code compiled under another standard is not guaranteed to agree with it on the
+# layout of a standard type. The root's setting is a directory property and reaches nobody
+# outside this tree, so the requirement travels on the module everything links (ADR-0024 D6).
+if(MSVC)
+    target_compile_options(atlas_core INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/std:c++latest>)
+endif()
+
 if(ATLAS_BUILD_TESTS)
     add_subdirectory(tests)
 endif()

@@ -26,6 +26,7 @@ atlas_add_module(rhi
     DEPENDS
         core
         platform
+    INTERNAL_DEPS
         platform_internal
     PRIVATE_DEPS
         atlas::sdl3

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "atlas",
-  "version-string": "0.0.1",
+  "version-string": "0.27.0",
   "description": "Atlas engine platform",
   "homepage": "https://github.com/happyc0der/atlas",
   "license": "GPL-3.0-or-later",

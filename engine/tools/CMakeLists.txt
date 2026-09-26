@@ -25,10 +25,11 @@ atlas_add_module(tools
         simulation
         platform
         rhi
-        rhi_internal
         math
         scene
         text
+    INTERNAL_DEPS
+        rhi_internal
     PRIVATE_DEPS
         imgui::imgui
         atlas::sdl3

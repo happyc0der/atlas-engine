@@ -11,7 +11,7 @@ endif()
 # The toolchain file is supplied by CMakePresets.json. Configuring without a preset will
 # not find dependencies; see README.md for the quick start.
 project(Atlas
-    VERSION 0.0.1
+    VERSION 0.27.0
     DESCRIPTION "A C++23 engine platform for a large deterministic world simulation"
     HOMEPAGE_URL "https://github.com/happyc0der/atlas"
     LANGUAGES CXX)
