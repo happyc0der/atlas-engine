@@ -61,7 +61,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
@@ -330,6 +333,34 @@ enum class Shape : std::uint8_t { Empty, Submit, ReadView };
                 die("load");
             }
         }));
+    }
+
+    {
+        // The first real module (M26, ADR-0023): the chess opponent, 8 KB of compiled C, read
+        // from the committed file as a player's copy would be. `DEFERRED.md` asked for this the
+        // day a module large enough to notice arrived. Skipped, and said, when run from somewhere
+        // the file is not.
+        std::ifstream file(std::filesystem::path{"assets/mods/chess_opponent.wasm"},
+                           std::ios::binary);
+        const std::vector<char> raw{std::istreambuf_iterator<char>(file),
+                                    std::istreambuf_iterator<char>()};
+        if (raw.empty()) {
+            std::fprintf(stderr, "bench_script: assets/mods/chess_opponent.wasm not found from "
+                                 "here, skipping its load\n");
+        } else {
+            std::vector<std::byte> module_bytes(raw.size());
+            for (std::size_t i = 0; i < raw.size(); ++i) {
+                module_bytes[i] = static_cast<std::byte>(raw[i]);
+            }
+            results.push_back(atlas::bench::measure(
+                "script/load", std::format("bytes={}", module_bytes.size()), 2'000, 200, [&] {
+                    const auto host = atlas::script::ModHost::create(*runtime, 0, module_bytes,
+                                                                     "chess_opponent.wasm");
+                    if (!host) {
+                        die("load the opponent");
+                    }
+                }));
+        }
     }
 
     return results;

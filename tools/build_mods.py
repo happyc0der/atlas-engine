@@ -83,8 +83,9 @@ MODS = [
         "inputs": [
             "engine/script/include/atlas/script/atlas_mod.h",
             "apps/chess/mod/rules.h",
+            "apps/chess/sim/include/atlas/chess/mod_view.h",
         ],
-        "include_dirs": ["engine/script/include", "apps/chess/mod"],
+        "include_dirs": ["engine/script/include", "apps/chess/sim/include", "apps/chess/mod"],
         # Pages of 64 KiB. The maximum is declared because the loader refuses a module without
         # one, and is far below the runtime's sixteen-mebibyte cap.
         "initial_memory": 2 * 65536,

@@ -1195,7 +1195,44 @@ trivial module's time is that fixed cost.
 
 ### The result
 
-Not yet measured. This section is completed in the commit that runs it.
+**The worst tick came in at 2.16 million instructions, inside the prediction, and that result
+changed the design.** Measured by `atlas_test_chess_mod "[.measure]"`, which binary-searches the
+budget for each position. Instruction counts are the runtime's own meter, so they are exact and
+do not depend on the machine or the build. The quota was four root moves a tick when measured:
+
+| Position | Worst tick, quota 4 | Worst tick, quota 2 |
+|---|---|---|
+| The start | 0.43 M | 0.23 M |
+| Kiwipete | 1.01 M | 0.51 M |
+| Perft position 4 | 1.15 M | 0.61 M |
+| Perft position 6 | 1.10 M | 0.58 M |
+| The 218-move position | 0.59 M | 0.57 M |
+| Eight queens facing two pawns | 2.00 M | 1.05 M |
+| Eight queens facing four pawns | **2.16 M** | **1.16 M** |
+
+The prediction said 0.5–2.5 M for the worst tick and about 0.3 M for the start, and both held:
+2.16 M and 0.43 M. **But a margin measured on seven positions is not a margin.** One root move
+facing the eight queens' 120 replies cost about 540,000 instructions; facing the most replies any
+position is known to allow, 218, it would cost about a million, and four of those would leave a
+margin of two and a half rather than four. So the quota came down to two, where that extreme is
+about two million and the measured worst is 1.16 M, **8.6 times under the budget.** The price is
+that a search takes twice as many ticks, which at any ordinary tick rate is a fraction of a
+second. A test holds every position here to a quarter of the budget.
+
+The 218-move position is cheap for the opposite reason: its side to move has 218 moves, but each
+faces a lone king with a couple of replies. Width at the root costs ticks; width in the replies
+costs instructions per tick, and only the second is bounded by the quota.
+
+| Scenario | Median | p90 | p99 | Predicted |
+|---|---|---|---|---|
+| `script/load` bytes=trivial | 5.13 µs | 5.21 µs | 5.63 µs | — |
+| `script/load` bytes=8108 | **38.2 µs** | 40.5 µs | 51.1 µs | 20–80 µs |
+
+Three runs of `atlas_bench --filter script`, on a machine that was not idle (a load average of
+about seven); the two rows are paired within each run, and the medians agreed across runs to
+within one percent. **The load prediction held**: seven and a half times the trivial module's
+cost for twenty-seven times its size, which is the less-than-linear growth predicted. It is paid
+once per mod per run, so it is nothing a person notices.
 
 ## Optimisation candidates
 
