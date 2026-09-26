@@ -34,7 +34,7 @@ Status legend: **done**, *in progress*, planned.
 | M23 | One pin for vcpkg | S | **done** |
 | M24 | A string API for mods | M | **done** |
 | M25 | Dropping a peer and playing on | L | **done** |
-| — | Chess: a mod as the opponent | ? | deferred; numbered when scheduled |
+| M26 | Chess: a mod as the opponent | L | planned |
 
 ## M0 — Architecture and reproducible skeleton
 

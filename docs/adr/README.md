@@ -33,3 +33,4 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0020](0020-session-finish.md) | A session can finish | Accepted |
 | [0021](0021-mod-messages.md) | A mod may speak to a person, one way, by key | Accepted; extends 0015 by one import |
 | [0022](0022-dropping-a-peer.md) | A peer may be dropped, at a tick the relay decides | Accepted; amends 0017 D2 and D5 |
+| [0023](0023-mod-authoring.md) | Mods are authored in freestanding C, and a mod may play chess | Proposed; written at M26's gate |

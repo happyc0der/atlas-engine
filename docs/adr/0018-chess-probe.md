@@ -14,6 +14,11 @@ and 0020, which are Proposed until built.
 decision and loses the number, because milestone numbers follow landing order and M23 went to
 the first of the three items M17 had left open. It is numbered when it is scheduled.
 
+*2026-09-25:* scheduled as M26, with its toolchain decided by
+[ADR-0023](0023-mod-authoring.md), Proposed at M26's gate. D5's "no mods" for chess ends there,
+and the players table's refusal of a mod source is amended there. The work this record governs is
+M18 to M22 and M26; the "M23" above is the number M26 had before it was renumbered.
+
 ## Context
 
 The owner's request, 2026-09-23: *"make the first ever game on this engine … chess, since a map
