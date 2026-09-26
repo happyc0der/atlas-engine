@@ -355,11 +355,17 @@ Result<Mod> Mod::load(Runtime& runtime, std::span<const std::byte> bytes,
     // No host-managed heap: a guest that wants an allocator brings its own inside linear memory.
     // WAMR's app heap is a second allocation this cap would not see.
     args.host_managed_heap_size = 0;
-    // The module's own declared maximum, which the check above has already proved is within
-    // our limit. Not our limit itself: WAMR refuses an override larger than the module's
-    // maximum and carries on regardless, so passing the bigger number would print a complaint
-    // on every ordinary load and change nothing.
-    args.max_memory_pages = static_cast<std::uint32_t>(memory.maximum_pages);
+    // **No override: zero means "the module's own".** The check above has already proved the
+    // declared maximum is within our limit, so there is nothing to impose here. Until M26 this
+    // passed the declared maximum, on the reasoning that WAMR complains about an override larger
+    // than the module's maximum and passing the module's own number could never be larger. That
+    // was true of every hand-written mod, which declares one page and a maximum of one — and false
+    // of the first module a compiler produced. WAMR's loader reshapes the memory of a module that
+    // never executes `memory.grow` into a single page the size of its initial memory, with a
+    // maximum of one (`wasm_loader.c`, `possible_memory_grow`), so a declared maximum of sixteen
+    // became an override "greater than module max memory" and a warning on every load. The
+    // reshaping never enlarges anything, so leaving the module's value alone is exactly as safe.
+    args.max_memory_pages = 0;
 
     impl.instance = wasm_runtime_instantiate_ex(impl.module, &args, error.data(),
                                                 static_cast<std::uint32_t>(error.size()));
