@@ -227,15 +227,12 @@ Status PlayersTable::read_from(sim::SaveReader& reader) {
     if (!black_source) {
         return std::unexpected(std::move(black_source).error().context("chess.players.black"));
     }
-    // A mod identifier is local to each peer and never on the wire (ADR-0015), so it cannot
-    // hold a colour that every peer must agree on.
-    for (const auto source : {*white_source, *black_source}) {
-        if (sim::is_mod_source(static_cast<sim::SourceId>(source))) {
-            return std::unexpected(
-                Error(ErrorCode::MalformedData,
-                      std::format("chess.players names mod source {:#x}", source)));
-        }
-    }
+    // **A mod may hold a colour** (ADR-0023 D6). Until M26 a mod's identifier was refused here,
+    // because it is never sent on the wire (ADR-0015). It is nonetheless the same on every
+    // machine — a pure function of the mod's index — and a saved file is not the wire. Any
+    // identifier is accepted: one that nobody is running means only that nobody can move for
+    // that side, which is a stalled game rather than a corrupt one, and the application checks
+    // that a mod named here is the mod it attached before it plays on.
     white = static_cast<sim::SourceId>(*white_source);
     black = static_cast<sim::SourceId>(*black_source);
     return ok();

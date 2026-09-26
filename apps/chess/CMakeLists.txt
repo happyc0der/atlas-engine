@@ -19,12 +19,14 @@ atlas_add_app(chess
     DEPENDS
         atlas::app_common
         atlas::app_lockstep
+        atlas::app_mods
         atlas::chess_sim
         atlas::chess_view
         atlas::assets
         atlas::net
         atlas::platform
         atlas::renderer
+        atlas::script
         atlas::rhi
         atlas::text
         atlas::tools

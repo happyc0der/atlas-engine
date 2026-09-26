@@ -15,6 +15,7 @@
 #include <atlas/script/mod_host.hpp>
 #include <atlas/script/runtime.hpp>
 #include <atlas/simulation/kernel.hpp>
+#include <atlas/simulation/save.hpp>
 #include <atlas/simulation/turn_gate.hpp>
 
 #include "chess_harness.hpp"
@@ -94,7 +95,10 @@ struct Game {
     }
 
     /// One tick: publish the position, let the mod decide, then run the tick.
-    void tick() {
+    void tick() { tick_with(std::nullopt); }
+
+    /// One tick, with a person's move for it.
+    void tick_with(std::optional<atlas::chess::Move> person) {
         const auto view = atlas::chess::position_view(chess.world(), chess.ids());
         const std::array<std::uint8_t, 1> seat_view{seat};
         const std::array<ModView, 2> views{
@@ -103,6 +107,9 @@ struct Game {
         };
         host->set_views(views);
         REQUIRE(host->poll(kernel.current_tick(), chess.commands, mod_gate).has_value());
+        if (person.has_value()) {
+            REQUIRE(chess.submit(kernel.current_tick(), *person).has_value());
+        }
         const auto report = kernel.step();
         REQUIRE(report.has_value());
         declined += report->commands_declined;
@@ -245,6 +252,69 @@ TEST_CASE("different seeds play different games", "[chess][opponent]") {
     };
     const auto first = play_with(21);
     CHECK((play_with(22) != first || play_with(23) != first));
+}
+
+namespace {
+
+/// A person who always plays the first legal move the rules list, so a game is repeatable.
+[[nodiscard]] atlas::chess::Move first_legal(Game& game) {
+    atlas::chess::MoveList legal;
+    atlas::chess::Position::from_tables(
+        atlas::chess::board_table(game.chess.world(), game.chess.ids()),
+        atlas::chess::state_table(game.chess.world(), game.chess.ids()))
+        .generate_legal(legal);
+    REQUIRE_FALSE(legal.empty());
+    return legal[0];
+}
+
+[[nodiscard]] bool persons_turn(Game& game) {
+    return atlas::chess::state_table(game.chess.world(), game.chess.ids()).side_to_move ==
+           atlas::chess::Colour::White;
+}
+
+/// Play until the person has made `moves` moves and the mod has answered the last.
+void play_person(Game& game, int moves) {
+    int made = 0;
+    for (int i = 0; i < 20'000 && game.outcome() == Outcome::Ongoing; ++i) {
+        if (persons_turn(game)) {
+            if (made == moves) {
+                return;
+            }
+            game.tick_with(first_legal(game));
+            ++made;
+        } else {
+            game.tick();
+        }
+    }
+}
+
+}  // namespace
+
+TEST_CASE("a game against the mod saved on the person's turn resumes the same game",
+          "[chess][opponent][save]") {
+    // The saved file names the mod as black (ADR-0023 D6), so this is also the proof that such a
+    // file loads. It is saved on the person's turn, when the mod has nothing in hand: its memory
+    // is not part of a save, and a save taken in the middle of its search would restart that
+    // search later, at a different tick, which `docs/DEFERRED.md` records.
+    auto runtime = make_runtime();
+    Game whole(runtime, kStart, Seat::Black, 5);
+    play_person(whole, 12);
+    const auto finished_hash = whole.chess.world().hash();
+
+    Game first(runtime, kStart, Seat::Black, 5);
+    play_person(first, 6);
+    REQUIRE(persons_turn(first));
+    const auto bytes =
+        atlas::sim::save(first.chess.world(), first.kernel, first.chess.commands).value();
+
+    Game second(runtime, kStart, Seat::Black, 5);
+    REQUIRE(atlas::sim::load(second.chess.world(), second.kernel, second.chess.commands, bytes)
+                .has_value());
+    CHECK(atlas::chess::players_table(second.chess.world(), second.chess.ids()).black ==
+          second.host->id());
+    play_person(second, 6);
+    CHECK(second.chess.world().hash() == finished_hash);
+    CHECK(second.declined == 0);
 }
 
 namespace {

@@ -15,6 +15,7 @@
 
 #include <atlas/app/log_options.hpp>
 #include <atlas/app/main_guard.hpp>
+#include <atlas/app/mods.hpp>
 #include <atlas/app/ppm.hpp>
 #include <atlas/app/socket_session.hpp>
 #include <atlas/assets/importer.hpp>
@@ -22,6 +23,7 @@
 #include <atlas/chess/board_layout.hpp>
 #include <atlas/chess/board_quads.hpp>
 #include <atlas/chess/fen.hpp>
+#include <atlas/chess/mod_views.hpp>
 #include <atlas/chess/position.hpp>
 #include <atlas/chess/rules.hpp>
 #include <atlas/chess/world.hpp>
@@ -39,6 +41,7 @@
 #include <atlas/renderer/quad_batch.hpp>
 #include <atlas/renderer/texture_cache.hpp>
 #include <atlas/rhi/device.hpp>
+#include <atlas/script/mod_host.hpp>
 #include <atlas/simulation/kernel.hpp>
 #include <atlas/simulation/turn_gate.hpp>
 #include <atlas/text/catalog.hpp>
@@ -96,6 +99,10 @@ struct Options {
     std::uint16_t listen_port = 0;
     std::string_view connect;
     std::uint32_t input_delay = 2;
+    /// A mod to play one side, or both, in a local game (ADR-0023).
+    std::string_view mod;
+    std::string_view mods_dir = "assets/mods";
+    atlas::chess::Seat mod_seat = atlas::chess::Seat::Black;
 
     [[nodiscard]] bool networked() const noexcept { return listen || !connect.empty(); }
 };
@@ -123,6 +130,12 @@ Usage: atlas_chess [options]
                          operating system choose the port, which is printed.
   --connect HOST:PORT    Join a hosted game, playing black.
   --input-delay N        Ticks between a move and its arrival, 1..16. Default 2.
+  --mod NAME             Play against a sandboxed mod from the mods directory, such as
+                         chess_opponent.wasm. Local games only. With --moves, the list is
+                         the person's moves, played in turn, and the mod answers each.
+  --mod-plays SIDE       white, black or both. Default black. Both plays the mod against
+                         itself until the game ends.
+  --mods-dir PATH        Where --mod looks. Default: assets/mods.
   --text-check           Resolve every chess string against the loaded tables, then exit.
   --version              Print build identity and exit.
   --help                 Print this message and exit.
@@ -180,10 +193,48 @@ played in turn. The game ends where the rules say it does, and both sides finish
             atlas::Error(atlas::ErrorCode::InvalidArgument, "--input-delay wants 1..16"));
     }
     options.input_delay = static_cast<std::uint32_t>(*delay);
+
+    options.mod = args.value_or("mod", std::string_view{});
+    options.mods_dir = args.value_or("mods-dir", options.mods_dir);
+    const std::string_view seat = args.value_or("mod-plays", std::string_view{});
+    if (!seat.empty() && options.mod.empty()) {
+        return std::unexpected(
+            atlas::Error(atlas::ErrorCode::InvalidArgument, "--mod-plays needs --mod"));
+    }
+    if (seat == "white") {
+        options.mod_seat = atlas::chess::Seat::White;
+    } else if (seat == "both") {
+        options.mod_seat = atlas::chess::Seat::Both;
+    } else if (!seat.empty() && seat != "black") {
+        return std::unexpected(
+            atlas::Error(atlas::ErrorCode::InvalidArgument,
+                         std::format("--mod-plays wants white, black or both, got '{}'", seat)));
+    }
+    if (!options.mod.empty() && options.networked()) {
+        // ADR-0023 D9. Every peer runs the same mods, so a mod playing over a socket raises a
+        // question about seats this milestone does not answer; it is deferred with its trigger.
+        return std::unexpected(atlas::Error(atlas::ErrorCode::InvalidArgument,
+                                            "--mod plays a local game; over a socket it is not "
+                                            "supported"));
+    }
+    if (options.mod_seat == atlas::chess::Seat::Both && !options.moves.empty()) {
+        return std::unexpected(
+            atlas::Error(atlas::ErrorCode::InvalidArgument,
+                         "the mod plays both sides, so --moves has nobody to play them"));
+    }
     if (auto status = args.reject_unknown(); !status) {
         return std::unexpected(status.error());
     }
     return options;
+}
+
+[[nodiscard]] std::string_view seat_name(atlas::chess::Seat seat) noexcept {
+    switch (seat) {
+    case atlas::chess::Seat::White: return "white";
+    case atlas::chess::Seat::Black: return "black";
+    case atlas::chess::Seat::Both: return "both sides";
+    }
+    return "unknown";
 }
 
 /// A game: the world, an empty schedule, the queue and the kernel, owned together because the
@@ -209,7 +260,10 @@ struct Game {
     }
 };
 
-[[nodiscard]] atlas::Result<std::unique_ptr<Game>> make_game(std::string_view fen, bool networked) {
+/// `record_moves` keeps the kernel's record of applied commands, so a move nobody on this side
+/// made — a partner's over a socket, or a mod's — can still be counted and shown.
+[[nodiscard]] atlas::Result<std::unique_ptr<Game>> make_game(std::string_view fen, bool networked,
+                                                             bool record_moves) {
     auto made = atlas::chess::make_world();
     if (!made) {
         return std::unexpected(std::move(made).error());
@@ -249,8 +303,9 @@ struct Game {
     }
     game->kernel = std::make_unique<atlas::sim::Kernel>(
         game->chess.world, game->schedule, game->commands,
-        atlas::sim::KernelConfig{
-            .seed = kSeed, .record_applied_commands = networked, .gate = game->gate.get()});
+        atlas::sim::KernelConfig{.seed = kSeed,
+                                 .record_applied_commands = networked || record_moves,
+                                 .gate = game->gate.get()});
     return game;
 }
 
@@ -326,6 +381,175 @@ void print_summary(const Game& game) {
     std::printf("position: %s\n", atlas::chess::to_fen(game.position()).c_str());
     std::printf("result: %s\n", std::string{describe(game.result())}.c_str());
     std::printf("state hash: %#018llx\n", static_cast<unsigned long long>(game.chess.world.hash()));
+    std::fflush(stdout);
+}
+
+// ----------------------------------------------------------------------------------- opponent
+
+[[nodiscard]] atlas::Result<std::deque<atlas::chess::Move>> parse_script(std::string_view list);
+
+/// A mod playing one side, or both, in a local game (ADR-0023).
+///
+/// Declared so that the host goes before the runtime it was created in.
+struct Opponent {
+    atlas::app::LoadedMod loaded;
+    std::unique_ptr<atlas::script::ModHost> host;
+    atlas::chess::Seat seat = atlas::chess::Seat::Black;
+    /// A mod never marks a gate; a host is polled with one because every command source is.
+    atlas::sim::TurnGate gate;
+    /// The person's --moves, played in turn.
+    std::deque<atlas::chess::Move> script;
+
+    [[nodiscard]] bool plays(atlas::chess::Colour colour) const noexcept {
+        return seat == atlas::chess::Seat::Both ||
+               (seat == atlas::chess::Seat::White) == (colour == atlas::chess::Colour::White);
+    }
+};
+
+/// Load the mod and give it its seat or seats in the players table.
+///
+/// **The seat is simulation state.** `chess.players` names the mod's identifier for each colour it
+/// plays, so "not your turn" stays a decline the rules make for the mod exactly as for a person,
+/// and a person's click on the mod's side is declined by the same rule.
+[[nodiscard]] atlas::Result<std::unique_ptr<Opponent>> open_opponent(const Options& options,
+                                                                     Game& game) {
+    auto opponent = std::make_unique<Opponent>();
+    auto loaded = atlas::app::open_mod(options.mod, options.mods_dir, false);
+    if (!loaded) {
+        return std::unexpected(std::move(loaded).error());
+    }
+    opponent->loaded = *std::move(loaded);
+    // A named mod always comes with a runtime; checked rather than assumed, since `--mod` with an
+    // empty name would have reached here with none.
+    if (!opponent->loaded.runtime.has_value()) {
+        return std::unexpected(
+            atlas::Error(atlas::ErrorCode::InvalidArgument, "--mod names no mod"));
+    }
+    auto host =
+        atlas::script::ModHost::create(*opponent->loaded.runtime, 0, opponent->loaded.bytes,
+                                       opponent->loaded.name, {.seed = kSeed, .input_delay = 1});
+    if (!host) {
+        return std::unexpected(std::move(host).error());
+    }
+    opponent->host = *std::move(host);
+    if (auto status = opponent->host->start(); !status) {
+        return std::unexpected(std::move(status).error().context("starting the mod"));
+    }
+    opponent->seat = options.mod_seat;
+
+    auto& players = atlas::chess::players_table(game.chess.world, game.chess.ids);
+    if (opponent->plays(atlas::chess::Colour::White)) {
+        players.white = opponent->host->id();
+    }
+    if (opponent->plays(atlas::chess::Colour::Black)) {
+        players.black = opponent->host->id();
+    }
+    auto script = parse_script(options.moves);
+    if (!script) {
+        return std::unexpected(std::move(script).error());
+    }
+    opponent->script = *std::move(script);
+    ATLAS_LOG_INFO(kApp, "mod '{}' plays {} as source {}", opponent->loaded.name,
+                   seat_name(opponent->seat), static_cast<std::uint32_t>(opponent->host->id()));
+    return opponent;
+}
+
+/// One tick of a local game with a mod: publish the position, let the mod decide, submit the
+/// person's move if there is one, and run the tick.
+///
+/// **Once per tick, before the tick** (ADR-0015 D4), exactly as the lab polls its mod. Returns
+/// whether the person's move, if one was given, was applied.
+[[nodiscard]] atlas::Result<bool> advance_local(Game& game, Opponent& opponent,
+                                                std::optional<atlas::chess::Move> person) {
+    const auto view = atlas::chess::position_view(game.chess.world, game.chess.ids);
+    const std::array<std::uint8_t, 1> seat{static_cast<std::uint8_t>(opponent.seat)};
+    const std::array<atlas::script::ModView, 2> views{
+        atlas::script::ModView{.name = "chess.position", .bytes = std::as_bytes(std::span(view))},
+        atlas::script::ModView{.name = "chess.seat", .bytes = std::as_bytes(std::span(seat))},
+    };
+    opponent.host->set_views(views);
+    if (const auto report =
+            opponent.host->poll(game.kernel->current_tick(), game.commands, opponent.gate);
+        !report) {
+        // Cannot happen by design — a mod that misbehaves is reported closed rather than as an
+        // error — but a driver that ignored it would be assuming that on the reader's behalf.
+        ATLAS_LOG_ERROR(kApp, "polling the mod failed: {}", report.error());
+    }
+    atlas::app::say_messages(*opponent.host, nullptr, "");
+
+    if (person.has_value()) {
+        const auto payload = atlas::chess::encode_move(*person);
+        if (auto status =
+                game.commands.submit(game.kernel->current_tick(), atlas::sim::SourceId::Local,
+                                     atlas::chess::kMoveCommand, payload);
+            !status) {
+            return std::unexpected(std::move(status).error());
+        }
+    }
+    auto stepped = game.kernel->step();
+    if (!stepped) {
+        return std::unexpected(std::move(stepped).error());
+    }
+    bool person_applied = false;
+    for (const auto& applied : stepped->applied_commands) {
+        if (auto decoded = atlas::chess::decode_move(applied.payload)) {
+            ++game.plies;
+            game.last_move = *decoded;
+            const bool from_mod = applied.source == opponent.host->id();
+            person_applied = person_applied || !from_mod;
+            ATLAS_LOG_INFO(kApp, "ply {}: {}{}", game.plies, atlas::chess::to_string(*decoded),
+                           from_mod ? " (the mod)" : "");
+        }
+    }
+    return person_applied;
+}
+
+/// A local game with a mod and no window: the person's --moves in turn, the mod's answers,
+/// until the game ends or the person has no move left to play.
+[[nodiscard]] atlas::Status run_local_headless(Game& game, Opponent& opponent) {
+    // A game against itself ends by the rules — mate, stalemate, fifty moves, repetition or
+    // material — long before this. The bound is for a mod that stopped answering.
+    constexpr std::uint64_t kMaxTicks = 200'000;
+    for (std::uint64_t ticks = 0; ticks < kMaxTicks; ++ticks) {
+        if (game.result().outcome != atlas::chess::Outcome::Ongoing) {
+            return atlas::ok();
+        }
+        std::optional<atlas::chess::Move> person;
+        if (!opponent.plays(game.position().side_to_move)) {
+            if (opponent.script.empty()) {
+                return atlas::ok();
+            }
+            person = opponent.script.front();
+            opponent.script.pop_front();
+        }
+        if (opponent.host->disabled()) {
+            return atlas::fail(
+                atlas::ErrorCode::Unavailable,
+                std::format("the mod stopped: {}", opponent.host->disabled_because()));
+        }
+        auto applied = advance_local(game, opponent, person);
+        if (!applied) {
+            return std::unexpected(std::move(applied).error());
+        }
+        if (person.has_value() && !*applied) {
+            return atlas::fail(atlas::ErrorCode::InvalidArgument,
+                               std::format("move {} ({}) was declined by the rules in {}",
+                                           game.plies + 1, atlas::chess::to_string(*person),
+                                           atlas::chess::to_fen(game.position())));
+        }
+    }
+    return atlas::fail(atlas::ErrorCode::Unavailable,
+                       std::format("the game did not end within {} ticks", kMaxTicks));
+}
+
+/// What the mod did, for whoever runs it and for the integration cases.
+void print_opponent(const Opponent& opponent) {
+    atlas::app::report_mod(*opponent.host, "");
+    const auto stats = opponent.host->stats();
+    std::printf("opponent: mod '%s' plays %s, %llu move(s) submitted, %s\n",
+                opponent.loaded.name.c_str(), std::string{seat_name(opponent.seat)}.c_str(),
+                static_cast<unsigned long long>(stats.commands_submitted),
+                opponent.host->disabled() ? "disabled" : "still running");
     std::fflush(stdout);
 }
 
@@ -735,7 +959,8 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
     camera.set_zoom(std::min(width, height) / (atlas::chess::BoardLayout::kExtent * kMargin));
 }
 
-[[nodiscard]] atlas::Status run_windowed(const Options& options, Game& game, Network* network) {
+[[nodiscard]] atlas::Status run_windowed(const Options& options, Game& game, Network* network,
+                                         Opponent* opponent) {
     atlas::assets::FileSystem filesystem;
     if (auto status = filesystem.mount("assets", std::filesystem::path{options.assets_dir});
         !status) {
@@ -853,6 +1078,11 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
                     selection.clear();
                     continue;
                 }
+                // Nor the mod's side: its pieces are its to move.
+                if (opponent != nullptr && opponent->plays(game.position().side_to_move)) {
+                    selection.clear();
+                    continue;
+                }
                 // Events are in logical units and the camera's viewport is in pixels.
                 const float scale = window->display_scale();
                 const auto world = camera.screen_to_world(
@@ -874,6 +1104,27 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
                     atlas::ErrorCode::Unavailable,
                     std::format("the partner left before the game was agreed over: {}",
                                 network->hub->status().reason));
+            }
+            chosen.reset();
+        }
+        if (opponent != nullptr) {
+            // A game with a mod runs a tick a frame, whether or not anybody clicked: the mod
+            // thinks a few moves a tick and answers when it has. --moves, if given, are the
+            // person's, taken in turn before any click.
+            if (!chosen.has_value() && !opponent->plays(game.position().side_to_move) &&
+                !opponent->script.empty() &&
+                game.result().outcome == atlas::chess::Outcome::Ongoing) {
+                chosen = opponent->script.front();
+                opponent->script.pop_front();
+            }
+            if (game.result().outcome == atlas::chess::Outcome::Ongoing) {
+                auto applied = advance_local(game, *opponent, chosen);
+                if (!applied) {
+                    return std::unexpected(std::move(applied).error());
+                }
+                if (chosen.has_value() && !*applied) {
+                    ATLAS_LOG_WARN(kApp, "{} was declined", atlas::chess::to_string(*chosen));
+                }
             }
             chosen.reset();
         }
@@ -1025,7 +1276,7 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
     atlas::mark_main_thread();
     ATLAS_LOG_INFO(kApp, "startup: {}", atlas::build_info::summary());
 
-    auto game = make_game(options->fen, options->networked());
+    auto game = make_game(options->fen, options->networked(), !options->mod.empty());
     if (!game) {
         return std::unexpected(std::move(game).error());
     }
@@ -1040,9 +1291,26 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
             return std::unexpected(std::move(script).error());
         }
         (*network)->script = *std::move(script);
-        const auto status = options->headless ? run_network_headless(**game, **network)
-                                              : run_windowed(*options, **game, network->get());
+        const auto status = options->headless
+                                ? run_network_headless(**game, **network)
+                                : run_windowed(*options, **game, network->get(), nullptr);
         print_summary(**game);
+        return status;
+    }
+
+    if (!options->mod.empty()) {
+        auto opponent = open_opponent(*options, **game);
+        if (!opponent) {
+            return std::unexpected(std::move(opponent).error());
+        }
+        const auto status = options->headless
+                                ? run_local_headless(**game, **opponent)
+                                : run_windowed(*options, **game, nullptr, opponent->get());
+        print_summary(**game);
+        print_opponent(**opponent);
+        if (status) {
+            ATLAS_LOG_INFO(kApp, "shutdown");
+        }
         return status;
     }
 
@@ -1051,7 +1319,7 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
         return status;
     }
     if (!options->headless) {
-        if (auto status = run_windowed(*options, **game, nullptr); !status) {
+        if (auto status = run_windowed(*options, **game, nullptr, nullptr); !status) {
             return status;
         }
     }

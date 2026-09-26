@@ -17,13 +17,16 @@ decides." So this check compares three things instead, and each says why:
    comparison is skipped and says so, naming both versions. That is the shader cooker's rule
    (`tools/cook_shaders.py`), which ADR-0015 prescribed for a compiled mod before one existed.
 
-A fourth comparison, of behaviour — the rebuilt module and the committed one playing the same
-game — needs something that can run a mod, and arrives with the chess application in M26's
-fourth slice.
+4. **Behaviour, wherever a toolchain and the chess application both exist.** Given
+   `--play-with BINARY`, the rebuilt module and the committed one each play a whole game against
+   themselves in that binary, and the two games must end in the same position with the same
+   state hash. This is what verifies a module on a machine whose compiler cannot reproduce its
+   bytes — the second remedy CLAUDE.md names: compare something other than bytes.
 
 Usage:
     python3 tools/build_mods.py            # build and write the committed module and manifest
     python3 tools/build_mods.py --check    # verify, rebuilding where a toolchain exists
+    python3 tools/build_mods.py --check --play-with build/macos-debug/bin/atlas_chess
 
 The toolchain is clang and wasm-ld of LLVM major 23, found as `$ATLAS_WASM_CLANG` and
 `$ATLAS_WASM_LD`, as `clang-23` and `wasm-ld-23` on the path (Ubuntu's apt.llvm.org packages),
@@ -201,7 +204,19 @@ def command_build() -> int:
     return 0
 
 
-def command_check() -> int:
+def self_play(binary: str, mods_dir: Path, module: str) -> tuple[str, ...]:
+    """Play `module` against itself in the chess application; return how the game ended."""
+    result = subprocess.run([binary, "--headless", "--mod", module, "--mod-plays", "both",
+                             "--mods-dir", str(mods_dir)],
+                            capture_output=True, text=True, cwd=ROOT, timeout=600)
+    if result.returncode != 0:
+        raise SystemExit(f"error: {module} did not finish a game in {binary}:\n"
+                         f"{result.stdout}{result.stderr}")
+    wanted = ("position:", "result:", "state hash:", "chess:")
+    return tuple(line for line in result.stdout.splitlines() if line.startswith(wanted))
+
+
+def command_check(play_with: str | None) -> int:
     if not MANIFEST.exists():
         print(f"error: {MANIFEST.relative_to(ROOT)} is missing; run tools/build_mods.py",
               file=sys.stderr)
@@ -248,6 +263,18 @@ def command_check() -> int:
                 print(f"error: {mod['output']} rebuilt with the manifest's own toolchain differs "
                       "from the committed module; run tools/build_mods.py", file=sys.stderr)
                 failed = True
+            # 4: behaviour, where there is something to play it in.
+            if play_with is not None and not failed:
+                committed_game = self_play(play_with, OUTPUT_DIR, mod["output"])
+                rebuilt_game = self_play(play_with, Path(scratch), mod["output"])
+                if committed_game != rebuilt_game:
+                    print(f"error: {mod['output']} rebuilt here plays a different game from the "
+                          "committed module:\n  committed: " + " | ".join(committed_game) +
+                          "\n  rebuilt:   " + " | ".join(rebuilt_game), file=sys.stderr)
+                    failed = True
+                else:
+                    print(f"{mod['output']}: the rebuilt module plays the committed one's game "
+                          f"({committed_game[-1] if committed_game else 'no summary'})")
     if failed:
         return 1
     if same_toolchain:
@@ -265,8 +292,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true",
                         help="verify the committed modules instead of rebuilding them")
-    args = parser.parse_args()
-    return command_check() if args.check else command_build()
+    parser.add_argument("--play-with", metavar="BINARY",
+                        help="with --check: also compare how the rebuilt and committed modules "
+                             "play, in this chess binary")
+    # An empty argument is what CTest passes where the chess application is not built; see the
+    # test's registration in CMakeLists.txt.
+    args = parser.parse_args([arg for arg in sys.argv[1:] if arg])
+    if args.play_with and not Path(args.play_with).exists():
+        # Named but not built yet — a configure that has not been followed by a build. Said, and
+        # the behavioural comparison skipped, rather than failed for a reason about the build.
+        print(f"note: {args.play_with} does not exist; not comparing behaviour", file=sys.stderr)
+        args.play_with = None
+    return command_check(args.play_with) if args.check else command_build()
 
 
 if __name__ == "__main__":

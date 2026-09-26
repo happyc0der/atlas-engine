@@ -10,6 +10,7 @@
 #include <atlas/app/frame_counters.hpp>
 #include <atlas/app/log_options.hpp>
 #include <atlas/app/main_guard.hpp>
+#include <atlas/app/mods.hpp>
 #include <atlas/app/ppm.hpp>
 #include <atlas/app/run_bounds.hpp>
 #include <atlas/app/socket_session.hpp>
@@ -37,7 +38,6 @@
 #include <atlas/net/session.hpp>
 #include <atlas/platform/platform.hpp>
 #include <atlas/rhi/device.hpp>
-#include <atlas/script/atlas_mod.h>
 #include <atlas/script/mod_host.hpp>
 #include <atlas/script/runtime.hpp>
 #include <atlas/simulation/kernel.hpp>
@@ -48,7 +48,6 @@
 #include <atlas/simulation/turn_gate.hpp>
 #include <atlas/tasks/worker_pool.hpp>
 #include <atlas/text/catalog.hpp>
-#include <atlas/text/substitute.hpp>
 #include <atlas/tools/debug_ui.hpp>
 #include <atlas/tools/panels.hpp>
 #include <atlas/tools/text_keys.hpp>
@@ -448,16 +447,8 @@ struct Simulation {
 /// is why a loopback run with four peers has one of these and four hosts rather than four of
 /// everything. A host must not outlive it: WAMR's allocator belongs to the runtime, so a mod
 /// freed afterwards would hand memory back to something that no longer exists.
-struct ModRuntime {
-    std::optional<atlas::script::Runtime> runtime;
-    std::vector<std::byte> bytes;
-    /// The mod's own words, from `<name>.strings.json` beside it, already checked to name only
-    /// keys under the mod's namespace (ADR-0021). Absent when the mod ships none, or when the one
-    /// it ships was refused, and either way the mod runs and its keys show as themselves.
-    std::optional<atlas::assets::ImportedStringTable> strings;
-
-    [[nodiscard]] bool wanted() const noexcept { return runtime.has_value(); }
-};
+/// The mod's module, words and runtime; shared with chess since M26 (`apps/common`).
+using ModRuntime = atlas::app::LoadedMod;
 
 /// One peer's mod, and the view buffer it reads.
 struct ModPlayer {
@@ -476,71 +467,9 @@ struct ModPlayer {
 /// larger change than the audio module itself" — and that reasoning was about proportion. A mod
 /// changes the proportion: `VirtualPath` is the only validated way to turn a name from the
 /// command line into a file inside a directory, and rolling that by hand for untrusted input is
-/// precisely what this project does not do.
+/// precisely what this project does not do. The reading itself is `atlas::app::open_mod`.
 [[nodiscard]] atlas::Result<ModRuntime> open_mod_runtime(const Options& options) {
-    ModRuntime opened;
-    if (options.mod.empty()) {
-        return opened;
-    }
-
-    atlas::assets::FileSystem files;
-    if (auto status = files.mount("mods", std::filesystem::path(options.mods_dir)); !status) {
-        return std::unexpected(std::move(status).error().context("mounting the mods directory"));
-    }
-    auto path = atlas::assets::VirtualPath::parse(options.mod);
-    if (!path) {
-        return std::unexpected(std::move(path).error().context("the mod's name"));
-    }
-    auto bytes = files.read(*path);
-    if (!bytes) {
-        return std::unexpected(std::move(bytes).error().context("reading the mod"));
-    }
-    opened.bytes = *std::move(bytes);
-
-    // The table beside the module, if there is one. Read through the same mount and the same
-    // validated path as the module itself. A table naming anything outside the mod's namespace
-    // is refused whole — a mod may add words under its own name and nobody else's — and the mod
-    // loads regardless, because words are presentation and a missing one shows its key.
-    {
-        std::string_view stem = options.mod;
-        if (stem.ends_with(".wasm")) {
-            stem.remove_suffix(std::string_view{".wasm"}.size());
-        }
-        const std::string table_name = std::format("{}.strings.json", stem);
-        if (auto table_path = atlas::assets::VirtualPath::parse(table_name);
-            table_path && files.exists(*table_path)) {
-            auto table_bytes = files.read(*table_path);
-            auto table = table_bytes ? atlas::assets::import_string_table(*table_bytes, table_name)
-                                     : atlas::Result<atlas::assets::ImportedStringTable>{
-                                           std::unexpected(table_bytes.error())};
-            if (!table) {
-                ATLAS_LOG_WARN(kApp, "mod '{}' string table not used: {}", options.mod,
-                               table.error());
-            } else if (auto allowed = atlas::script::check_mod_table(*table, options.mod);
-                       !allowed) {
-                ATLAS_LOG_WARN(kApp, "mod '{}' string table refused: {}", options.mod,
-                               allowed.error());
-            } else {
-                opened.strings = *std::move(table);
-            }
-        }
-    }
-
-    if (options.unsafe_debug_imports) {
-        // Said out loud, at warning level, every time. A run that offers a mod a clock is a run
-        // whose results mean nothing, and the log is where somebody reading an unexpected
-        // divergence will look first.
-        ATLAS_LOG_WARN(kApp, "--unsafe-debug-imports: mods are offered a host clock; a mod that "
-                             "reads one will diverge under lockstep, which is the only thing "
-                             "this flag is for");
-    }
-    auto runtime =
-        atlas::script::Runtime::create({.unsafe_debug_imports = options.unsafe_debug_imports});
-    if (!runtime) {
-        return std::unexpected(std::move(runtime).error());
-    }
-    opened.runtime = *std::move(runtime);
-    return opened;
+    return atlas::app::open_mod(options.mod, options.mods_dir, options.unsafe_debug_imports);
 }
 
 /// Give one simulation its own instance of the mod.
@@ -600,41 +529,15 @@ void run_mod_for_tick(ModPlayer& player, Simulation& sim, atlas::Tick tick,
 
     // What the mod said, resolved through the application's catalogue in the application's
     // language (ADR-0021 D5). A run with no catalogue shows keys, which is what a missing key
-    // shows everywhere; the lockstep paths are those runs. Printed as well as logged, so the
-    // log console shows it in a window and a headless run can be read by a script.
-    for (const auto& message : player.host->take_messages()) {
-        std::array<std::string, ATLAS_MOD_MAX_SAY_ARGS> owned;
-        std::array<std::string_view, ATLAS_MOD_MAX_SAY_ARGS> arg_views;
-        const auto arguments = message.arguments();
-        for (std::size_t i = 0; i < arguments.size(); ++i) {
-            owned[i] = std::format("{}", arguments[i]);
-            arg_views[i] = owned[i];
-        }
-        const std::string_view pattern =
-            catalog != nullptr ? catalog->lookup(message.key) : std::string_view{message.key};
-        const std::string text =
-            atlas::text::substitute(pattern, std::span(arg_views).first(arguments.size()));
-        std::printf("%smod '%s' says: %s\n", std::string{who}.c_str(),
-                    std::string{player.host->name()}.c_str(), text.c_str());
-        ATLAS_LOG_INFO(kApp, "{}mod '{}' says: {}", who, player.host->name(), text);
-    }
+    // shows everywhere; the lockstep paths are those runs.
+    atlas::app::say_messages(*player.host, catalog, who);
 }
 
 /// One line saying what a mod did, so an integration case has something to assert on.
 void report_mod(const ModPlayer& player, std::string_view who) {
-    if (!player.loaded()) {
-        return;
+    if (player.loaded()) {
+        atlas::app::report_mod(*player.host, who);
     }
-    const auto stats = player.host->stats();
-    ATLAS_LOG_INFO(kApp,
-                   "{}mod '{}': {} submitted, {} refused, {} log line(s) dropped, {} said, {} "
-                   "unsaid over {} tick(s), {}",
-                   who, player.host->name(), stats.commands_submitted, stats.commands_refused,
-                   stats.log_lines_dropped, stats.messages_said, stats.messages_dropped,
-                   stats.ticks_run,
-                   player.host->disabled()
-                       ? std::string("disabled: ") + std::string(player.host->disabled_because())
-                       : std::string("still running"));
 }
 
 /// `gate` is borrowed and optional: null is a solo run, which is every run but a loopback one.

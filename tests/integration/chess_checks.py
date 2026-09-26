@@ -215,6 +215,76 @@ def check_window_under_dummy_driver(binary: str) -> None:
     expect_contains(text, "shutdown", "the program shut down in order")
 
 
+def opponent(binary: str, *extra: str):
+    return run(binary, ["--headless", "--mod", "chess_opponent.wasm", *extra])
+
+
+def check_mod_plays_itself_to_the_end(binary: str) -> None:
+    """The opponent against itself (ADR-0023): a legal game to a result, the same one twice."""
+    first = opponent(binary, "--mod-plays", "both")
+    expect_exit(first, 0, "the mod playing both sides")
+    text = output_of(first)
+    # A result the rules gave, not the bound: the game ended by mate, stalemate, the fifty-move
+    # rule, repetition or material, and every move the mod submitted was applied.
+    if result_line(text) == "ongoing":
+        raise CheckFailed(f"the game did not end\n{text}")
+    expect_contains(text, "plays both sides", "the mod played both sides")
+    expect_contains(text, "still running", "the mod was never disabled")
+    if "declined" in text:
+        raise CheckFailed(f"a move the mod submitted was declined\n{text}")
+    submitted = re.search(r"(\d+) move\(s\) submitted", text)
+    plies = re.search(r"^chess: plies=(\d+)", text, re.MULTILINE)
+    if not submitted or not plies or submitted.group(1) != plies.group(1):
+        raise CheckFailed(f"every ply should be a move the mod submitted\n{text}")
+
+    # Counted in moves, not time: nothing about the machine or the moment can change the game.
+    second = opponent(binary, "--mod-plays", "both")
+    expect_exit(second, 0, "the same game again")
+    if state_hash(output_of(second)) != state_hash(text):
+        raise CheckFailed("two runs of the mod against itself played different games")
+
+
+def check_mod_answers_a_person(binary: str) -> None:
+    """A person's scripted moves as white; the mod answers each, and takes a queen it is given."""
+    # Scholar's mate, attempted against a defender that sees two plies. After Qxf7+ the queen is
+    # defended by nothing, so the king takes it.
+    result = opponent(binary, "--moves", "e2e4,d1h5,f1c4,h5f7")
+    expect_exit(result, 0, "a person against the mod")
+    text = output_of(result)
+    expect_contains(text, "chess: plies=8", "every scripted move was answered")
+    expect_contains(text, "ply 8: e8f7 (the mod)", "the mod took the queen")
+    expect_contains(text, "plays black", "the mod played black by default")
+    if text.count("(the mod)") != 4:
+        raise CheckFailed(f"expected four moves by the mod\n{text}")
+
+
+def check_mod_options_are_checked(binary: str) -> None:
+    for args, needle in (
+        (["--headless", "--mod-plays", "white"], "--mod-plays needs --mod"),
+        (["--headless", "--mod", "chess_opponent.wasm", "--mod-plays", "red"], "white, black or both"),
+        (["--headless", "--mod", "chess_opponent.wasm", "--listen"], "local game"),
+        (["--headless", "--mod", "chess_opponent.wasm", "--mod-plays", "both", "--moves", "e2e4"],
+         "nobody to play them"),
+        (["--headless", "--mod", "no_such_mod.wasm"], "mod"),
+        (["--headless", "--mod", "../../etc/passwd"], "mod"),
+    ):
+        result = run(binary, args)
+        expect_exit(result, 1, " ".join(args))
+        expect_contains(output_of(result), needle, " ".join(args))
+
+
+def check_mod_plays_in_a_window(binary: str) -> None:
+    # A window, no device, a tick a frame: the person's move goes in, and the mod answers within
+    # the frames the run has.
+    result = run(binary, ["--video-driver", "dummy", "--no-render", "--frames", "120",
+                          "--mod", "chess_opponent.wasm", "--moves", "e2e4"])
+    expect_exit(result, 0, "the mod in a window under the dummy driver")
+    text = output_of(result)
+    expect_contains(text, "ply 2:", "the mod answered in the window")
+    expect_contains(text, "(the mod)", "the answer was the mod's")
+    expect_contains(text, "shutdown", "the program shut down in order")
+
+
 CASES = {
     "version": check_version,
     "help": check_help,
@@ -230,6 +300,10 @@ CASES = {
     "socket_partner_leaving_ends_the_game": check_socket_partner_leaving_ends_the_game,
     "socket_sides_must_start_alike": check_socket_sides_must_start_alike,
     "window_under_dummy_driver": check_window_under_dummy_driver,
+    "mod_plays_itself_to_the_end": check_mod_plays_itself_to_the_end,
+    "mod_answers_a_person": check_mod_answers_a_person,
+    "mod_options_are_checked": check_mod_options_are_checked,
+    "mod_plays_in_a_window": check_mod_plays_in_a_window,
 }
 
 

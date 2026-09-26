@@ -173,19 +173,23 @@ TEST_CASE("the result round-trips and refuses an outcome that disagrees with its
     CHECK_FALSE(refuse(2, 1));
 }
 
-TEST_CASE("the players table round-trips and refuses a mod as a player", "[chess][tables]") {
+TEST_CASE("the players table round-trips, a mod as a player included", "[chess][tables]") {
     PlayersTable players;
     players.white = atlas::sim::SourceId{0};
     players.black = atlas::sim::SourceId{1};
     CHECK(round_trips(players));
     CHECK(players.holder(Colour::Black) == atlas::sim::SourceId{1});
 
+    // Refused until M26, accepted since (ADR-0023 D6): a saved game against the chess opponent
+    // names the mod as a player, and must load.
     SaveWriter writer;
     writer.write_u32(0);
-    writer.write_u32(0x8000'0001U);  // a mod identifier, bit 31 set
+    writer.write_u32(0x8000'0000U);  // the first mod's identifier, bit 31 set
     PlayersTable loaded;
     SaveReader reader(writer.bytes());
-    CHECK_FALSE(loaded.read_from(reader).has_value());
+    REQUIRE(loaded.read_from(reader).has_value());
+    CHECK(loaded.holder(Colour::Black) == atlas::sim::mod_source(0));
+    CHECK(round_trips(loaded));
 }
 
 TEST_CASE("clear returns every table to its constructed state", "[chess][tables]") {

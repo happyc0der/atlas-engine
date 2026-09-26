@@ -121,6 +121,10 @@ set(_atlas_chess_cases
     socket_game_to_checkmate
     socket_partner_leaving_ends_the_game
     socket_sides_must_start_alike
+    # The chess opponent, a sandboxed mod written in C (ADR-0023).
+    mod_plays_itself_to_the_end
+    mod_answers_a_person
+    mod_options_are_checked
 )
 if(TARGET atlas_chess)
     foreach(case IN LISTS _atlas_chess_cases)
@@ -138,6 +142,14 @@ if(TARGET atlas_chess)
                      --binary "$<TARGET_FILE:atlas_chess>"
                      --case window_under_dummy_driver)
     set_tests_properties("chess_window_under_dummy_driver" PROPERTIES
+        LABELS "display;integration"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
+    add_test(NAME "chess_mod_plays_in_a_window"
+             COMMAND "${Python3_EXECUTABLE}" "${_atlas_chess_checks}"
+                     --binary "$<TARGET_FILE:atlas_chess>"
+                     --case mod_plays_in_a_window)
+    set_tests_properties("chess_mod_plays_in_a_window" PROPERTIES
         LABELS "display;integration"
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 endif()

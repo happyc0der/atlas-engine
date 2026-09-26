@@ -32,6 +32,20 @@ atlas_add_app_library(app_lockstep
         atlas::simulation
 )
 
+# atlas::app_mods — loading a sandboxed mod and saying what it did, the same way in every
+# application that runs one. Its own target because it links atlas::script, and an application
+# that runs no mod should not link a WebAssembly runtime to get a camera controller. Lifted out
+# of the lab when chess became the second application to run a mod (M26).
+atlas_add_app_library(app_mods
+    SOURCES
+        src/mods.cpp
+    DEPENDS
+        atlas::core
+        atlas::assets
+        atlas::script
+        atlas::text
+)
+
 if(ATLAS_BUILD_TESTS)
     add_subdirectory(tests)
 endif()

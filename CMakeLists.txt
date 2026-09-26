@@ -134,9 +134,13 @@ if(ATLAS_BUILD_TESTS)
         # the committed module against its manifest — and compares a rebuild's bytes only where
         # the toolchain is the manifest's own, skipping that part loudly anywhere else. The
         # shader check's rule, prescribed for a compiled mod before one existed.
+        # Given the chess application where one is built, it also plays the rebuilt module and
+        # the committed one against themselves and compares the games, which verifies a module
+        # on a machine whose compiler cannot reproduce its bytes.
         add_test(NAME mods_built_current
                  COMMAND "${Python3_EXECUTABLE}"
-                         "${PROJECT_SOURCE_DIR}/tools/build_mods.py" --check)
+                         "${PROJECT_SOURCE_DIR}/tools/build_mods.py" --check
+                         "$<$<TARGET_EXISTS:atlas_chess>:--play-with=$<TARGET_FILE:atlas_chess>>")
         set_tests_properties(mods_built_current PROPERTIES LABELS "lint")
     else()
         message(STATUS "Atlas: Python not found; the boundary and licence checks will not "

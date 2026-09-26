@@ -16,6 +16,7 @@ atlas_add_app(lab
     DEPENDS
         atlas::app_common
         atlas::app_lockstep
+        atlas::app_mods
         atlas::lab_sim
         atlas::net
         atlas::script
