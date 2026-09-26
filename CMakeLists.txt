@@ -31,6 +31,7 @@ include(StaticAnalysis)
 include(Tracy)
 include(Dependencies)
 include(AtlasModule)
+include(AtlasInstall)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -158,5 +159,8 @@ endif()
 add_subdirectory(tests)
 
 add_subdirectory(benchmarks)
+
+# Last, so the app kit's targets exist (ADR-0024).
+atlas_install()
 
 atlas_report_configuration()

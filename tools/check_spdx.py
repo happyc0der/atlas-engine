@@ -65,8 +65,9 @@ def comment_prefix_for(path: Path) -> str:
     if path.name == "CMakeLists.txt":
         return "#"
     if path.suffix == ".in":
-        # build_info.cpp.in generates C++.
-        return "//"
+        # A template comments in the language it generates: build_info.cpp.in is C++,
+        # AtlasConfig.cmake.in is CMake. The suffix beneath ".in" says which.
+        return COMMENT_PREFIX.get(Path(path.stem).suffix, "//")
     return COMMENT_PREFIX.get(path.suffix, "#")
 
 

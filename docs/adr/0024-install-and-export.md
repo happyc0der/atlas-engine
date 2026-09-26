@@ -134,6 +134,20 @@ Each is scored in M27's report, as ADR-0018's were.
   - a lower deployment target.
 - It sets `Atlas_DATA_DIR`.
 
+*Made precise during M27, 2026-09-26.*
+- **It also requires every dependency to come from one tree.** When the vcpkg tree was missing
+  from the path, SDL3 was found in Homebrew's copy on this machine, and only nlohmann_json's
+  absence stopped the configure. A tree that lacked one package would have linked a stranger's
+  build of it without a word. `cmake/Dependencies.cmake` guards against the same thing inside
+  this tree.
+- **Threads is not on the list.** No Atlas target names it, and a dependency that needs it
+  finds it in its own config.
+- **"A different compiler" means a different compiler ID or major version,** as D9's contract
+  says.
+- **The MSVC check is made only for a single-configuration generator.** A multi-configuration
+  generator chooses its configuration after the config file has run, so the linker's own
+  runtime-mismatch check (LNK2038) is what stops it there.
+
 **D6. MSVC's language standard is part of the interface.** `atlas_core` gains an INTERFACE
 `/std:c++latest` for C++ sources on MSVC, so every consumer compiles against the libraries under
 the standard they were built with. The root setting stays for this tree's own targets.

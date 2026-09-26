@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# find_package(Atlas) — generated from cmake/AtlasConfig.cmake.in (ADR-0024).
+#
+#   find_package(Atlas 0.27 REQUIRED)                  # atlas::core, atlas::simulation, ...
+#   find_package(Atlas 0.27 REQUIRED COMPONENTS app)   # and atlas::app_common, app_lockstep,
+#                                                      # app_mods
+#
+# Put two directories on CMAKE_PREFIX_PATH: this install prefix, and the vcpkg tree Atlas was
+# built with (vcpkg_installed/<triplet>). The third-party libraries are found there, never
+# copied, so the ones a consumer links are the ones Atlas was compiled against.
+#
+# Sets Atlas_DATA_DIR to the engine's runtime data: shaders/ for renderer::QuadBatch and
+# strings/en.json for text::Catalog. The engine's own defaults are relative to the working
+# directory, so a consumer passes these paths explicitly.
+
+@PACKAGE_INIT@
+
+set(Atlas_BUILT_WITH_COMPILER_ID "@CMAKE_CXX_COMPILER_ID@")
+set(Atlas_BUILT_WITH_COMPILER_VERSION "@CMAKE_CXX_COMPILER_VERSION@")
+set(Atlas_BUILD_TYPE "@CMAKE_BUILD_TYPE@")
+set(Atlas_VCPKG_TRIPLET "@ATLAS_RECORDED_TRIPLET@")
+set(Atlas_OSX_DEPLOYMENT_TARGET "@ATLAS_RECORDED_DEPLOYMENT_TARGET@")
+set_and_check(Atlas_DATA_DIR "@PACKAGE_ATLAS_INSTALL_DATADIR@")
+
+# A consumer that could not link against these libraries is stopped here, with the reason,
+# rather than at a link error naming a mangled symbol (D5, D9).
+set(_atlas_contract
+    "Atlas ${Atlas_VERSION} at ${PACKAGE_PREFIX_DIR} was built by ${Atlas_BUILT_WITH_COMPILER_ID} \
+${Atlas_BUILT_WITH_COMPILER_VERSION}, ${Atlas_BUILD_TYPE}, for the vcpkg triplet \
+'${Atlas_VCPKG_TRIPLET}'. A consumer uses the same compiler and major version, the same \
+triplet and, with MSVC, a build type of the same kind (debug or not). See \
+docs/adr/0024-install-and-export.md, D9.")
+
+if(NOT CMAKE_CXX_COMPILER_ID)
+    message(FATAL_ERROR "Atlas: enable the CXX language before find_package(Atlas).")
+endif()
+string(REGEX MATCH "^[0-9]+" _atlas_built_major "${Atlas_BUILT_WITH_COMPILER_VERSION}")
+string(REGEX MATCH "^[0-9]+" _atlas_consumer_major "${CMAKE_CXX_COMPILER_VERSION}")
+if(NOT CMAKE_CXX_COMPILER_ID STREQUAL Atlas_BUILT_WITH_COMPILER_ID
+   OR NOT _atlas_consumer_major STREQUAL _atlas_built_major)
+    message(FATAL_ERROR
+        "Atlas: this project is compiled by ${CMAKE_CXX_COMPILER_ID} "
+        "${CMAKE_CXX_COMPILER_VERSION}, and the libraries were not.\n  ${_atlas_contract}")
+endif()
+
+# MSVC's debug and release runtimes are different libraries, and so is the standard library's
+# checked-iterator layout. The linker would also refuse the mix (LNK2038); this says why
+# first. A multi-configuration generator decides the configuration later, so only the linker
+# can check it there.
+if(MSVC AND CMAKE_BUILD_TYPE)
+    string(TOLOWER "${Atlas_BUILD_TYPE}" _atlas_built_type)
+    string(TOLOWER "${CMAKE_BUILD_TYPE}" _atlas_consumer_type)
+    set(_atlas_built_debug NO)
+    set(_atlas_consumer_debug NO)
+    if(_atlas_built_type STREQUAL "debug")
+        set(_atlas_built_debug YES)
+    endif()
+    if(_atlas_consumer_type STREQUAL "debug")
+        set(_atlas_consumer_debug YES)
+    endif()
+    if(NOT _atlas_built_debug STREQUAL _atlas_consumer_debug)
+        message(FATAL_ERROR
+            "Atlas: this project builds ${CMAKE_BUILD_TYPE} and the libraries are "
+            "${Atlas_BUILD_TYPE}, so they use different C runtimes.\n  ${_atlas_contract}")
+    endif()
+endif()
+
+# Code built for an older macOS than the libraries may call what they assume is there.
+if(APPLE AND Atlas_OSX_DEPLOYMENT_TARGET AND CMAKE_OSX_DEPLOYMENT_TARGET
+   AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS Atlas_OSX_DEPLOYMENT_TARGET)
+    message(FATAL_ERROR
+        "Atlas: this project targets macOS ${CMAKE_OSX_DEPLOYMENT_TARGET} and the libraries "
+        "were built for ${Atlas_OSX_DEPLOYMENT_TARGET}.\n  ${_atlas_contract}")
+endif()
+
+foreach(_atlas_component IN LISTS Atlas_FIND_COMPONENTS)
+    if(NOT _atlas_component STREQUAL "app")
+        set(Atlas_FOUND FALSE)
+        set(Atlas_NOT_FOUND_MESSAGE
+            "Atlas has no component '${_atlas_component}'. The one component is 'app'.")
+        return()
+    endif()
+endforeach()
+
+# Every package a static library here names as $<LINK_ONLY:>. Found quietly, so that a
+# missing one is reported with where to look rather than as the dependency's own complaint.
+foreach(_atlas_dependency IN ITEMS SDL3 nlohmann_json EnTT unofficial-enet iwasm imgui)
+    find_package(${_atlas_dependency} CONFIG QUIET)
+    if(NOT ${_atlas_dependency}_FOUND)
+        set(Atlas_FOUND FALSE)
+        set(Atlas_NOT_FOUND_MESSAGE
+            "Atlas needs ${_atlas_dependency}, from the vcpkg tree it was built with. Put \
+<atlas-build>/vcpkg_installed/${Atlas_VCPKG_TRIPLET} on CMAKE_PREFIX_PATH beside ${PACKAGE_PREFIX_DIR}.")
+        return()
+    endif()
+endforeach()
+
+# And all from one tree. With the vcpkg tree missing, SDL3 was found in Homebrew's copy on the
+# machine this was written on, and only the next package's absence stopped the configure: a tree
+# lacking one package would have linked a stranger's build of it in silence. The same hazard
+# cmake/Dependencies.cmake guards against inside Atlas's own build.
+set(_atlas_tree "")
+foreach(_atlas_dependency IN ITEMS SDL3 nlohmann_json EnTT unofficial-enet iwasm imgui)
+    get_filename_component(_atlas_dependency_tree "${${_atlas_dependency}_DIR}/.." REALPATH)
+    if(NOT _atlas_tree)
+        set(_atlas_tree "${_atlas_dependency_tree}")
+        set(_atlas_first "${_atlas_dependency}")
+    elseif(NOT _atlas_dependency_tree STREQUAL _atlas_tree)
+        set(Atlas_FOUND FALSE)
+        set(Atlas_NOT_FOUND_MESSAGE
+            "Atlas's dependencies come from more than one place: ${_atlas_first} from ${_atlas_tree} and ${_atlas_dependency} from ${_atlas_dependency_tree}. Put the vcpkg tree Atlas was built with (vcpkg_installed/${Atlas_VCPKG_TRIPLET}) first on CMAKE_PREFIX_PATH.")
+        return()
+    endif()
+endforeach()
+
+include("${CMAKE_CURRENT_LIST_DIR}/AtlasTargets.cmake")
+
+if("app" IN_LIST Atlas_FIND_COMPONENTS)
+    if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/AtlasAppTargets.cmake")
+        include("${CMAKE_CURRENT_LIST_DIR}/AtlasAppTargets.cmake")
+        set(Atlas_app_FOUND TRUE)
+    else()
+        # Installed from a build with ATLAS_BUILD_APPS=OFF.
+        set(Atlas_app_FOUND FALSE)
+    endif()
+endif()
+
+unset(_atlas_contract)
+unset(_atlas_built_major)
+unset(_atlas_consumer_major)
+unset(_atlas_built_type)
+unset(_atlas_consumer_type)
+unset(_atlas_built_debug)
+unset(_atlas_consumer_debug)
+unset(_atlas_component)
+unset(_atlas_dependency)
+unset(_atlas_dependency_tree)
+unset(_atlas_tree)
+unset(_atlas_first)
+
+check_required_components(Atlas)
