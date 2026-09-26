@@ -1234,6 +1234,23 @@ within one percent. **The load prediction held**: seven and a half times the tri
 cost for twenty-seven times its size, which is the less-than-linear growth predicted. It is paid
 once per mod per run, so it is nothing a person notices.
 
+## The engine's own compiled mod, M27: a row that changes what it measures
+
+Chess leaves this repository in M27 (ADR-0024), and `script/load bytes=8108` measured the chess
+opponent. Its replacement is `painter.wasm`, the engine's own mod compiled from C: 457 bytes, one
+page of memory, a 16 KiB stack. **The row keeps its name and stops measuring a large module**,
+which is recorded in `DEFERRED.md` with what would bring a large one back.
+
+### The prediction, written before the first run
+
+**`script/load` for the painter: 5.3 to 8 microseconds, and between 1.0 and 1.5 times the trivial
+module's cost in the same run.** From the two points M26 measured — 295 bytes at 5.1 µs and 8,108
+at 38.2 µs — loading grows by about four nanoseconds a byte once the fixed cost is paid, and the
+painter is 162 bytes larger than the trivial module: under a microsecond more. The fixed cost is
+mostly a page of linear memory, which both have. The upper end allows for the painter's two
+functions that do something, where the trivial module's do nothing, and for a machine that is not
+idle, which is why the ratio within one run is the number that decides.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.
