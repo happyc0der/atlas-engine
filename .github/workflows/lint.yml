@@ -84,7 +84,6 @@ jobs:
       - name: Mods are current
         run: |
           python3 tools/build_mods.py --mods assets/source/mods/mods.json --check
-          python3 tools/build_mods.py --mods apps/chess/mods.json --check
 
   tidy:
     name: clang-tidy

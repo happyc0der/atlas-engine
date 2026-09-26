@@ -62,9 +62,9 @@ jobs:
         run: bash tools/ci/linux_deps.sh
 
       # The toolchain the mods written in C are built with (ADR-0023), so that the lint test
-      # mods_built_current can rebuild the chess opponent here and play it against the committed
-      # one in this lane's own chess binary. Its bytes are the compiler's and differ between
-      # builds of LLVM; the game it plays must not. Linux only: the other lanes skip that part.
+      # mods_built_current can rebuild the engine's painter here and run it against the committed
+      # one in this lane's own lab. Its bytes are the compiler's and differ between builds of
+      # LLVM; where it leaves the world must not. Linux only: the other lanes skip that part.
       - name: Install the mod toolchain
         if: runner.os == 'Linux'
         run: |

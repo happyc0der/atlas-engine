@@ -4,9 +4,10 @@ Atlas is a C++23 **engine platform** for a future map-based grand-strategy game.
 Build the engine. Never implement the game: no countries, wars, diplomacy, economies,
 historical data, political borders, or game-specific scripting. Synthetic test data may
 use neutral names (RegionValue, OwnerIndex, ColorIndex) and must carry no game meaning.
-`apps/chess` is the one recorded exception (ADR-0018): a probe that tests whether a game can be
-written against the engine, fenced at configure time to `atlas::simulation`, and **no chess
-reaches `engine/`**.
+**No game is in this repository.** Chess, written here as a probe from M18 to M26 (ADR-0018),
+is its own repository since M27, `happyc0der/atlas-chess`, and builds against an installed Atlas
+and nothing else (ADR-0024). Something chess needs from the engine is changed here, released,
+and reached there by moving its pin; it is never patched in from the other side.
 
 ## Commands
 
@@ -157,9 +158,10 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 - **A mod is written in freestanding C and committed compiled** (ADR-0023): clang and wasm-ld of
   LLVM 23 through `tools/build_mods.py`, target features pinned, names stripped. Its bytes are the
   compiler's, so its check compares the inputs and the module against the manifest everywhere, the
-  bytes only on the manifest's own toolchain, and the game a rebuilt module plays wherever a
-  toolchain and the chess binary exist. Edit a mod's source, then run the script; the check fails
-  otherwise.
+  bytes only on the manifest's own toolchain, and what a rebuilt module does wherever a toolchain
+  and the application it runs in exist — the lab, for the engine's painter. Which mods, and how
+  each is run, is a list (`assets/source/mods/mods.json`); a mod reaches no engine header but
+  `atlas_mod.h`. Edit a mod's source, then run the script; the check fails otherwise.
 - A mod that thinks across ticks does **a fixed amount of work per tick, counted in its own units,
   never in time**, and the worst tick is measured by lowering the budget until it traps. A quota
   in moves keeps the decision identical everywhere and bounds what one tick can cost.
@@ -168,7 +170,8 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   never the string, so `--text-check` can resolve the whole list against the shipped table. A
   missing key renders as itself: visible, logged once, and never an error. **An application's
   own strings live in the application** — its own key header and table, added beside the
-  engine's with `Catalog::add_table` — never in the engine's (ADR-0018); chess is the example.
+  engine's with `Catalog::add_table` — never in the engine's (ADR-0018); atlas-chess is the
+  example.
 - **Log messages are not localised, and neither are the two usage blocks.** A log line is a
   diagnostic for whoever reads the build, and routing it through a table would make every
   integration case's grep depend on a locale.

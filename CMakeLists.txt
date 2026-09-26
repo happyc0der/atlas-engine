@@ -47,8 +47,9 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 # See docs/adr/0001-language-build-platform.md.
 if(MSVC)
     set(CMAKE_CXX_STANDARD 23)
-    # For C++ sources only. The one C target, the chess opponent's rules compiled natively for
-    # their tests (M26), is C17, and MSVC refuses /std:c17 and /std:c++latest together.
+    # For C++ sources only, because MSVC refuses /std:c17 and /std:c++latest together. The C
+    # target that needed it, the chess opponent's rules compiled for their tests (M26), left with
+    # chess in M27; the guard costs nothing and stays for the next one.
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/std:c++latest>)
 
     # MSVC deprecates standard C functions in favour of its own _s variants, which are not
@@ -140,7 +141,7 @@ if(ATLAS_BUILD_TESTS)
         # Given the lab where one is built, it also runs the rebuilt module and the committed one
         # there and compares where each leaves the world, which verifies a module on a machine
         # whose compiler cannot reproduce its bytes. The engine's mods are listed in
-        # assets/source/mods/mods.json (ADR-0024 D8); chess checks its own beside itself.
+        # assets/source/mods/mods.json (ADR-0024 D8).
         add_test(NAME mods_built_current
                  COMMAND "${Python3_EXECUTABLE}"
                          "${PROJECT_SOURCE_DIR}/tools/build_mods.py"

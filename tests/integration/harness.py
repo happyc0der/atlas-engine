@@ -3,8 +3,9 @@
 with the output attached, and managing two processes that talk over a socket.
 
 Lifted out of `lab_checks.py` in M22, when chess became the second application with its own
-check file. The helpers had one caller until then, which is why they lived there; with two, a
-copy would be the thing that drifts.
+check file. Since M27 chess is its own repository and keeps a copy of this file, and the lab is
+the one caller here again; the helpers stay a module of their own, because a check file that
+is only checks is easier to read.
 """
 
 from __future__ import annotations

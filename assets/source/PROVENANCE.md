@@ -17,11 +17,9 @@ here at the same time, including the one entry that is an admission rather than 
 | `../cooked/shaders/*.spv`, `*.msl` | `tools/cook_shaders.py` from `shaders/*.hlsl` | GPL-3.0-or-later, as the sources |
 | `textures/sheet.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
 | `textures/tile.png` | `tools/gen_textures.py` | GPL-3.0-or-later, as the script |
-| `textures/chess_pieces.png` | `apps/chess/tools/gen_chess_textures.py` (from M27; `tools/gen_textures.py` before) | GPL-3.0-or-later, as the script |
 | `../mods/synthetic.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 | `../mods/clock.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 | `../mods/herald.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
-| `../mods/chess_opponent.wasm` | `tools/build_mods.py --mods apps/chess/mods.json`, from `apps/chess/mod/*.c` | GPL-3.0-or-later, as the sources |
 | `../mods/painter.wasm` | `tools/build_mods.py --mods assets/source/mods/mods.json`, from `mods/painter.c` | GPL-3.0-or-later, as the source |
 
 Both audio files are checked by `ctest -L lint`, which regenerates them into a scratch
@@ -58,19 +56,19 @@ of why the guest interface has no clock in it. The import it needs exists only w
 `tests/integration/lab_checks.py` asserts both halves: refused without the flag, and detected as
 a divergence with it. That case fails if anybody ever adds a clock to the interface for real.
 
-`mods/chess_opponent.wasm` is the first mod written in a language rather than in an encoder
-(ADR-0023): freestanding C, compiled by clang and linked by wasm-ld of LLVM 23. Its bytes are the
-compiler's, which is exactly what the paragraphs above avoid, so its check compares something
-else. `tools/build_mods.py --check` compares every input's hash and the committed module against
-its list's manifest, `mods/chess_manifest.json`, on any machine; rebuilds wherever the toolchain exists; and compares
-the rebuilt bytes only when that toolchain is the one the manifest records, saying so when it is
-not. The module carries no names and no producers section, so nothing in it records where it was
-built.
+`mods/painter.wasm` is the engine's own compiled mod (M27, ADR-0024 D8), and the one mod here
+written in a language rather than in an encoder (ADR-0023): freestanding C, from `mods/painter.c`,
+compiled by clang and linked by wasm-ld of LLVM 23. Its bytes are the compiler's, which is exactly
+what the paragraphs above avoid, so its check compares something else. `tools/build_mods.py
+--check` compares every input's hash and the committed module against `mods/build_manifest.json`
+on any machine; rebuilds wherever the toolchain exists; compares the rebuilt bytes only when that
+toolchain is the one the manifest records, saying so when it is not; and runs the rebuilt module
+and the committed one in the lab, where each must leave the world in the same state. The module
+carries no names and no producers section, so nothing in it records where it was built.
 
-`mods/painter.wasm` is the engine's own compiled mod (M27, ADR-0024 D8), built the same way from
-`mods/painter.c` and checked against `mods/build_manifest.json`, with the lab as the application it
-runs in. It is the C counterpart of `synthetic.wasm` and exists so that the toolchain is exercised
-by this repository once chess, and its opponent, have their own.
+The first compiled mod was the chess opponent (M26), which left with chess for its own repository
+in M27, together with the chess piece sheet; happyc0der/atlas-chess records both. The painter is
+the C counterpart of `synthetic.wasm`, and exists so that the toolchain is still exercised here.
 
 ## Third-party or hand-made
 

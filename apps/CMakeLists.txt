@@ -2,10 +2,9 @@
 #
 # Applications are composition roots and acceptance harnesses, not games and not libraries.
 #
-# One recorded exception: apps/chess, a probe built to test whether a game can be written
-# against the engine without a line of it reaching engine/ (ADR-0018). The rule still binds
-# the lab and the sandbox, and a second game needs a second record.
+# Chess was the one recorded exception, a probe written here from M18 to M26 (ADR-0018). Since
+# M27 it is its own repository, happyc0der/atlas-chess, built against an installed Atlas and
+# nothing else (ADR-0024). No game is in this repository.
 add_subdirectory(common)
 add_subdirectory(sandbox)
 add_subdirectory(lab)
-add_subdirectory(chess)

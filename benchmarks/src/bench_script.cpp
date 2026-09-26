@@ -338,7 +338,7 @@ enum class Shape : std::uint8_t { Empty, Submit, ReadView };
     {
         // A compiled module: the engine's own painter, C built by tools/build_mods.py (ADR-0023),
         // read from the committed file as a player's copy would be. Until M27 this row loaded
-        // the chess opponent, 8 KB, which goes with chess to its own repository (ADR-0024);
+        // the chess opponent, 8 KB, which went with chess to its own repository (ADR-0024);
         // docs/PERFORMANCE.md records what the row measured then and measures now. Skipped, and
         // said, when run from somewhere the file is not.
         std::ifstream file(std::filesystem::path{"assets/mods/painter.wasm"}, std::ios::binary);

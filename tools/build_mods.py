@@ -41,7 +41,7 @@ to an Atlas whose guest interface changed fails the check until it rebuilds, whi
 Usage:
     python3 tools/build_mods.py --mods assets/source/mods/mods.json            # build
     python3 tools/build_mods.py --mods assets/source/mods/mods.json --check    # verify
-    python3 tools/build_mods.py --mods apps/chess/mods.json --check --play-with build/macos-debug/bin/atlas_chess
+    python3 tools/build_mods.py --mods assets/source/mods/mods.json --check --play-with build/macos-debug/bin/atlas_lab
 
 `--root` defaults to the current directory. The toolchain is clang and wasm-ld of LLVM major 23,
 found as `$ATLAS_WASM_CLANG` and `$ATLAS_WASM_LD`, as `clang-23` and `wasm-ld-23` on the path

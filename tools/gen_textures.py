@@ -15,8 +15,8 @@ row arithmetic in `animation::cell_uv` rather than only the tests. Each cell is 
 colour with a bright corner marker, so a wrong cell or a transposed grid is visible at a glance
 rather than subtly off.
 
-The chess piece sheet was drawn here until M27, and is now drawn by chess's own generator,
-`apps/chess/tools/gen_chess_textures.py`, which goes with chess to its own repository (ADR-0024).
+The chess piece sheet was drawn here until M27. It is drawn by chess's own generator now, in
+happyc0der/atlas-chess, where chess has lived since (ADR-0024).
 
 `tile.png` replaces the file of the same name that had been committed since M4 with no recorded
 origin at all. `assets/source/PROVENANCE.md` said it should be replaced by a generated pattern

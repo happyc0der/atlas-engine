@@ -30,12 +30,6 @@ if(TARGET atlas_lab_sim)
     target_link_libraries(atlas_bench PRIVATE atlas::lab_sim)
 endif()
 
-# The chess benchmark drives the rules library, gated the same way.
-if(TARGET atlas_chess_sim)
-    target_sources(atlas_bench PRIVATE src/bench_chess.cpp)
-    target_link_libraries(atlas_bench PRIVATE atlas::chess_sim)
-endif()
-
 # The cell field benchmark needs the lab's renderer, which needs a device.
 if(TARGET atlas_lab_view)
     target_sources(atlas_bench PRIVATE src/bench_cell_field.cpp)
