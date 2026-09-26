@@ -46,7 +46,9 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 # See docs/adr/0001-language-build-platform.md.
 if(MSVC)
     set(CMAKE_CXX_STANDARD 23)
-    add_compile_options(/std:c++latest)
+    # For C++ sources only. The one C target, the chess opponent's rules compiled natively for
+    # their tests (M26), is C17, and MSVC refuses /std:c17 and /std:c++latest together.
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/std:c++latest>)
 
     # MSVC deprecates standard C functions in favour of its own _s variants, which are not
     # portable. Atlas uses the standard ones and checks their results; the warning is about

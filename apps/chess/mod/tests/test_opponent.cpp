@@ -237,7 +237,10 @@ TEST_CASE("the opponent plays a whole game against itself, and the same game twi
     CHECK(std::get<1>(first) >= 20);
     CHECK(std::get<2>(first) == 0);
     CHECK_FALSE(std::get<3>(first));
-    CHECK(first == second);
+    // Compared outside the assertion: Catch2 decomposes `a == b`, and with libstdc++ decomposing a
+    // comparison of two tuples fails to compile (M26 CI; libc++ accepted it).
+    const bool same_game = first == second;
+    CHECK(same_game);
 }
 
 TEST_CASE("different seeds play different games", "[chess][opponent]") {
