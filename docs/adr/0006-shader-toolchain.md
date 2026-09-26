@@ -4,6 +4,12 @@
 
 Accepted, 2026-09-15.
 
+*2026-09-26:* **the trigger below for Direct3D 12 has fired**: a Windows machine with an NVIDIA
+GPU joined the project, reachable over SSH. [ADR-0025](0025-windows-vulkan.md), Proposed at M28's
+gate, defers Direct3D 12 to its own milestone by the owner's decision, and makes true this
+record's consequence that "Windows uses the Vulkan backend". The build did not do that: the
+device asked SDL for DXIL, which Atlas never shipped, and SDL on Windows was built without Vulkan.
+
 ## Context
 
 SDL_GPU accepts compiled shaders, and which format depends on the backend: SPIR-V for

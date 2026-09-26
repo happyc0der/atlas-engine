@@ -36,6 +36,7 @@ Status legend: **done**, *in progress*, planned.
 | M25 | Dropping a peer and playing on | L | **done** |
 | M26 | Chess: a mod as the opponent | L | **done** |
 | M27 | An installable engine, and chess in its own repository | L | **done** |
+| M28 | A real GPU on Windows: Vulkan on an RTX 3080 Ti | M | planned |
 
 ## M0 — Architecture and reproducible skeleton
 
