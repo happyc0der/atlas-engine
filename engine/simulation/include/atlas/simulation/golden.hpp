@@ -20,6 +20,7 @@
 /// only the function reducing it to a number moved — which is what M8 did when
 /// `kHashAlgorithmVersion` became 2, and what the comment at the assertion records.
 
+#include <cstddef>
 #include <cstdint>
 
 namespace atlas::sim {

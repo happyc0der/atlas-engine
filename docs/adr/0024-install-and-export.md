@@ -185,6 +185,12 @@ the standard they were built with. The root setting stays for this tree's own ta
 - Catch2 is in the tree only because it is an unconditional dependency of this repository. A
   consumer that tests with it is relying on that, and this record says so.
 
+*Made precise during M27, 2026-09-26.* **A consumer also turns off CMake's scan for C++20
+modules.** Atlas is headers, and turns the scan off for itself in its root `CMakeLists.txt`, but
+that is a directory setting a package cannot carry. Left on, the scan runs under Ninja with clang
+or GCC and needs `clang-scan-deps`, and the Linux container's clang has none: every compile of
+the package test failed there first. AppleClang is never scanned, so macOS could not show it.
+
 **D10. The package is proved from both sides.**
 - **Here:**
   - A separate CMake project in `tests/package/` finds Atlas in an install prefix with no vcpkg

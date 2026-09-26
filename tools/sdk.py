@@ -14,6 +14,7 @@ Usage:
     python3 tools/sdk.py macos-debug                    # install to the preset's installDir
     python3 tools/sdk.py macos-debug --prefix /tmp/sdk  # or somewhere else
     python3 tools/sdk.py linux-clang-debug >> "$GITHUB_ENV"
+    python3 tools/sdk.py --build-dir build/macos-debug --prefix /tmp/sdk   # a build by path
 
 Standard output is two lines a shell or a CI environment file can take as they are:
 
@@ -56,11 +57,16 @@ def recorded(config: Path, name: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("preset", help="a configured and built preset, such as macos-debug")
+    parser.add_argument("preset", nargs="?",
+                        help="a configured and built preset, such as macos-debug")
+    parser.add_argument("--build-dir", help="a configured and built build directory, instead of "
+                                            "a preset's")
     parser.add_argument("--prefix", help="install here instead of the preset's installDir")
     args = parser.parse_args()
+    if bool(args.preset) == bool(args.build_dir):
+        parser.error("name a preset or a --build-dir, and not both")
 
-    build_dir = ROOT / "build" / args.preset
+    build_dir = Path(args.build_dir).resolve() if args.build_dir else ROOT / "build" / args.preset
     cache = read_cache(build_dir)
 
     command = ["cmake", "--install", str(build_dir)]
@@ -103,6 +109,8 @@ def main() -> int:
         "A consumer must use:",
         f"  - the same compiler and major version: {compiler}",
         f"  - the same triplet: {triplet}",
+        "  - set(CMAKE_CXX_SCAN_FOR_MODULES OFF): Atlas is headers, and the scan needs a tool",
+        "    the package cannot provide",
     ]
     if deployment:
         notes.append(f"  - a macOS deployment target of at least {deployment}")

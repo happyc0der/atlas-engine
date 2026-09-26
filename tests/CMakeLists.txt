@@ -249,3 +249,53 @@ if(TARGET atlas_lab)
         LABELS "gpu"
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 endif()
+
+# The package: a project that is not Atlas, built against this build's install (ADR-0024 D10).
+# One fixture installs, then each case configures tests/package/consumer against the prefix.
+# The cases after the first break one thing each and must fail at a named stage, saying a named
+# thing; tests/package/run.py explains why that is stricter than WILL_FAIL. A profile or
+# sanitizer build cannot be installed (D7), so it registers none of them.
+if(NOT ATLAS_PROFILE AND ATLAS_SANITIZE STREQUAL "none")
+    set(_atlas_package_run "${CMAKE_CURRENT_SOURCE_DIR}/package/run.py")
+
+    add_test(NAME package_install
+             COMMAND "${Python3_EXECUTABLE}" "${_atlas_package_run}"
+                     --build-dir "${CMAKE_BINARY_DIR}" --install
+             WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(package_install PROPERTIES
+        LABELS package FIXTURES_SETUP atlas_package TIMEOUT 600)
+
+    function(atlas_add_package_case name)
+        add_test(NAME package_${name}
+                 COMMAND "${Python3_EXECUTABLE}" "${_atlas_package_run}"
+                         --build-dir "${CMAKE_BINARY_DIR}" --case ${name} ${ARGN}
+                 WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+        set_tests_properties(package_${name} PROPERTIES
+            LABELS package FIXTURES_REQUIRED atlas_package TIMEOUT 900)
+    endfunction()
+
+    # Everything installed, every header compiled alone, the program run.
+    atlas_add_package_case(consumer)
+
+    # Each of these proves one check can fail. The target is narrowed where the rest of the
+    # consumer has nothing to add.
+    atlas_add_package_case(refuses_an_older_version
+        --mutation old_version --expect configure --expect-message "compatible")
+    atlas_add_package_case(has_no_internal_target
+        --mutation internal_target --expect configure --expect-message "atlas::rhi_internal")
+    atlas_add_package_case(has_no_internal_header
+        --mutation internal_header --target atlas_consumer
+        --expect build --expect-message "internal/sdl_access.hpp")
+    atlas_add_package_case(guard_sees_the_source_tree
+        --mutation source_include --target atlas_consumer
+        --expect guard --expect-message "include path in the Atlas source tree")
+    atlas_add_package_case(golden_scenario_can_fail
+        --mutation wrong_golden --target atlas_consumer
+        --expect run --expect-message "FAILED: golden scenario")
+    atlas_add_package_case(misses_a_header_left_out
+        --remove-from-prefix include/atlas/core/time.hpp --target atlas_consumer_headers
+        --expect build --expect-message "atlas/core/time.hpp")
+    atlas_add_package_case(misses_a_dependency_left_out
+        --drop-dependency iwasm --target atlas_consumer
+        --expect configure --expect-message "iwasm::vmlib")
+endif()
