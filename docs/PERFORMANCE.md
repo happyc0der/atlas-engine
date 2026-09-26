@@ -1067,6 +1067,10 @@ that matters is unknowable from here, so the design absorbs it rather than assum
 
 ## Chess, M22: an order of magnitude too pessimistic
 
+*M27:* `bench_chess` left with chess for its own repository, which has no benchmark harness yet
+(`DEFERRED.md`, M27). The numbers below are as measured here in M22, and `atlas_bench` no longer
+has a `chess` group.
+
 Measured in `macos-release` on an idle machine, `atlas_bench --filter chess`, three runs.
 
 ### The prediction, written before the first run

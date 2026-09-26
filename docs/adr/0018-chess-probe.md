@@ -25,6 +25,13 @@ own repository, `happyc0der/atlas-chess`, built only against the installed engin
 green, D1's exception ends: chess leaves this tree, and the build the charter's v1.0 criterion is
 about is the one it has there.
 
+*2026-09-26, later:* built. [ADR-0024](0024-install-and-export.md) is Accepted, and chess is
+`happyc0der/atlas-chess`, green against an installed Atlas on macOS, Linux and Windows. **D1's
+exception has ended**: `apps/chess` left this tree at `1a795f6`, and `apps/CMakeLists.txt` says
+again that no game is here. D2 still stands as written — the probe in this tree was not v1.0 —
+and whether the build there meets the charter's criterion is for M27's report to say and the
+owner to decide. D3's fence went with chess and is still checked there.
+
 ## Context
 
 The owner's request, 2026-09-23: *"make the first ever game on this engine … chess, since a map

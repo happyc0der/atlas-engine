@@ -35,7 +35,7 @@ Status legend: **done**, *in progress*, planned.
 | M24 | A string API for mods | M | **done** |
 | M25 | Dropping a peer and playing on | L | **done** |
 | M26 | Chess: a mod as the opponent | L | **done** |
-| M27 | An installable engine, and chess in its own repository | L | planned |
+| M27 | An installable engine, and chess in its own repository | L | **done** |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1499,6 +1499,30 @@ nothing non-trivial could be authored for the sandbox. Decided by
 | Verified | **Met.** Perft on six positions and a comparison with `chess_sim` over 300 random games, position by position and move by move. The worst tick is 1.16 M instructions, 8.6 times under the budget, measured by lowering the budget until the mod traps. |
 | Saved games | **Met, on the person's turn.** A save mid-search would restart the mod's search at a different tick; recorded. The chess application has no save of its own, so the check for an attached mod has no call site yet; recorded. |
 | No chess in the engine | **Met.** The engine gained no import and no chess. It did gain two fixes, found by the first compiled module: the import table WAMR sorted in place, and a memory override WAMR complained about. |
+
+## M27 — An installable engine, and chess in its own repository
+
+Full report: [reports/M27.md](reports/M27.md).
+
+The charter declares v1.0 when a game project links the engine without patching its internals,
+and ADR-0018 recorded that chess inside the tree could not prove it. Nothing installed or
+exported anything. Decided by [ADR-0024](adr/0024-install-and-export.md): the engine installs as
+a package, and chess moves to its own repository and builds against it.
+
+**Exit criteria**
+- ADR-0024 accepted after its gate; `find_package(Atlas 0.27 COMPONENTS app)` works from a
+  prefix, proved in CI on three platforms.
+- atlas-chess public, built only against an installed Atlas, and green with every test it had
+  here.
+- No chess in this repository, and nothing here depending on a chess asset.
+- Every golden hash unchanged in both repositories; every prediction scored.
+
+| Criterion | Status |
+|---|---|
+| The package | **Met.** Every module, the app kit and the engine's data; a config that stops a consumer who could not link, with the reason, and requires its dependencies from one tree. Ten `package` tests on all six lanes, seven of them proving a check can fail. |
+| atlas-chess | **Met.** Public, pinned to an engine commit its binary names, green on macOS, Linux Debug and Release and Windows: 92 of 92, the same 92 that left here. Its first build against the install had no error and no warning. |
+| No chess here | **Met.** The test count fell by exactly 92. `script/load` measures the engine's own compiled mod, and the mod check runs it in the lab. |
+| Goldens and predictions | **Met.** The engine's goldens match from a consumer on three platforms and the Opera Game's in atlas-chess on four lanes. Of ADR-0024's nine predictions four held, one missed, and four could not fail as written because the work they forecast was done first; the load-time prediction committed separately missed. The report says which and why. |
 
 ## First continuous integration
 

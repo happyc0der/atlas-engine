@@ -18,6 +18,8 @@ cmake --preset macos-debug            # configure
 cmake --build --preset macos-debug    # build
 ctest --preset macos-debug            # test (excludes label "gpu")
 ctest --preset macos-debug -L integration  # only the end-to-end sandbox checks
+ctest --preset macos-debug -L package      # install, and build a project against the install
+python3 tools/sdk.py macos-debug           # install; prints ATLAS_PREFIX and ATLAS_DEPS
 ctest --preset macos-debug-gpu        # test including GPU tests (M2+, real GPU only)
 cmake --workflow --preset ci-macos-debug   # configure + build + test
 
@@ -52,6 +54,18 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 
 - Module dependencies are declared in `cmake/ModuleGraph.cmake` and enforced at configure
   time. Adding an edge means editing that table, with a reason.
+- **The engine installs as a package, and what it installs is a promise** (ADR-0024).
+  `find_package(Atlas 0.27 COMPONENTS app)` finds every module, the app kit and `share/atlas`.
+  Every public header compiles on its own and is installed by directory; `tests/package` builds
+  a project that is not Atlas against the install and checks both, and no include path of its
+  may point into this tree. Renaming an installed header, target or variable breaks someone
+  else's build: the minor version is the milestone that last did so.
+- An `*_internal` target is named under `INTERNAL_DEPS`, never `DEPENDS`, and is never installed.
+  `DEPENDS` links PUBLIC, which is how the window handle's include path once reached twelve
+  directories.
+- What a package cannot carry is a rule of its contract, stated in `tools/sdk.py` and ADR-0024
+  D9: a consumer switches off CMake's module scan, and compiles its own code with
+  `-ffp-contract=off` or `/fp:precise`. It is never imposed from here.
 - Third-party libraries are `PRIVATE` links. They must not appear in any public header
   except where an ADR allows it (Tracy in `core/profile.hpp`, EnTT in `scene`).
 - SDL types live only in `engine/platform/src`, `engine/rhi/src`, `engine/tools/src`,

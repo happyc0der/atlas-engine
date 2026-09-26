@@ -17,6 +17,14 @@ Answers the question [ADR-0015](0015-sandboxed-mods.md) left open by design, and
 [ADR-0018](0018-chess-probe.md) D7 said a mod opponent would force. Supersedes nothing: every rule
 about what a mod may reach stands, and the guest interface does not change.
 
+*2026-09-26:* **the opponent and its rules left with chess** for its own repository
+([ADR-0024](0024-install-and-export.md)). The toolchain stayed and grew: `tools/build_mods.py`
+reads a list of mods rather than a table of its own, gives a mod an include directory holding
+`atlas_mod.h` and nothing else, and ships in the installed package; the engine's own compiled mod
+is now `painter.wasm`, whose behavioural check runs it in the lab (ADR-0024 D8). Rebuilt that way,
+the opponent was the module M26 committed, byte for byte. D6 to D9 are chess's and are carried on
+in atlas-chess.
+
 ## Context
 
 **Nothing non-trivial can be authored for the sandbox.** Every mod in the tree is written byte by

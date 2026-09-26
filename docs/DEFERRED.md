@@ -115,6 +115,8 @@ integration ran for the first time. What it found is recorded in
   **The third application arrived on 2026-09-23** — `apps/chess`, ADR-0018 D5 — and the
   answer was the same: its loop shares the utilities and none of the shape. Re-deferred with the
   count at three. Condition: the loops converging, or a fourth application.
+  *M27:* chess left for its own repository, so there are two applications here again; the
+  utilities chess shared are the installed app kit (ADR-0024 D4). The condition stands.
 - ~~**Command and undo infrastructure, and therefore scene editing.**~~ **Built in M9** as
   `atlas::edit`. The panel now takes an `edit::History` rather than a `const Scene&`, which
   keeps the compiler-enforced guarantee and adds editing behind it: the history exposes its
@@ -461,6 +463,11 @@ integration ran for the first time. What it found is recorded in
 - ~~**A large-module load measurement.**~~ **Taken in M26**, on the first module big enough to
   notice: the 8,108-byte chess opponent loads in 38.2 µs against the trivial module's 5.1 µs,
   inside the 20–80 µs predicted first (`docs/PERFORMANCE.md`). The original entry follows.
+  *Corrected in M27:* the "trivial module" in `script/load` is an empty module the benchmark
+  builds itself, with no imports and no data, not the 295-byte `synthetic.wasm` the sentence
+  below and M26's reading both took it for. `synthetic.wasm` loads in about 8.7 µs, and the
+  opponent in 4.4 times that, not 7.5. The opponent left with chess in M27, and the row now
+  loads the engine's 457-byte painter; see the M27 entries below.
   `script/load` is 5 µs for a 295-byte module, which says
   nothing about a real one. Trigger: the first mod big enough to notice.
 
@@ -573,7 +580,12 @@ fact about the tree today rather than a consequence of the milestone.
 
 ### M18 — chess, the record
 
-- **Chess in its own repository.** ADR-0018 D2 and D6: an in-tree game cannot prove the engine's
+- ~~**Chess in its own repository.**~~ **Built in M27** (ADR-0024): the engine installs as a
+  package, and chess is `happyc0der/atlas-chess`, built against it and nothing else, green on
+  macOS, Linux and Windows. The chess entries in this file, here and under M20, M22, M25 and M26,
+  stay as the record of when they were made; atlas-chess's own `DEFERRED.md` carries them on.
+  The original entry follows.
+  ADR-0018 D2 and D6: an in-tree game cannot prove the engine's
   public surface is sufficient, because it can see everything, and the charter's v1.0 criterion
   is about a game that cannot. Deferred because the engine has no install or export target;
   without one an out-of-tree consumer is a submodule pointing at a source tree. Condition: that
@@ -725,6 +737,54 @@ fact about the tree today rather than a consequence of the milestone.
   `ATLAS_ERR_REFUSED`, which the host returns outside a tick. The opponent tests for zero only,
   which is right. Changing it would change the guest interface. Trigger: a type name that hashes
   to one of the three error values.
+
+### M27 — an installable engine, and chess out
+
+- **A prefix holding more than one build configuration.** Each install prefix is one build type
+  (ADR-0024 D7). A consumer that switches between Debug and Release installs twice, and a
+  multi-configuration generator, which chooses later, is checked only by the linker's LNK2038 on
+  MSVC. Trigger: a consumer that needs both configurations from one SDK.
+
+- **Installing a profile or sanitizer build.** Refused, with the reason (D7): the sanitizer flags
+  are PRIVATE, so a consumer could not link, and a profile build puts Tracy into every consumer's
+  compile. atlas-chess has no sanitizer lanes as a result. Trigger: a consumer that needs Tracy
+  zones in engine code, or a data race across the package's boundary.
+
+- **Atlas as a vcpkg port.** The SDK is two prefixes, and the engine's pins decide the consumer's
+  library versions (D9). A port and a registry would let a consumer resolve its own. Trigger: a
+  consumer that does not want Atlas's pins, or a second consumer to keep in step.
+
+- **Catch2 as an optional vcpkg feature.** It is an unconditional dependency, so it is in every
+  SDK, and atlas-chess tests with it on that basis (D9). Trigger: a consumer that tests with
+  something else and wants the tree without it.
+
+- **A relocatable data path.** A consumer bakes `Atlas_DATA_DIR` in as an absolute path, so its
+  binary finds the engine's shaders and strings only while the SDK is where it was built against.
+  Trigger: shipping a consumer's binary to another machine.
+
+- **Shared libraries.** Every module is static and nothing exports a symbol. Trigger: a consumer
+  that needs to load engine code at run time.
+
+- **The engine checking chess before chess moves its pin.** A change here that alters hashing or
+  the installed API is seen in atlas-chess only when it next moves `atlas.ref`, and the golden
+  test failing there is the golden test working (ADR-0024, Consequences). Trigger: such a change
+  found late, which would argue for a scheduled job here that builds atlas-chess at its head.
+
+- **A benchmark for chess.** `bench_chess` depended on this repository's benchmark harness, which
+  is not installed, and was removed with chess; its perft and ply numbers are in
+  `docs/PERFORMANCE.md` as measured in M22. Trigger: a chess change whose cost matters, which
+  would first need a harness there.
+
+- **A large module in `script/load`.** The row measured the 8 KB chess opponent and now measures
+  the 457-byte painter. Trigger: a large mod in this repository, or a load measurement in
+  atlas-chess.
+
+- **What a load costs, split.** A module with imports and a data segment loads in about 8.7 µs and
+  an empty one in 5; which of the two costs the difference was not separated
+  (`docs/PERFORMANCE.md`). Trigger: a program loading enough mods for load time to show.
+
+- **clang-tidy in atlas-chess.** It has a copy of the configuration and a formatting job, and no
+  tidy lane. Trigger: the first change there larger than a pin move.
 
 ### M25 — dropping a peer
 

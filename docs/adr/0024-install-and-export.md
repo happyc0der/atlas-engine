@@ -3,12 +3,21 @@
 
 ## Status
 
-**Proposed**, 2026-09-26, at M27's gate. Nothing is installed, exported or moved under it before
-it is read.
+**Accepted**, 2026-09-26, implemented in M27.
+
+Proposed the same day at M27's gate. **The decisions held. Building them made five precise and
+added one by the owner's word**, each marked at its own heading rather than edited in:
+- D5 requires every dependency from one tree, which the plan did not have.
+- D8 gained a mod list format, a guest header a mod cannot see past, and two engine-data defaults
+  for chess rather than one directory.
+- D9 gained two rules a package cannot carry: switch off the module scan, which only the Linux
+  container showed; and compile a consumer's own code without floating-point contraction, which
+  the owner decided is a rule rather than an imposed flag.
+- D10 and D11 record how the proof came out: green on every lane of both repositories.
 
 Fires the trigger [ADR-0018](0018-chess-probe.md) D6 recorded for lifting chess out: *"the engine
-gaining an install and export target"*. Supersedes nothing. When built, it amends ADR-0018 D1,
-because chess stops being an exception in this tree and starts being a consumer outside it.
+gaining an install and export target"*. Supersedes nothing. Amends ADR-0018 D1: chess is no
+longer an exception in this tree but a consumer outside it.
 
 ## Context
 
@@ -235,6 +244,14 @@ Revisited if a consumer is found diverging for want of it.
 - **There:** chess is built against a pinned Atlas and runs every test it had here, including
   the Opera Game's three golden hashes.
 
+*As built, 2026-09-26.* Ten `package` tests, all green on the six CI lanes (run 36271339906),
+Windows included: the install, the consumer, the installed mod script, and seven that each break
+one thing and must fail at a named stage saying a named thing. The first honest run found
+`atlas/simulation/golden.hpp` using `std::size_t` without `<cstddef>`, which every includer in
+the tree had hidden, and that imported include directories are system directories in which no
+warning is ever reported, so the consumer sets `NO_SYSTEM_FROM_IMPORTED` to make its warnings
+count.
+
 **D11. Chess moves to `happyc0der/atlas-chess`, and is deleted here only after it is green there.**
 - The repository is public and GPL-3.0-or-later. Its first commit names the atlas-engine SHA it
   came from, and the history stays here.
@@ -244,6 +261,14 @@ Revisited if a consumer is found diverging for want of it.
 - When it is green, `apps/chess`, its assets, its integration cases and its benchmark leave this
   repository, and `CLAUDE.md`'s exception becomes a pointer to the repository.
 - Creating the repository and every push happen on the owner's word.
+
+*As built, 2026-09-26.* atlas-chess was created on the owner's word at `cc7c9ea`, pinned to
+`d676577`. Its first configure and build against the install had no error and no warning, so no
+engine header it needed was missing; its first test run failed one case of 92, the opponent's
+manifest, which recorded repository paths and was rebuilt byte for byte the same. Its CI then
+passed 92 of 92 on macOS, Linux Debug and Release and Windows (run 36271375266), every binary
+naming the pinned commit. Chess left this repository at `1a795f6`, which removed exactly the 92
+tests atlas-chess runs.
 
 ## Alternatives
 

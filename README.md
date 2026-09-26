@@ -21,11 +21,12 @@ the last frame before exit.
 
 ## Current status
 
-**Twenty-seven milestones are done, M0 through M26.** Engine v0.1 was declared at M7 against the
+**Twenty-eight milestones are done, M0 through M27.** Engine v0.1 was declared at M7 against the
 charter item by item. M10 amended the charter to plan seven subsystems it had excluded; M11
 through M16 built all seven. M17 gave lockstep a socket transport, M18 through M22 built chess
-as the first game on the engine, M23 through M25 closed the three items M17 left open, and M26
-made a mod written in C the chess opponent.
+as the first game on the engine, M23 through M25 closed the three items M17 left open, M26 made
+a mod written in C the chess opponent, and M27 made the engine installable as a package and
+moved chess to its own repository, built against the install and nothing else.
 
 What exists: a windowing and input layer; a renderer over SDL_GPU with offscreen targets,
 integer-identifier picking and non-stalling streaming uploads; an asset pipeline with virtual
@@ -38,8 +39,9 @@ composed on top of what a person authored rather than into it; deterministic loc
 command queue, proved by several simulations in one process agreeing hash for hash through the
 real peer interface; sandboxed mods as untrusted WebAssembly that reaches simulation state only
 by submitting commands, with a guest interface that has no clock, no filesystem and no generator
-of its own; and an engineering overlay with scene, log, asset, timing and control panels
-that can be typed into.
+of its own; an engineering overlay with scene, log, asset, timing and control panels
+that can be typed into; and an install, `find_package(Atlas)`, that another project builds
+against.
 
 Two applications drive it. `atlas_sandbox` is the lifecycle and scene demonstration.
 `atlas_lab` is the Strategy Laboratory: a synthetic million-cell grid with map modes, picking,

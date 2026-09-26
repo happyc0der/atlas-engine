@@ -115,27 +115,15 @@ construction; `atlas::lab_view` holds the cell field and the identifier pass, so
 draw with the application's own code; and `apps/lab/main.cpp` is the composition root that
 puts a window, a device and an overlay around them.
 
-Chess is the third application and the one recorded exception to "not games" (ADR-0018). Its
-rules are `atlas::chess_sim`, fenced to `atlas::simulation` by the same configure-time loop:
-five tables that are the whole of a position, a value type the rules reason over by copy-make,
-and one command, `chess.move`, whose handler declines a move the position or the turn order
-refuses (ADR-0019). There are no systems — a position changes only through a command, so the
-schedule is empty and the kernel ticks it. A famous game's final position is the third golden
-hash, beside the two engine goldens, and is compared on the same four platforms.
-
-Around the rules, `atlas::chess_view` turns a position and a selection into quads without a
-device, so what the board looks like is tested without one, and `apps/chess/main.cpp` is the
-composition root: a window, the board in one draw call, a status panel whose text is the
-application's own table loaded beside the engine's (`text::Catalog::add_table`), and hot-seat or
-networked play. Over a socket it uses `atlas::app_lockstep`, lifted out of the lab when chess
-became its second user, and finishes the session on the tick the result is set (ADR-0020).
-
-**Chess can be played against a mod** (ADR-0023). `apps/chess/mod` holds an opponent written in
-freestanding C with its own rules, compiled to the committed `assets/mods/chess_opponent.wasm`.
-The application publishes the position as bytes laid out by one C header both sides include,
-names the mod's identifier in `chess.players` so the rules decline it out of turn exactly as they
-decline a person, and runs a tick a frame while it plays. Loading a mod and reporting what it did
-is `atlas::app_mods`, lifted out of the lab when chess became its second user.
+Chess was the third application, written here from M18 to M26 as the one recorded exception to
+"not games" (ADR-0018). **Since M27 it is its own repository,
+[happyc0der/atlas-chess](https://github.com/happyc0der/atlas-chess), built against an installed
+Atlas and nothing else** (ADR-0024): its rules library still links `atlas::simulation` alone and
+its build still checks that, its Opera Game is still a golden hash, and it reaches the engine only
+through `find_package(Atlas)`. That repository describes it. What it proved here — that a game
+fits the command queue, the tables, the hashing, lockstep and the mod sandbox without a line of
+it in `engine/` — is recorded in ADR-0018; what it proved there, that the installed surface is
+enough, is recorded in ADR-0024 and `reports/M27.md`.
 
 Third-party libraries are private to the modules named here and to no others: SDL3 to
 `platform` and `rhi`, EnTT to `scene`, nlohmann-json to `scene` and `assets`, Dear ImGui to
@@ -148,7 +136,45 @@ header that includes a third-party header fails to compile in an application. Th
 primary enforcement; the script is the backstop.
 
 `atlas::platform_internal` is an INTERFACE target exposing `SDL_Window*` behind a forward
-declaration. Its only permitted consumer is `atlas::rhi`.
+declaration. Its only permitted consumer is `atlas::rhi`; `atlas::rhi_internal` does the same for
+the graphics handles, for `atlas::tools`. Both are named under `INTERNAL_DEPS`, which
+`atlas_add_module` links privately and only inside this build (ADR-0024 D3): naming one under
+`DEPENDS` stops the configure. Until M27 `rhi` linked its internal target publicly, and the window
+handle's include path reached twelve directories that had no business with it.
+
+## The installed package
+
+`cmake --install` writes a prefix another project can build against with `find_package(Atlas 0.27
+REQUIRED COMPONENTS app)`, decided by [ADR-0024](adr/0024-install-and-export.md):
+
+| Path | What |
+|---|---|
+| `include/atlas/<module>/` | every public header, installed by directory |
+| `lib/` | the engine modules, as the static libraries they are, exported as `atlas::<module>` |
+| `lib/cmake/Atlas/` | `AtlasConfig.cmake`, its `SameMinorVersion` version file, two export sets |
+| `share/atlas/shaders/` | the sprite shaders `renderer::QuadBatch` loads |
+| `share/atlas/strings/en.json` | the engine's string table |
+| `share/atlas/tools/build_mods.py` | the mod toolchain's script, finding `atlas_mod.h` in the prefix |
+
+The app kit (`atlas::app_common`, `app_lockstep`, `app_mods`) is the `app` component, outside the
+module graph. No internal header and no source file is installed. A profile or sanitizer build
+refuses to install, and each prefix holds one build configuration.
+
+**The third-party libraries are not copied.** A consumer puts the vcpkg tree Atlas was built with
+beside the prefix on `CMAKE_PREFIX_PATH`, so what it links is what Atlas was compiled against. The
+config finds the six packages quietly, requires them from one tree, and stops the configure, with
+the reason, on a different compiler or major version, a lower macOS deployment target, or on
+MSVC a build type of the other kind. MSVC's `/std:c++latest` is an INTERFACE option of
+`atlas::core`; the other rules a package cannot carry are stated rather than imposed — switch off
+CMake's module scan, and compile the consumer's own code with `-ffp-contract=off` or
+`/fp:precise`. `tools/sdk.py <preset>` installs and prints the two paths and those rules.
+
+**The package is proved on every build lane.** `tests/package/` is a separate CMake project that
+knows Atlas only as a package: it runs the golden scenario from its own tables and matches the
+installed constants, uses a script runtime, a loopback link, the installed string table and the
+app kit, and compiles every installed header on its own. A guard fails it if any include path
+points into this source tree. Seven more cases each break one thing and must fail at a named
+stage; atlas-chess is the proof from the other side.
 
 ## Ownership
 
@@ -662,8 +688,11 @@ features pinned to what the runtime accepts and every name stripped, and commits
 a manifest of the toolchain and the inputs' hashes. The module's bytes are the compiler's, so its
 check compares what this repository decides — the inputs, and the module against its manifest —
 everywhere, compares a rebuild's bytes only on the manifest's own toolchain, and where a toolchain
-and the chess application both exist plays the rebuilt module against the committed one and
-compares the games. The three demonstration mods are still written byte by byte by
+and the application a mod runs in both exist runs the rebuilt module and the committed one and
+compares what they did. Which mods, and how each is run, is a JSON list (ADR-0024 D8): the
+engine's is `assets/source/mods/mods.json`, holding the painter, which the lab runs. A mod is
+given an include directory holding `atlas_mod.h` and nothing else, so it cannot reach another
+engine header. The three demonstration mods are still written byte by byte by
 `tools/gen_mods.py`, and their check still compares every byte.
 
 The threading table above is unchanged: everything here runs on the main thread, with the
