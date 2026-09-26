@@ -35,6 +35,7 @@ Status legend: **done**, *in progress*, planned.
 | M24 | A string API for mods | M | **done** |
 | M25 | Dropping a peer and playing on | L | **done** |
 | M26 | Chess: a mod as the opponent | L | **done** |
+| M27 | An installable engine, and chess in its own repository | L | planned |
 
 ## M0 — Architecture and reproducible skeleton
 

@@ -19,6 +19,12 @@ the first of the three items M17 had left open. It is numbered when it is schedu
 and the players table's refusal of a mod source is amended there. The work this record governs is
 M18 to M22 and M26; the "M23" above is the number M26 had before it was renumbered.
 
+*2026-09-26:* D6's trigger is being built. M27 gives the engine an install and export target,
+decided by [ADR-0024](0024-install-and-export.md), Proposed at M27's gate, and moves chess to its
+own repository, `happyc0der/atlas-chess`, built only against the installed engine. When that is
+green, D1's exception ends: chess leaves this tree, and the build the charter's v1.0 criterion is
+about is the one it has there.
+
 ## Context
 
 The owner's request, 2026-09-23: *"make the first ever game on this engine … chess, since a map
