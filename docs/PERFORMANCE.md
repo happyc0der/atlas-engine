@@ -1161,6 +1161,42 @@ cost is a second trip across the wire rather than a second system call. That is 
 where the host sits, and it is why ADR-0022 names the relay's bandwidth and latency as the price
 of the agreement rather than calling them free.
 
+## A chess opponent in the sandbox, M26: the worst tick, and the first real module
+
+Two measurements `DEFERRED.md` and ADR-0023 ask for. The opponent is 8,116 bytes of freestanding
+C compiled to wasm32, where every module before it was at most 295 bytes written by hand.
+
+### The prediction, written before the first run
+
+Committed before any measurement of the opponent existed, including a pass or fail against a
+budget.
+
+**The worst tick: half a million to two and a half million instructions**, against a budget of
+ten million, with **a typical tick from the start position around three hundred thousand.** The
+reasoning, from reading the code rather than from any number: a legal-move generation in a
+middlegame position is about 30,000 interpreted instructions — some 35 pseudo-legal moves, each a
+72-byte copy and a check test that scans for the king and walks its attack rays. Scoring one of
+the opponent's own moves is one generation for the replies plus, per reply, a make, a check test
+and a sixty-four-square material count: about 90,000 instructions with 35 replies, and three to
+four times that when the side replying has a hundred moves. Four root moves a tick then gives
+0.4 M typically and 1–1.5 M in open positions with queens; the tick that starts a search adds one
+generation. The upper end of the range is where the quota would have to come down to keep the
+four-fold margin ADR-0023 set.
+
+The measurement lowers the budget until the mod traps: a search run under a budget completes only
+if no tick exceeded it, so the smallest budget at which every tick completes is the worst tick,
+counted exactly, by the same meter that enforces the budget.
+
+**`script/load` for the opponent: twenty to eighty microseconds**, against 5.1–5.8 µs for the
+trivial module. The code is about thirty times larger and WAMR's classic interpreter validates
+and prepares every function at load, so the cost should grow with the code rather than stay at
+the trivial module's fixed cost of a page of memory; less than linear, because much of the
+trivial module's time is that fixed cost.
+
+### The result
+
+Not yet measured. This section is completed in the commit that runs it.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.
