@@ -67,12 +67,16 @@ fi
 
 # A read loop rather than mapfile: macOS ships bash 3.2, where mapfile does not exist.
 FILES=()
+# C as well since M27: the mods are freestanding C (ADR-0023), and until then their sources,
+# the only C in the tree, were never checked. assets/source/mods holds the engine's own. (Kept
+# out of the process substitution below, where bash reads the apostrophe as a quote.)
 while IFS= read -r file; do
     [[ -n "${file}" ]] && FILES+=("${file}")
 done < <(
     find "${REPO_ROOT}/engine" "${REPO_ROOT}/apps" "${REPO_ROOT}/tests" \
-         "${REPO_ROOT}/benchmarks" \
-         -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.inl' \) \
+         "${REPO_ROOT}/benchmarks" "${REPO_ROOT}/assets/source/mods" \
+         -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.inl' \
+                    -o -name '*.c' \) \
          2>/dev/null | sort
 )
 

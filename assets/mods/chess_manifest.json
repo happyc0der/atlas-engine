@@ -27,8 +27,8 @@
       ],
       "inputs": {
         "apps/chess/mod/freestanding.c": "9100539ec7cd38bf8876c53553ca7913a81a5b8c023fa19005494cd5229248fe",
-        "apps/chess/mod/opponent.c": "46cd1d6f20a92f650e701a7f7e9b66bcf8edf34dd956a5af0d9799c0d05e73da",
-        "apps/chess/mod/rules.c": "3db0529c00e74f1ace603a1fdd064dd8688af63e3180f0d4e94ffbf0ef6924cf",
+        "apps/chess/mod/opponent.c": "3d2bc982725f96ad51dcbbe55b4c00dd3d19bda4f2c6f579257c5bbb94f9b976",
+        "apps/chess/mod/rules.c": "f5c14eff25f087d077a93204bdb9295297b613196cd02a939bc34a0e3ad00482",
         "apps/chess/mod/rules.h": "bb3d6854c5af06ba3cd8da82e865a0f8bb9481308c143e3b505ac0724d04b506",
         "apps/chess/sim/include/atlas/chess/mod_view.h": "7076f9b8a8a4a0797027731e753c47f6643f1728a005b91a84ee9054ee8bb781",
         "atlas/script/atlas_mod.h": "a74fcbf60612ab0c78d9727f966d5a1af2b83f25fff113a1682c9ab93598731b"

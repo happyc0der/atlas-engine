@@ -5,9 +5,9 @@
  *
  * It exists so that the mod toolchain ADR-0023 chose is exercised by this repository, not only by
  * the chess application that first needed it and that has moved to its own. It is the C counterpart
- * of `assets/mods/synthetic.wasm`, which `tools/gen_mods.py` writes byte by byte, and does one thing
- * more: it reads a cell's current colour before choosing a new one, so it reads both of the views
- * the lab publishes rather than only the first. It means nothing; the lab has no game in it.
+ * of `assets/mods/synthetic.wasm`, which `tools/gen_mods.py` writes byte by byte, and does one
+ * thing more: it reads a cell's current colour before choosing a new one, so it reads both of the
+ * views the lab publishes rather than only the first. It means nothing; the lab has no game in it.
  *
  * What the lab publishes (`apps/lab/sim/include/atlas/lab/mod_views.hpp`):
  *   view 0  the grid's shape: cell count, width, height, each four bytes little-endian

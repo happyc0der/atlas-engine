@@ -15,8 +15,8 @@ typedef struct delta {
 
 static const delta kKnight[8] = {{1, 2},   {2, 1},   {2, -1}, {1, -2},
                                  {-1, -2}, {-2, -1}, {-2, 1}, {-1, 2}};
-static const delta kKing[8] = {{1, 0},   {1, 1},   {0, 1},  {-1, 1},
-                               {-1, 0},  {-1, -1}, {0, -1}, {1, -1}};
+static const delta kKing[8] = {{1, 0},  {1, 1},   {0, 1},  {-1, 1},
+                               {-1, 0}, {-1, -1}, {0, -1}, {1, -1}};
 static const delta kDiagonal[4] = {{1, 1}, {-1, 1}, {-1, -1}, {1, -1}};
 static const delta kStraight[4] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
 static const uint8_t kPromotions[4] = {CG_QUEEN, CG_ROOK, CG_BISHOP, CG_KNIGHT};
@@ -59,8 +59,7 @@ static uint8_t corner_right(int square) {
     }
 }
 
-static int ray_hits(const cg_position* p, int file, int rank, const delta* rays, int kind,
-                    int by) {
+static int ray_hits(const cg_position* p, int file, int rank, const delta* rays, int kind, int by) {
     const uint8_t slider = piece(by, kind);
     const uint8_t queen = piece(by, CG_QUEEN);
     for (int i = 0; i < 4; ++i) {

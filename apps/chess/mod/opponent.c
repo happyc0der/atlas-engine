@@ -116,10 +116,10 @@ static void read_position(const uint8_t* view, cg_position* out) {
     out->side = view[ATLAS_CHESS_VIEW_SIDE];
     out->castling = view[ATLAS_CHESS_VIEW_CASTLING];
     out->en_passant_file = view[ATLAS_CHESS_VIEW_EN_PASSANT];
-    out->halfmove_clock = (uint16_t)(view[ATLAS_CHESS_VIEW_HALFMOVE] |
-                                     (view[ATLAS_CHESS_VIEW_HALFMOVE + 1] << 8));
-    out->fullmove_number = (uint16_t)(view[ATLAS_CHESS_VIEW_FULLMOVE] |
-                                      (view[ATLAS_CHESS_VIEW_FULLMOVE + 1] << 8));
+    out->halfmove_clock =
+        (uint16_t)(view[ATLAS_CHESS_VIEW_HALFMOVE] | (view[ATLAS_CHESS_VIEW_HALFMOVE + 1] << 8));
+    out->fullmove_number =
+        (uint16_t)(view[ATLAS_CHESS_VIEW_FULLMOVE] | (view[ATLAS_CHESS_VIEW_FULLMOVE + 1] << 8));
 }
 
 static int same_view(const uint8_t* a, const uint8_t* b) {

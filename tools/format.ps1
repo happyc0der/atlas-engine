@@ -83,15 +83,16 @@ clang-format major $major found, $RequiredMajor required.
     exit 1
 }
 
-# The same four directories and the same extensions as the shell script. Sorted, so the two
-# process files in the same order and a diff between their output means a real difference.
-$searchRoots = @('engine', 'apps', 'tests', 'benchmarks') |
+# The same directories and the same extensions as the shell script, C included since M27. Sorted,
+# so the two process files in the same order and a diff between their output means a real
+# difference.
+$searchRoots = @('engine', 'apps', 'tests', 'benchmarks', 'assets/source/mods') |
     ForEach-Object { Join-Path $RepoRoot $_ } |
     Where-Object { Test-Path -LiteralPath $_ }
 
 $files = @(
     Get-ChildItem -Path $searchRoots -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -in '.cpp', '.hpp', '.h', '.inl' } |
+        Where-Object { $_.Extension -in '.cpp', '.hpp', '.h', '.inl', '.c' } |
         Sort-Object -Property FullName |
         ForEach-Object { $_.FullName }
 )

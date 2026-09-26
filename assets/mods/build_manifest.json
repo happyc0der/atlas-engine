@@ -23,7 +23,7 @@
       ],
       "include_dirs": [],
       "inputs": {
-        "assets/source/mods/painter.c": "e65eab2d017049901c9d384746433219edd3ce18af38dc85d413190981836a88",
+        "assets/source/mods/painter.c": "87f5ef4df221fb02785a891b63ca3bc3fba579022f1dc8aa9e1860b0b5ce7aab",
         "atlas/script/atlas_mod.h": "a74fcbf60612ab0c78d9727f966d5a1af2b83f25fff113a1682c9ab93598731b"
       },
       "link_flags": [
