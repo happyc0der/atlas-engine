@@ -212,6 +212,18 @@ that is a directory setting a package cannot carry. Left on, the scan runs under
 or GCC and needs `clang-scan-deps`, and the Linux container's clang has none: every compile of
 the package test failed there first. AppleClang is never scanned, so macOS could not show it.
 
+*Decided by the owner, 2026-09-26.* **A consumer compiles its own code with `-ffp-contract=off`
+on Clang and GCC and `/fp:precise` on MSVC. That is a rule of the contract, and the package does
+not impose it.** Atlas compiles itself so from M0 (`docs/DETERMINISM.md`), and the flags are
+PRIVATE, so the package does not pass them on. Nothing the engine itself hashes depends on a
+consumer's flags. But a game's systems are the consumer's code: a game with a float in its
+authoritative state, built without the flag, contracts multiply-add into a fused instruction on
+arm64 and not on x86_64, and two peers diverge. An INTERFACE option on `atlas_core` would change
+how every consumer's code compiles, float or not, which is a larger thing for a package to do
+than to state a rule. atlas-chess, whose state is integers, sets both flags anyway in its
+`cmake/ChessBuild.cmake`. `tools/sdk.py` prints the rule with the rest of the contract.
+Revisited if a consumer is found diverging for want of it.
+
 **D10. The package is proved from both sides.**
 - **Here:**
   - A separate CMake project in `tests/package/` finds Atlas in an install prefix with no vcpkg

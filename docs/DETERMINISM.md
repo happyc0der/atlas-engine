@@ -129,6 +129,9 @@ the first differing system sub-hash are reported.
 - `-ffp-contract=off` on Clang and GCC, `/fp:precise` on MSVC, from milestone M0. Without
   this, arm64 contracts multiply-add into FMA while x86_64 without FMA enabled does not,
   which changes results.
+  **The same holds for a game built against an installed Atlas**, whose systems are its own
+  code: the package does not carry the flags, and a consumer sets them itself, by rule
+  (ADR-0024 D9).
 - `-ffast-math` and equivalents are forbidden everywhere.
 - `long double` is forbidden: its width differs across platforms.
 - Authoritative simulation state is integer or fixed-point by default. Floating point in

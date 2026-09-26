@@ -111,6 +111,8 @@ def main() -> int:
         f"  - the same triplet: {triplet}",
         "  - set(CMAKE_CXX_SCAN_FOR_MODULES OFF): Atlas is headers, and the scan needs a tool",
         "    the package cannot provide",
+        "  - -ffp-contract=off (Clang, GCC) or /fp:precise (MSVC) on its own code: a float in a",
+        "    game's state otherwise differs between arm64 and x86_64 (docs/DETERMINISM.md)",
     ]
     if deployment:
         notes.append(f"  - a macOS deployment target of at least {deployment}")
