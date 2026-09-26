@@ -26,8 +26,6 @@ from pathlib import Path
 
 from harness import CheckFailed, Session, expect_contains, expect_exit, output_of, run
 
-ROOT = Path(__file__).resolve().parents[2]
-
 
 def game(binary: str, moves: str, *extra: str):
     return run(binary, ["--headless", "--moves", moves, *extra])
@@ -153,10 +151,17 @@ def check_engine_data_dir(binary: str) -> None:
     first mean something: with the table missing from the named directory the run fails, although
     assets/source/strings still holds a copy, so the table cannot have come from there.
     """
+    # Asked of the binary rather than assumed, because the answer is the build's: this
+    # repository's folder, or an installed Atlas's share/atlas.
+    usage = run(binary, ["--help"])
+    match = re.search(r"strings in (.+)$", output_of(usage), re.MULTILINE)
+    if not match:
+        raise CheckFailed(f"--help does not say where the engine's strings are\n{output_of(usage)}")
+    engine_table = Path(match.group(1).strip()) / "en.json"
     with tempfile.TemporaryDirectory() as scratch:
         data = Path(scratch) / "share" / "atlas"
         (data / "strings").mkdir(parents=True)
-        shutil.copy(ROOT / "assets" / "source" / "strings" / "en.json", data / "strings")
+        shutil.copy(engine_table, data / "strings")
         result = run(binary, ["--text-check", "--engine-data-dir", str(data)])
         expect_exit(result, 0, "--text-check with the engine's data elsewhere")
         expect_contains(output_of(result), "all resolved in 'en'", "every chess key resolved")
