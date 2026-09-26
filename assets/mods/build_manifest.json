@@ -1,0 +1,50 @@
+{
+  "format": "atlas-mod-build",
+  "mods": {
+    "chess_opponent.wasm": {
+      "compile_flags": [
+        "--target=wasm32",
+        "-mcpu=mvp",
+        "-mbulk-memory",
+        "-msign-ext",
+        "-mmutable-globals",
+        "-O2",
+        "-std=c17",
+        "-ffreestanding",
+        "-fno-builtin",
+        "-nostdlib",
+        "-Wall",
+        "-Wextra",
+        "-Wconversion",
+        "-Werror"
+      ],
+      "include_dirs": [
+        "engine/script/include",
+        "apps/chess/mod"
+      ],
+      "inputs": {
+        "apps/chess/mod/freestanding.c": "9100539ec7cd38bf8876c53553ca7913a81a5b8c023fa19005494cd5229248fe",
+        "apps/chess/mod/opponent.c": "386d4cc825b39f4808b5d0a55ce248f06c92b4de9014ed9f9a2ebf59ccb8e4d5",
+        "engine/script/include/atlas/script/atlas_mod.h": "a74fcbf60612ab0c78d9727f966d5a1af2b83f25fff113a1682c9ab93598731b"
+      },
+      "link_flags": [
+        "--no-entry",
+        "--export=mod_init",
+        "--export=mod_tick",
+        "--export=mod_shutdown",
+        "--initial-memory=131072",
+        "--max-memory=1048576",
+        "-z",
+        "stack-size=32768",
+        "--strip-all"
+      ],
+      "module_bytes": 203,
+      "module_sha256": "6e7bc61735dc1c0e1499d3e82fedfe7c4dfbbb1fe66a4effd34f02c34ee3b634"
+    }
+  },
+  "tools": {
+    "clang": "Homebrew clang version 23.1.2",
+    "wasm-ld": "Homebrew LLD 23.1.2"
+  },
+  "version": 1
+}

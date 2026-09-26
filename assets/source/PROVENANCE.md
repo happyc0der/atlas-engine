@@ -21,6 +21,7 @@ here at the same time, including the one entry that is an admission rather than 
 | `../mods/synthetic.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 | `../mods/clock.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
 | `../mods/herald.wasm` | `tools/gen_mods.py` | GPL-3.0-or-later, as the script |
+| `../mods/chess_opponent.wasm` | `tools/build_mods.py` from `apps/chess/mod/*.c` | GPL-3.0-or-later, as the sources |
 
 Both audio files are checked by `ctest -L lint`, which regenerates them into a scratch
 directory and compares byte for byte. A change to a waveform that is not also a change to the
@@ -55,6 +56,15 @@ of why the guest interface has no clock in it. The import it needs exists only w
 `--unsafe-debug-imports`, so the mod cannot even load by accident, and
 `tests/integration/lab_checks.py` asserts both halves: refused without the flag, and detected as
 a divergence with it. That case fails if anybody ever adds a clock to the interface for real.
+
+`mods/chess_opponent.wasm` is the first mod written in a language rather than in an encoder
+(ADR-0023): freestanding C, compiled by clang and linked by wasm-ld of LLVM 23. Its bytes are the
+compiler's, which is exactly what the paragraphs above avoid, so its check compares something
+else. `tools/build_mods.py --check` compares every input's hash and the committed module against
+`mods/build_manifest.json` on any machine; rebuilds wherever the toolchain exists; and compares
+the rebuilt bytes only when that toolchain is the one the manifest records, saying so when it is
+not. The module carries no names and no producers section, so nothing in it records where it was
+built.
 
 ## Third-party or hand-made
 

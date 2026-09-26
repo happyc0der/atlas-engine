@@ -128,6 +128,16 @@ if(ATLAS_BUILD_TESTS)
                  COMMAND "${Python3_EXECUTABLE}"
                          "${PROJECT_SOURCE_DIR}/tools/gen_mods.py" --check)
         set_tests_properties(mods_current PROPERTIES LABELS "lint")
+
+        # And the mods written in C, added in M26 (ADR-0023). Their bytes are the compiler's,
+        # so this compares what is this repository's on every machine — every input's hash and
+        # the committed module against its manifest — and compares a rebuild's bytes only where
+        # the toolchain is the manifest's own, skipping that part loudly anywhere else. The
+        # shader check's rule, prescribed for a compiled mod before one existed.
+        add_test(NAME mods_built_current
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/tools/build_mods.py" --check)
+        set_tests_properties(mods_built_current PROPERTIES LABELS "lint")
     else()
         message(STATUS "Atlas: Python not found; the boundary and licence checks will not "
                        "run as tests (CI runs them separately)")

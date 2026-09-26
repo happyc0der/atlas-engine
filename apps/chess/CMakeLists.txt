@@ -11,6 +11,7 @@
 # the composition root that puts a window, a board and two people around them.
 add_subdirectory(sim)
 add_subdirectory(view)
+add_subdirectory(mod)
 
 atlas_add_app(chess
     SOURCES

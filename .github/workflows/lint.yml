@@ -74,6 +74,16 @@ jobs:
       - name: Shaders are current
         run: python3 tools/cook_shaders.py --check
 
+      # The mods written in C (ADR-0023): clang and wasm-ld of LLVM 23, from the repository the
+      # formatter step above already added. The check compares the inputs and the committed
+      # module on any machine, rebuilds here, and compares the rebuilt bytes only when this
+      # toolchain is exactly the one the manifest records — otherwise it says so and does not.
+      - name: Install the mod toolchain
+        run: sudo apt-get install -y --no-install-recommends clang-23 lld-23
+
+      - name: Mods are current
+        run: python3 tools/build_mods.py --check
+
   tidy:
     name: clang-tidy
     runs-on: ubuntu-24.04
