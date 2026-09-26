@@ -635,3 +635,47 @@ TEST_CASE("the interface has no clock, and that is enforced rather than document
         CHECK(refused.error().code() == ErrorCode::ModImportRefused);
     }
 }
+
+TEST_CASE("a runtime that offered the clock leaves nothing behind for the next one",
+          "[script][host]") {
+    // Found in M26, one run in three. WAMR sorts the import array it is given in place, and the
+    // safe set was the first nine entries of one shared array. A runtime created with the clock
+    // sorted all ten alphabetically, so the next runtime in the same process registered, and its
+    // loader permitted, nine entries that included the clock and lacked `atlas_view_size` — the
+    // name that sorts last. The order here is fixed, unsafe first, so this fails every time on
+    // that code rather than only when the test order happens to line up.
+    {
+        const auto unsafe = Runtime::create({.unsafe_debug_imports = true});
+        REQUIRE(unsafe.has_value());
+    }
+
+    auto runtime = Runtime::create();
+    REQUIRE(runtime.has_value());
+    CommandQueue queue;
+    REQUIRE(queue.register_handler(kPoke, poke_handler()).has_value());
+    TurnGate gate;
+
+    // The clock is refused, as it is for a runtime that never saw it.
+    wasm::ModuleSpec clock;
+    clock.imports = {{.field = "atlas_debug_clock_ns", .results = {wasm::kValI64}}};
+    clock.tick_body = call_and_drop(0);
+    const auto refused = ModHost::create(*runtime, 0, wasm::as_bytes(wasm::build(clock)), "clock");
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().code() == ErrorCode::ModImportRefused);
+
+    // And the import that sorts last still links: a mod calling it runs rather than trapping.
+    wasm::ModuleSpec reader;
+    reader.imports = {wasm::imports::view_size()};
+    wasm::Bytes body;
+    body.push_back(wasm::kOpI32Const);
+    wasm::put_sleb(body, 0);
+    body.push_back(wasm::kOpCall);
+    wasm::put_uleb(body, 0);
+    body.push_back(wasm::kOpDrop);
+    reader.tick_body = body;
+    auto host = ModHost::create(*runtime, 0, wasm::as_bytes(wasm::build(reader)), "reader");
+    REQUIRE(host.has_value());
+    REQUIRE((*host)->start().has_value());
+    REQUIRE((*host)->poll(0, queue, gate).has_value());
+    CHECK_FALSE((*host)->disabled());
+}

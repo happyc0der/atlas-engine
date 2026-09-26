@@ -247,13 +247,20 @@ bool g_debug_imports = false;
 
 /// The table, in the order `atlas_mod.h` declares them, with the unsafe one last.
 ///
-/// Not `constexpr` and not `const`: WAMR takes a mutable pointer and **keeps it** for as long as
-/// the imports are registered, so this has to be an object with a life rather than a temporary
-/// or a copy. The casts are equally unavoidable — `NativeSymbol::func_ptr` is a `void*`, so
-/// there is no conversion from a function pointer that is not a reinterpret_cast. The
-/// alternative to both is a different runtime.
-// NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-type-reinterpret-cast)
-std::array<NativeSymbol, 10> g_imports{{
+/// **Const, and never handed to WAMR.** `wasm_runtime_register_natives` sorts the array it is
+/// given *in place* (`wasm_native.c`, `qsort`) and keeps the pointer for as long as the imports
+/// are registered. Until M26 this table was the array WAMR sorted, and the safe set was its first
+/// nine entries. A runtime created with the clock sorted all ten alphabetically, and the next
+/// runtime in the same process then registered, and the loader then permitted, a "first nine"
+/// that contained the clock and lacked `atlas_view_size`. Every program creates one runtime, so
+/// none shipped with it; tests create several in random order, and one run in three failed. The
+/// registered arrays below are copies, one per kind of runtime, refreshed on every registration,
+/// and what the loader permits is read from this one, which nothing can reorder.
+///
+/// The casts are unavoidable — `NativeSymbol::func_ptr` is a `void*`, so there is no conversion
+/// from a function pointer that is not a reinterpret_cast. The alternative is a different runtime.
+// NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
+const std::array<NativeSymbol, 10> kImports{{
     {"atlas_tick", reinterpret_cast<void*>(&native_tick), "()I", nullptr},
     {"atlas_command_type", reinterpret_cast<void*>(&native_command_type), "(*~)i", nullptr},
     {"atlas_submit", reinterpret_cast<void*>(&native_submit), "(i*~)i", nullptr},
@@ -271,9 +278,17 @@ std::array<NativeSymbol, 10> g_imports{{
     {"atlas_debug_clock_ns", reinterpret_cast<void*>(&native_debug_clock_ns), "()I", nullptr},
 }};
 
+// NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
+
 /// How many of the table are safe to offer. Everything but the clock.
 constexpr std::size_t kSafeImportCount = 9;
-// NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-type-reinterpret-cast)
+
+/// What WAMR is given and may sort: a copy for a runtime without the clock, and one with it.
+/// Mutable and long-lived because WAMR keeps the pointer while the imports are registered.
+// NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables)
+std::array<NativeSymbol, kSafeImportCount> g_safe_registered{};
+std::array<NativeSymbol, kImports.size()> g_all_registered{};
+// NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables)
 
 }  // namespace
 
@@ -287,7 +302,7 @@ std::span<const std::string_view> host_import_names() {
     static const std::vector<std::string_view> kSafeNames = [] {
         std::vector<std::string_view> out;
         out.reserve(kSafeImportCount);
-        for (const auto& symbol : std::span(g_imports).first(kSafeImportCount)) {
+        for (const auto& symbol : std::span(kImports).first(kSafeImportCount)) {
             out.emplace_back(symbol.symbol);
         }
         std::ranges::sort(out);
@@ -295,8 +310,8 @@ std::span<const std::string_view> host_import_names() {
     }();
     static const std::vector<std::string_view> kAllNames = [] {
         std::vector<std::string_view> out;
-        out.reserve(g_imports.size());
-        for (const auto& symbol : g_imports) {
+        out.reserve(kImports.size());
+        for (const auto& symbol : kImports) {
             out.emplace_back(symbol.symbol);
         }
         std::ranges::sort(out);
@@ -313,9 +328,17 @@ bool register_host_imports(bool with_debug) {
     // are registered, and a temporary string dies at the end of the statement. The symptom was
     // every import failing to link with the registration reporting success, which is a long way
     // from the cause.
-    return wasm_runtime_register_natives(
-        ATLAS_IMPORT_MODULE, g_imports.data(),
-        static_cast<std::uint32_t>(with_debug ? g_imports.size() : kSafeImportCount));
+    //
+    // A fresh copy from the const table every time, into the array for this kind of runtime, so
+    // whatever order an earlier registration left behind cannot decide what this one offers.
+    if (with_debug) {
+        std::ranges::copy(kImports, g_all_registered.begin());
+        return wasm_runtime_register_natives(ATLAS_IMPORT_MODULE, g_all_registered.data(),
+                                             static_cast<std::uint32_t>(g_all_registered.size()));
+    }
+    std::ranges::copy(std::span(kImports).first(kSafeImportCount), g_safe_registered.begin());
+    return wasm_runtime_register_natives(ATLAS_IMPORT_MODULE, g_safe_registered.data(),
+                                         static_cast<std::uint32_t>(g_safe_registered.size()));
 }
 
 struct ModHost::Impl {
