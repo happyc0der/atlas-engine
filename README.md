@@ -21,9 +21,11 @@ the last frame before exit.
 
 ## Current status
 
-**Sixteen milestones are done, M0 through M15.** Engine v0.1 was declared at M7 against the
+**Twenty-seven milestones are done, M0 through M26.** Engine v0.1 was declared at M7 against the
 charter item by item. M10 amended the charter to plan seven subsystems it had excluded; M11
-through M15 built the first five.
+through M16 built all seven. M17 gave lockstep a socket transport, M18 through M22 built chess
+as the first game on the engine, M23 through M25 closed the three items M17 left open, and M26
+made a mod written in C the chess opponent.
 
 What exists: a windowing and input layer; a renderer over SDL_GPU with offscreen targets,
 integer-identifier picking and non-stalling streaming uploads; an asset pipeline with virtual
