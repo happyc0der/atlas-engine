@@ -154,6 +154,15 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   Nothing resolved ever goes back into a mod: text depends on the locale, and a mod that read it
   would decide differently on two peers. What a mod says is presentation — never hashed, saved,
   replayed or sent.
+- **A mod is written in freestanding C and committed compiled** (ADR-0023): clang and wasm-ld of
+  LLVM 23 through `tools/build_mods.py`, target features pinned, names stripped. Its bytes are the
+  compiler's, so its check compares the inputs and the module against the manifest everywhere, the
+  bytes only on the manifest's own toolchain, and the game a rebuilt module plays wherever a
+  toolchain and the chess binary exist. Edit a mod's source, then run the script; the check fails
+  otherwise.
+- A mod that thinks across ticks does **a fixed amount of work per tick, counted in its own units,
+  never in time**, and the worst tick is measured by lowering the budget until it traps. A quota
+  in moves keeps the decision identical everywhere and bounds what one tick can cost.
 - **Every string a person can see comes from `text::Catalog`, by a key named in
   `engine/tools/include/atlas/tools/text_keys.hpp`** (ADR-0016). A call site names the constant,
   never the string, so `--text-check` can resolve the whole list against the shipped table. A

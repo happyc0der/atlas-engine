@@ -34,7 +34,7 @@ Status legend: **done**, *in progress*, planned.
 | M23 | One pin for vcpkg | S | **done** |
 | M24 | A string API for mods | M | **done** |
 | M25 | Dropping a peer and playing on | L | **done** |
-| M26 | Chess: a mod as the opponent | L | planned |
+| M26 | Chess: a mod as the opponent | L | **done** |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1475,6 +1475,29 @@ had not fired, and the record says so first.
 | Ending by default | **Met.** The same kill without the flag ends the listener non-zero. |
 | An unkind link | **Met, on a count rather than a tick.** Seven lockstep cases over a star with latency and reordering, one with a gap in the lost peer's turns. Agreeing on a tick would have split the peers there. |
 | Found on the way | A session could read a turn before a third peer's announcement and refuse it, one run in forty. Fixed, with a test that holds one announcement back. |
+
+## M26 — Chess: a mod as the opponent
+
+Full report: [reports/M26.md](reports/M26.md).
+
+Deferred since the chess series by the owner, because it forces a decision larger than chess:
+nothing non-trivial could be authored for the sandbox. Decided by
+[ADR-0023](adr/0023-mod-authoring.md): mods in freestanding C, and a chess opponent written in it.
+
+**Exit criteria**
+- A toolchain for mods, in CI, with a check that compares only what this repository decides.
+- A mod written in C, loaded under the unchanged limits, playing legal chess against a person.
+- Its rules verified independently; its worst tick measured rather than assumed.
+- A saved game against the mod loads and finishes identically.
+- No chess in the engine, and no change to the guest interface.
+
+| Criterion | Status |
+|---|---|
+| The toolchain | **Met.** clang and wasm-ld of LLVM 23, features pinned, names stripped; a lint test and two CI jobs. The check compares inputs and the module everywhere, bytes on the manifest's toolchain, and the game a rebuilt module plays, which is shown catching a module the byte check would pass. |
+| The opponent | **Met.** 8 KB of C. It plays legal chess against a person or itself, takes a free queen, mates in one, does not walk into mate, and never submits twice. Every move it has submitted in every test was applied. |
+| Verified | **Met.** Perft on six positions and a comparison with `chess_sim` over 300 random games, position by position and move by move. The worst tick is 1.16 M instructions, 8.6 times under the budget, measured by lowering the budget until the mod traps. |
+| Saved games | **Met, on the person's turn.** A save mid-search would restart the mod's search at a different tick; recorded. The chess application has no save of its own, so the check for an attached mod has no call site yet; recorded. |
+| No chess in the engine | **Met.** The engine gained no import and no chess. It did gain two fixes, found by the first compiled module: the import table WAMR sorted in place, and a memory override WAMR complained about. |
 
 ## First continuous integration
 

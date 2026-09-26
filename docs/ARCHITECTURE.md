@@ -130,6 +130,13 @@ application's own table loaded beside the engine's (`text::Catalog::add_table`),
 networked play. Over a socket it uses `atlas::app_lockstep`, lifted out of the lab when chess
 became its second user, and finishes the session on the tick the result is set (ADR-0020).
 
+**Chess can be played against a mod** (ADR-0023). `apps/chess/mod` holds an opponent written in
+freestanding C with its own rules, compiled to the committed `assets/mods/chess_opponent.wasm`.
+The application publishes the position as bytes laid out by one C header both sides include,
+names the mod's identifier in `chess.players` so the rules decline it out of turn exactly as they
+decline a person, and runs a tick a frame while it plays. Loading a mod and reporting what it did
+is `atlas::app_mods`, lifted out of the lab when chess became its second user.
+
 Third-party libraries are private to the modules named here and to no others: SDL3 to
 `platform` and `rhi`, EnTT to `scene`, nlohmann-json to `scene` and `assets`, Dear ImGui to
 `tools`, Tracy to `core` behind compiled-out macros, WAMR to `script`. The sentence used to say
@@ -648,6 +655,16 @@ whole if it names any key outside that prefix, and is added to the catalogue bes
 engine's. Messages are presentation: bounded per tick and in the queue, dropped and counted
 beyond either, and never hashed, saved, replayed or sent. Decided by
 [ADR-0021](adr/0021-mod-messages.md).
+
+**A mod is authored in freestanding C** ([ADR-0023](adr/0023-mod-authoring.md)).
+`tools/build_mods.py` compiles it with clang and links it with wasm-ld of LLVM 23, with the target
+features pinned to what the runtime accepts and every name stripped, and commits the module with
+a manifest of the toolchain and the inputs' hashes. The module's bytes are the compiler's, so its
+check compares what this repository decides — the inputs, and the module against its manifest —
+everywhere, compares a rebuild's bytes only on the manifest's own toolchain, and where a toolchain
+and the chess application both exist plays the rebuilt module against the committed one and
+compares the games. The three demonstration mods are still written byte by byte by
+`tools/gen_mods.py`, and their check still compares every byte.
 
 The threading table above is unchanged: everything here runs on the main thread, with the
 kernel. A mod thread is deferred.

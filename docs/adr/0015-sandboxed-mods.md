@@ -9,6 +9,12 @@
 name a message in its own namespace for a person to read, and nothing comes back. Every decision
 here about what a mod may not reach stands; 0021 shows the new import reaches none of it.
 
+*2026-09-26:* the authoring question this record left open is answered by
+[ADR-0023](0023-mod-authoring.md): freestanding C, compiled by clang and linked by wasm-ld, the
+committed module checked by its inputs, by its bytes where the toolchain matches, and by the game
+it plays. Nothing here changes; the first compiled module found two defects in the host, fixed
+and recorded there.
+
 Proposed when it was written, on 2026-09-18, because a milestone still had to build it — the
 legend in this index reserves Accepted for a record that is in force, which is why ADR-0003 and
 ADR-0004 were Proposed and why ADR-0009 was not.

@@ -458,7 +458,10 @@ integration ran for the first time. What it found is recorded in
 - **More than one mod in the lab.** `ModHost` is one mod each and the identifier is a
   constructor argument, so the mechanism is there; the lab takes one because one is what the
   proofs need. Trigger: anything that needs two mods to interact.
-- **A large-module load measurement.** `script/load` is 5 µs for a 295-byte module, which says
+- ~~**A large-module load measurement.**~~ **Taken in M26**, on the first module big enough to
+  notice: the 8,108-byte chess opponent loads in 38.2 µs against the trivial module's 5.1 µs,
+  inside the 20–80 µs predicted first (`docs/PERFORMANCE.md`). The original entry follows.
+  `script/load` is 5 µs for a 295-byte module, which says
   nothing about a real one. Trigger: the first mod big enough to notice.
 
 ### M16 — localisation
@@ -575,7 +578,12 @@ fact about the tree today rather than a consequence of the milestone.
   is about a game that cannot. Deferred because the engine has no install or export target;
   without one an out-of-tree consumer is a submodule pointing at a source tree. Condition: that
   target exists. Chess is then the first thing to build against it.
-- **A mod as the chess opponent** (unnumbered until scheduled; it was M23 until 2026-09-24).
+- ~~**A mod as the chess opponent**~~ **Built in M26**, with its toolchain decided by ADR-0023:
+  freestanding C compiled by clang and linked by wasm-ld of LLVM 23, the committed module
+  checked by its inputs, by its bytes where the toolchain matches and by the game it plays. The
+  opponent carries its own rules, verified against perft and against `chess_sim`, and searches
+  two plies a fixed number of moves per tick. The original entry follows.
+  (unnumbered until scheduled; it was M23 until 2026-09-24).
   ADR-0018 D7. A mod that reads the board, generates
   legal moves inside the sandbox and submits one cannot be written with `tools/gen_mods.py`,
   which assembles bytes by hand with no loops, branches or locals. The decision it forces — an
@@ -633,6 +641,9 @@ fact about the tree today rather than a consequence of the milestone.
   value, and perft to the depths the tests run takes well under a second in a debug build. An
   engine that searched would want make/unmake and hashed move ordering; this library does not
   search. Condition: a mod opponent that needs to, in which case it belongs in the mod.
+  *2026-09-26:* the mod opponent arrived in M26 and did not need it. It searches two plies with
+  its own copy-make, and its worst tick is measured at 1.16 M of the 10 M instructions the budget
+  allows. The condition stands for a deeper search, and the change would still be the mod's.
 - **A deeper perft in continuous integration.** The tests run the published positions to depths
   a sanitiser build finishes quickly; each case lists its deeper counts in a comment for anyone
   who wants them. Condition: a generation bug that the shallow depths miss, which none has yet.
@@ -673,6 +684,47 @@ fact about the tree today rather than a consequence of the milestone.
 
 - **Reloading a mod's table while it runs.** Mods are not reloaded (M15), and neither are their
   words. Trigger: the same as reloading a mod.
+
+### M26 — a mod as the chess opponent
+
+- **The opponent over a socket.** Refused: `--mod` plays a local game (ADR-0023 D9). Every peer
+  runs the same mods, so a mod holding a seat over a socket raises which peer's person holds the
+  other one, and what a spectator is. Trigger: a person who wants to watch or share a game against
+  the mod from another machine.
+
+- **Saving in the middle of the mod's search.** A save does not hold a mod's linear memory, so a
+  game saved while the mod is thinking restarts its search after loading, at a different tick,
+  and a tie between equal moves is then broken by a different draw. Saved on the person's turn,
+  when the mod holds nothing, a game resumes exactly, and a test holds it to that. Trigger: an
+  application that saves at arbitrary ticks with a mod that thinks across them — which would need
+  a mod's memory in the save, or a mod whose decisions never depend on when it started.
+
+- **The chess application saving and loading.** It has neither, so ADR-0023 D6's application
+  check — a save naming a mod loads only with that mod attached to that seat — has no call site
+  yet; the table accepts the mod and the round trip is proved in a test. Trigger: a person who
+  wants to keep a game.
+
+- **A stronger opponent.** Two plies on material, with mate and stalemate seen. No quiescence, no
+  move ordering, no transposition table, no repetition or fifty-move awareness. Trigger: a person
+  who finds it too easy, and a measurement first — the quota bounds a tick, and a deeper search
+  spends more ticks, not more instructions per tick.
+
+- **The opponent speaking.** It logs its moves and says nothing to a person (ADR-0021). Trigger:
+  something worth saying that a board does not already show.
+
+- **Other authoring languages.** AssemblyScript, Rust, and Lua compiled to wasm32 all remain
+  possible; none is in the tree. Trigger: a mod author who will not write C.
+
+- **Behaviour compared on macOS and Windows in CI.** Only the Linux build lanes install the
+  toolchain, so only they rebuild the opponent and play it against the committed module. Trigger:
+  a difference between platforms in how a module plays, which the runtime's determinism says
+  should not exist.
+
+- **A command type that looks like an error.** `atlas_command_type` returns a type's hash as a
+  signed 32-bit integer, so a type whose value happens to be −3 is indistinguishable from
+  `ATLAS_ERR_REFUSED`, which the host returns outside a tick. The opponent tests for zero only,
+  which is right. Changing it would change the guest interface. Trigger: a type name that hashes
+  to one of the three error values.
 
 ### M25 — dropping a peer
 
