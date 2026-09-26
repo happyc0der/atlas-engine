@@ -336,17 +336,17 @@ enum class Shape : std::uint8_t { Empty, Submit, ReadView };
     }
 
     {
-        // The first real module (M26, ADR-0023): the chess opponent, 8 KB of compiled C, read
-        // from the committed file as a player's copy would be. `DEFERRED.md` asked for this the
-        // day a module large enough to notice arrived. Skipped, and said, when run from somewhere
-        // the file is not.
-        std::ifstream file(std::filesystem::path{"assets/mods/chess_opponent.wasm"},
-                           std::ios::binary);
+        // A compiled module: the engine's own painter, C built by tools/build_mods.py (ADR-0023),
+        // read from the committed file as a player's copy would be. Until M27 this row loaded
+        // the chess opponent, 8 KB, which goes with chess to its own repository (ADR-0024);
+        // docs/PERFORMANCE.md records what the row measured then and measures now. Skipped, and
+        // said, when run from somewhere the file is not.
+        std::ifstream file(std::filesystem::path{"assets/mods/painter.wasm"}, std::ios::binary);
         const std::vector<char> raw{std::istreambuf_iterator<char>(file),
                                     std::istreambuf_iterator<char>()};
         if (raw.empty()) {
-            std::fprintf(stderr, "bench_script: assets/mods/chess_opponent.wasm not found from "
-                                 "here, skipping its load\n");
+            std::fprintf(stderr, "bench_script: assets/mods/painter.wasm not found from here, "
+                                 "skipping its load\n");
         } else {
             std::vector<std::byte> module_bytes(raw.size());
             for (std::size_t i = 0; i < raw.size(); ++i) {
@@ -354,10 +354,10 @@ enum class Shape : std::uint8_t { Empty, Submit, ReadView };
             }
             results.push_back(atlas::bench::measure(
                 "script/load", std::format("bytes={}", module_bytes.size()), 2'000, 200, [&] {
-                    const auto host = atlas::script::ModHost::create(*runtime, 0, module_bytes,
-                                                                     "chess_opponent.wasm");
+                    const auto host =
+                        atlas::script::ModHost::create(*runtime, 0, module_bytes, "painter.wasm");
                     if (!host) {
-                        die("load the opponent");
+                        die("load the painter");
                     }
                 }));
         }

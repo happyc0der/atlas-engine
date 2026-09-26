@@ -8,6 +8,7 @@
 #   lib/cmake/Atlas/                 AtlasConfig.cmake, its version file, the export sets
 #   share/atlas/shaders/             the sprite shaders renderer::QuadBatch loads (D8)
 #   share/atlas/strings/en.json      the engine's string table (D8)
+#   share/atlas/tools/build_mods.py  the mod toolchain's script (D8)
 #
 # The third-party libraries are not copied. A consumer finds them in the vcpkg tree this build
 # used, which it puts on CMAKE_PREFIX_PATH beside the prefix (D9).
@@ -95,6 +96,10 @@ plain debug or release build; see docs/adr/0024-install-and-export.md, D7.\")")
     endforeach()
     install(FILES "${PROJECT_SOURCE_DIR}/assets/source/strings/en.json"
         DESTINATION "${data_dir}/strings")
+    # The mod toolchain's script (ADR-0023), for a project that writes its own mods in C. It
+    # finds atlas_mod.h in this prefix's include directory when run from here.
+    install(PROGRAMS "${PROJECT_SOURCE_DIR}/tools/build_mods.py"
+        DESTINATION "${data_dir}/tools")
 
     # What this build was, recorded so the config can refuse a consumer that could not link
     # against it (D5). An empty value is recorded as empty and checks nothing.

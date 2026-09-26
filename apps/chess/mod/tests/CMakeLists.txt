@@ -10,7 +10,8 @@ atlas_add_test(chess_mod
         atlas::chess_sim
         atlas_chess_mod_rules
     INCLUDE_DIRS
-        "${PROJECT_SOURCE_DIR}/apps/chess/sim/tests"
+        # The rules library's test harness, beside this test in the chess tree.
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../sim/tests"
     LABELS
         "unit"
 )

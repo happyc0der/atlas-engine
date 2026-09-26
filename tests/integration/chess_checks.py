@@ -19,9 +19,14 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
+import tempfile
+from pathlib import Path
 
 from harness import CheckFailed, Session, expect_contains, expect_exit, output_of, run
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def game(binary: str, moves: str, *extra: str):
@@ -138,6 +143,29 @@ def check_text_check(binary: str) -> None:
     result = run(binary, ["--text-check"])
     expect_exit(result, 0, "--text-check")
     expect_contains(output_of(result), "all resolved in 'en'", "every chess key resolved")
+
+
+def check_engine_data_dir(binary: str) -> None:
+    """The engine's own data is read from --engine-data-dir, laid out as an installed Atlas's.
+
+    Built against a package, chess finds the engine's string table and shaders in the package's
+    share/atlas rather than beside its own assets (ADR-0024 D8). The second half is what makes the
+    first mean something: with the table missing from the named directory the run fails, although
+    assets/source/strings still holds a copy, so the table cannot have come from there.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        data = Path(scratch) / "share" / "atlas"
+        (data / "strings").mkdir(parents=True)
+        shutil.copy(ROOT / "assets" / "source" / "strings" / "en.json", data / "strings")
+        result = run(binary, ["--text-check", "--engine-data-dir", str(data)])
+        expect_exit(result, 0, "--text-check with the engine's data elsewhere")
+        expect_contains(output_of(result), "all resolved in 'en'", "every chess key resolved")
+
+        (data / "strings" / "en.json").unlink()
+        result = run(binary, ["--text-check", "--engine-data-dir", str(data)])
+        expect_exit(result, 1, "--text-check with no engine table where it was told to look")
+        expect_contains(output_of(result), "the engine's string table",
+                        "the missing table is named")
 
 
 def state_hash(text: str) -> str:
@@ -296,6 +324,7 @@ CASES = {
     "fen_is_validated": check_fen_is_validated,
     "same_game_same_hash": check_same_game_same_hash,
     "text_check": check_text_check,
+    "engine_data_dir": check_engine_data_dir,
     "socket_game_to_checkmate": check_socket_game_to_checkmate,
     "socket_partner_leaving_ends_the_game": check_socket_partner_leaving_ends_the_game,
     "socket_sides_must_start_alike": check_socket_sides_must_start_alike,

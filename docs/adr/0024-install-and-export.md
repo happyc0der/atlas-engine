@@ -173,6 +173,27 @@ the standard they were built with. The root setting stays for this tree's own ta
   no game meaning, is built and checked as the opponent was, and replaces `chess_opponent.wasm`
   in `bench_script`.
 
+*Made precise during M27, 2026-09-26.*
+- **A mod list is a JSON file** (`atlas-mod-list`, version 1): the output directory, the manifest,
+  and each mod's sources, headers, memory, and how to run it for the behavioural comparison — the
+  arguments to pass and the lines of output to compare. The engine's is
+  `assets/source/mods/mods.json`, chess's is `apps/chess/mods.json`, and chess's manifest is now
+  `chess_manifest.json`. The manifest format is version 2.
+- **A mod can reach no engine header but `atlas_mod.h`, mechanically.** The compiler is given an
+  include directory holding that header and nothing else. A mod that includes another engine
+  header fails to compile, which was tried. Rebuilt this way, the chess opponent is byte for byte
+  the module M26 committed.
+- **The fixture is `painter.wasm`**: the C counterpart of `synthetic.wasm`, which recolours one
+  cell of the lab's grid a tick and reads both of the lab's views to choose a colour the cell does
+  not already have. Its behavioural check runs it in the lab. It is 457 bytes, so `script/load`
+  no longer measures a large module; `docs/PERFORMANCE.md` has what the row measured before and
+  now, and a prediction that missed for a reason worth reading.
+- **Chess's engine data is two defaults, not one directory.** In this tree the sprite shaders and
+  the engine's `en.json` live in different folders, so the build sets
+  `ATLAS_CHESS_SHADER_DIR` and `ATLAS_CHESS_ENGINE_STRINGS_DIR`, and `--engine-data-dir` names a
+  directory laid out as `share/atlas` for both. Built against a package, both point into
+  `Atlas_DATA_DIR`. An integration case proves the engine's table is read from there.
+
 **D9. The SDK is two prefixes and a contract.**
 - A consumer puts two directories on `CMAKE_PREFIX_PATH`: the Atlas install and the exact
   `vcpkg_installed/<triplet>` tree it was built with. It has no vcpkg of its own.

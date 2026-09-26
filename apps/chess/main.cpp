@@ -89,7 +89,9 @@ struct Options {
     std::string_view video_driver;
     std::string_view screenshot;
     std::string_view assets_dir = "assets/source";
-    std::string_view shader_dir = "assets/cooked/shaders";
+    /// The engine's own data, from engine_data(): its sprite shaders and its string table.
+    std::string shader_dir;
+    std::string engine_strings_dir;
     std::string_view fen;
     std::string_view moves;
     std::string_view log_level = "info";
@@ -123,7 +125,10 @@ Usage: atlas_chess [options]
   --no-render            Open a window but create no graphics device.
   --screenshot PATH      Write the last frame to PATH as a PPM image.
   --assets-dir PATH      Directory to mount as the asset root. Default: assets/source.
-  --shader-dir PATH      Where the cooked shaders are. Default: assets/cooked/shaders.
+  --engine-data-dir PATH The engine's own data, laid out as an installed Atlas's share/atlas:
+                         PATH/shaders and PATH/strings. Default: set when this was built,
+                         and printed below.
+  --shader-dir PATH      Where the cooked shaders are. Default: the engine's data.
   --log-level LEVEL      trace, debug, info, warning, error. Default: info.
   --log-file PATH        Also write the log to PATH.
   --listen [PORT]        Host a game over a socket, playing white. 0, or omitted, lets the
@@ -146,6 +151,32 @@ becomes a queen; --moves can name any promotion. Escape or the close button quit
 Over a socket each side plays its own colour, and --moves lists only that side's moves,
 played in turn. The game ends where the rules say it does, and both sides finish there.
 )");
+    std::printf("\nThe engine's data, by default: shaders in %s, strings in %s\n",
+                ATLAS_CHESS_SHADER_DIR, ATLAS_CHESS_ENGINE_STRINGS_DIR);
+}
+
+/// Where the engine keeps its own data: the sprite shaders and the engine's string table.
+///
+/// Chess's own strings, textures and mods are under --assets-dir and --mods-dir, and are chess's.
+/// These are the engine's, and where they are depends on where the engine came from: this
+/// repository's asset folders, or an installed Atlas's share/atlas (ADR-0024 D8). So the defaults
+/// are set by the build, ATLAS_CHESS_SHADER_DIR and ATLAS_CHESS_ENGINE_STRINGS_DIR, and
+/// --engine-data-dir names a directory laid out as the installed one. --shader-dir still wins for
+/// the shaders alone.
+struct EngineData {
+    std::string shader_dir;
+    std::string strings_dir;
+};
+
+[[nodiscard]] EngineData engine_data(const atlas::Args& args) {
+    EngineData data{.shader_dir = ATLAS_CHESS_SHADER_DIR,
+                    .strings_dir = ATLAS_CHESS_ENGINE_STRINGS_DIR};
+    if (const auto dir = args.value_or("engine-data-dir", std::string_view{}); !dir.empty()) {
+        data.shader_dir = (std::filesystem::path{dir} / "shaders").string();
+        data.strings_dir = (std::filesystem::path{dir} / "strings").string();
+    }
+    data.shader_dir = std::string{args.value_or("shader-dir", std::string_view{data.shader_dir})};
+    return data;
 }
 
 [[nodiscard]] atlas::Result<Options> read_options(const atlas::Args& args) {
@@ -161,7 +192,9 @@ played in turn. The game ends where the rules say it does, and both sides finish
     options.video_driver = args.value_or("video-driver", std::string_view{});
     options.screenshot = args.value_or("screenshot", std::string_view{});
     options.assets_dir = args.value_or("assets-dir", options.assets_dir);
-    options.shader_dir = args.value_or("shader-dir", options.shader_dir);
+    EngineData engine = engine_data(args);
+    options.shader_dir = std::move(engine.shader_dir);
+    options.engine_strings_dir = std::move(engine.strings_dir);
     options.fen = args.value_or("fen", std::string_view{});
     options.moves = args.value_or("moves", std::string_view{});
     options.log_level = args.value_or("log-level", options.log_level);
@@ -850,17 +883,24 @@ read_table(const atlas::assets::FileSystem& files, std::string_view name) {
     return atlas::assets::import_string_table(*bytes, path->text());
 }
 
-/// The engine's table, then the application's own beside it (ADR-0018). Read directly rather
-/// than through a registry, as the lab reads its table: a validated path is what is needed, and
-/// hot reload of the interface's text is not something a game of chess wants.
+/// The engine's table, from where the engine keeps its data, then the application's own beside it
+/// (ADR-0018, ADR-0024 D8). Read directly rather than through a registry, as the lab reads its
+/// table: a validated path is what is needed, and hot reload of the interface's text is not
+/// something a game of chess wants. Two mounts, because the two tables need not share a folder.
 [[nodiscard]] atlas::Status load_strings(atlas::text::Catalog& catalog,
+                                         std::string_view engine_strings_dir,
                                          std::string_view assets_dir) {
+    atlas::assets::FileSystem engine_files;
+    if (auto status = engine_files.mount("engine", std::filesystem::path{engine_strings_dir});
+        !status) {
+        return status;
+    }
     atlas::assets::FileSystem files;
     if (auto status = files.mount("strings", std::filesystem::path{assets_dir} / "strings");
         !status) {
         return status;
     }
-    auto engine = read_table(files, "en.json");
+    auto engine = read_table(engine_files, "en.json");
     if (!engine) {
         return std::unexpected(std::move(engine).error().context("the engine's string table"));
     }
@@ -878,9 +918,10 @@ read_table(const atlas::assets::FileSystem& files, std::string_view name) {
 }
 
 /// Resolve every chess key against what is loaded, and fail naming any that is missing.
-[[nodiscard]] atlas::Status run_text_check(std::string_view assets_dir) {
+[[nodiscard]] atlas::Status run_text_check(std::string_view engine_strings_dir,
+                                           std::string_view assets_dir) {
     atlas::text::Catalog catalog;
-    if (auto status = load_strings(catalog, assets_dir); !status) {
+    if (auto status = load_strings(catalog, engine_strings_dir, assets_dir); !status) {
         return status;
     }
     for (const std::string_view key : atlas::chess::keys::kAllKeys) {
@@ -1018,7 +1059,8 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
     // The interface's text. A table that fails to load is not fatal: the panel then shows its
     // keys, which is what a missing key does everywhere else and is legible rather than blank.
     atlas::text::Catalog catalog;
-    if (auto status = load_strings(catalog, options.assets_dir); !status) {
+    if (auto status = load_strings(catalog, options.engine_strings_dir, options.assets_dir);
+        !status) {
         ATLAS_LOG_WARN(kApp, "no string tables: {}", status.error());
     }
     std::optional<atlas::tools::DebugUi> overlay;
@@ -1258,7 +1300,8 @@ void frame_board(atlas::math::OrthoCamera& camera, float width, float height) {
         return atlas::ok();
     }
     if (args->has("text-check")) {
-        return run_text_check(args->value_or("assets-dir", std::string_view{"assets/source"}));
+        return run_text_check(engine_data(*args).strings_dir,
+                              args->value_or("assets-dir", std::string_view{"assets/source"}));
     }
     const auto options = read_options(*args);
     if (!options) {

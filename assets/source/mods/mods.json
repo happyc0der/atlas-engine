@@ -1,0 +1,22 @@
+{
+  "format": "atlas-mod-list",
+  "version": 1,
+  "output_dir": "assets/mods",
+  "manifest": "assets/mods/build_manifest.json",
+  "mods": [
+    {
+      "output": "painter.wasm",
+      "sources": ["assets/source/mods/painter.c"],
+      "inputs": [],
+      "include_dirs": [],
+      "initial_memory": 65536,
+      "max_memory": 131072,
+      "stack_size": 16384,
+      "play": {
+        "args": ["--headless", "--unbounded", "--grid", "64", "--ticks", "2000",
+                 "--mod", "{module}", "--mods-dir", "{mods_dir}"],
+        "compare": ["mod '[^']+': \\d+ submitted, \\d+ refused", "final tick=\\d+ state hash=0x[0-9a-f]+"]
+      }
+    }
+  ]
+}

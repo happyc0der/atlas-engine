@@ -1,7 +1,7 @@
 {
   "format": "atlas-mod-build",
   "mods": {
-    "painter.wasm": {
+    "chess_opponent.wasm": {
       "compile_flags": [
         "--target=wasm32",
         "-mcpu=mvp",
@@ -21,9 +21,16 @@
         "-Wsign-conversion",
         "-Werror"
       ],
-      "include_dirs": [],
+      "include_dirs": [
+        "apps/chess/sim/include",
+        "apps/chess/mod"
+      ],
       "inputs": {
-        "assets/source/mods/painter.c": "e65eab2d017049901c9d384746433219edd3ce18af38dc85d413190981836a88",
+        "apps/chess/mod/freestanding.c": "9100539ec7cd38bf8876c53553ca7913a81a5b8c023fa19005494cd5229248fe",
+        "apps/chess/mod/opponent.c": "46cd1d6f20a92f650e701a7f7e9b66bcf8edf34dd956a5af0d9799c0d05e73da",
+        "apps/chess/mod/rules.c": "3db0529c00e74f1ace603a1fdd064dd8688af63e3180f0d4e94ffbf0ef6924cf",
+        "apps/chess/mod/rules.h": "bb3d6854c5af06ba3cd8da82e865a0f8bb9481308c143e3b505ac0724d04b506",
+        "apps/chess/sim/include/atlas/chess/mod_view.h": "7076f9b8a8a4a0797027731e753c47f6643f1728a005b91a84ee9054ee8bb781",
         "atlas/script/atlas_mod.h": "a74fcbf60612ab0c78d9727f966d5a1af2b83f25fff113a1682c9ab93598731b"
       },
       "link_flags": [
@@ -31,14 +38,14 @@
         "--export=mod_init",
         "--export=mod_tick",
         "--export=mod_shutdown",
-        "--initial-memory=65536",
-        "--max-memory=131072",
+        "--initial-memory=131072",
+        "--max-memory=1048576",
         "-z",
-        "stack-size=16384",
+        "stack-size=32768",
         "--strip-all"
       ],
-      "module_bytes": 457,
-      "module_sha256": "ae1ef8e35eddf3eeb5b134d2476d56dc39f6c4aa6c346d6181253e0b5482230d"
+      "module_bytes": 8108,
+      "module_sha256": "b856ce40f227f2c5affa49c6bc2ddf47b3bd5901cf65e0d604badd8bd6505830"
     }
   },
   "tools": {

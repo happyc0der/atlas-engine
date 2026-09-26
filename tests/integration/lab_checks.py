@@ -515,6 +515,32 @@ def check_mod_runs_and_changes_state(binary: str) -> None:
         raise CheckFailed("two runs of the same mod disagreed")
 
 
+def check_compiled_mod_runs(binary: str) -> None:
+    """The engine's compiled mod, built from C by tools/build_mods.py (ADR-0023, ADR-0024 D8).
+
+    The toolchain's own check proves the committed module is what its sources compile to; this
+    proves the module does what they say in the whole program: every command it submits is
+    accepted by the lab and applied, none declined, and the world ends somewhere a run without it
+    does not, the same way twice.
+    """
+    with_mod = headless(binary, "--mod", "painter.wasm", ticks=40)
+    expect_exit(with_mod, 0, "a run with the compiled mod")
+    text = output_of(with_mod)
+    expect_contains(text, "mod 'painter.wasm': 40 submitted, 0 refused", "one command a tick")
+    expect_contains(text, "still running", "the mod survived the run")
+    expect_contains(text, "declined commands=0", "no command it submitted was declined")
+
+    without = headless(binary, ticks=40)
+    expect_exit(without, 0, "a run without a mod")
+    mod_hash = final_hash(text, "a run with the compiled mod")
+    if mod_hash == final_hash(output_of(without), "a run without one"):
+        raise CheckFailed(f"the compiled mod changed nothing: both runs ended at {mod_hash}")
+
+    again = headless(binary, "--mod", "painter.wasm", ticks=40)
+    if final_hash(output_of(again), "the second run") != mod_hash:
+        raise CheckFailed("two runs of the compiled mod ended in different states")
+
+
 def check_mod_path_is_validated(binary: str) -> None:
     """A mod's name is untrusted input, and is refused rather than resolved."""
     escape = headless(binary, "--mod", "../../../etc/passwd", ticks=1)
@@ -963,6 +989,7 @@ CASES = {
     "seed_changes_hash": check_seed_changes_hash,
     "commands_change_hash": check_commands_change_hash,
     "mod_runs_and_changes_state": check_mod_runs_and_changes_state,
+    "compiled_mod_runs": check_compiled_mod_runs,
     "mod_path_is_validated": check_mod_path_is_validated,
     "mod_is_not_a_peer": check_mod_is_not_a_peer,
     "mod_replay_needs_no_runtime": check_mod_replay_needs_no_runtime,

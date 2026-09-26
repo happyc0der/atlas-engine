@@ -117,6 +117,7 @@ set(_atlas_chess_cases
     fen_is_validated
     same_game_same_hash
     text_check
+    engine_data_dir
     # Two processes over a real socket, bounded like the lab's.
     socket_game_to_checkmate
     socket_partner_leaving_ends_the_game
@@ -169,6 +170,7 @@ set(_atlas_lab_headless_cases
     seed_changes_hash
     commands_change_hash
     mod_runs_and_changes_state
+    compiled_mod_runs
     mod_path_is_validated
     mod_is_not_a_peer
     mod_replay_needs_no_runtime
@@ -295,6 +297,15 @@ if(NOT ATLAS_PROFILE AND ATLAS_SANITIZE STREQUAL "none")
     atlas_add_package_case(misses_a_header_left_out
         --remove-from-prefix include/atlas/core/time.hpp --target atlas_consumer_headers
         --expect build --expect-message "atlas/core/time.hpp")
+    # The installed mod script, checking the engine's own mods with the guest header it finds in
+    # the prefix rather than in this tree: the one a project outside this tree would have.
+    add_test(NAME package_installed_mod_script
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${CMAKE_BINARY_DIR}/package/prefix/share/atlas/tools/build_mods.py"
+                     --mods assets/source/mods/mods.json --root "${PROJECT_SOURCE_DIR}" --check
+             WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(package_installed_mod_script PROPERTIES
+        LABELS package FIXTURES_REQUIRED atlas_package TIMEOUT 600)
     atlas_add_package_case(misses_a_dependency_left_out
         --drop-dependency iwasm --target atlas_consumer
         --expect configure --expect-message "iwasm::vmlib")

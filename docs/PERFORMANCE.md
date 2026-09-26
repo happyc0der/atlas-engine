@@ -1251,6 +1251,37 @@ mostly a page of linear memory, which both have. The upper end allows for the pa
 functions that do something, where the trivial module's do nothing, and for a machine that is not
 idle, which is why the ratio within one run is the number that decides.
 
+### The result
+
+**The prediction missed, and the reason is the baseline rather than the painter.**
+
+| Scenario | Median, three runs | Predicted |
+|---|---|---|
+| `script/load` bytes=trivial | 4.71–6.00 µs | — |
+| `script/load` bytes=457, the painter | **9.13–10.63 µs** | 5.3–8 µs |
+| ratio within each run | **1.77–1.94** | 1.0–1.5 |
+
+`atlas_bench --filter script`, Release, on a machine with a load average of six to seven; the
+ratio is paired within each run, and it is outside the prediction in every one. Two experiments,
+each alternating the variants in one session, found why:
+
+- **Not the declared memory.** A painter with a one-page maximum instead of two loaded in 9.2 µs,
+  exactly as the committed one. That hypothesis was the obvious one and it was wrong.
+- **What the trivial module lacks.** `synthetic.wasm`, 295 bytes written by hand with the same
+  four imports and a data segment, loaded through the same row in **8.6–8.7 µs**, against the
+  painter's 9.1–9.2 µs. So nearly all of the four microseconds above the trivial row is shared by
+  every module that imports host functions and initialises memory; the painter's own extra 162
+  bytes cost about half a microsecond, three nanoseconds a byte, which is what the prediction
+  assumed.
+
+**The error was taking the trivial row for a 295-byte module.** It is an empty module built by the
+benchmark itself, with no imports and no data, and the prediction's "295 bytes at 5.1 µs" was
+never a measured point. The same confusion runs through M26's reading above: against
+`synthetic.wasm` rather than the empty module, the chess opponent loaded in 4.4 times the time
+for 27 times the size, not seven and a half. The finding stands — less than linear — with a
+smaller multiple. Whether the shared cost is the four imports or the data segment was not
+separated; nothing waits on it, since a load is paid once per mod per run.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.

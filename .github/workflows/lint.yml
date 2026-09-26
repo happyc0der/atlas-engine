@@ -82,7 +82,9 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends clang-23 lld-23
 
       - name: Mods are current
-        run: python3 tools/build_mods.py --check
+        run: |
+          python3 tools/build_mods.py --mods assets/source/mods/mods.json --check
+          python3 tools/build_mods.py --mods apps/chess/mods.json --check
 
   tidy:
     name: clang-tidy
