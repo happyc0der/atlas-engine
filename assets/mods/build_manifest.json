@@ -15,7 +15,10 @@
         "-nostdlib",
         "-Wall",
         "-Wextra",
+        "-Wpedantic",
+        "-Wshadow",
         "-Wconversion",
+        "-Wsign-conversion",
         "-Werror"
       ],
       "include_dirs": [
@@ -25,6 +28,8 @@
       "inputs": {
         "apps/chess/mod/freestanding.c": "9100539ec7cd38bf8876c53553ca7913a81a5b8c023fa19005494cd5229248fe",
         "apps/chess/mod/opponent.c": "386d4cc825b39f4808b5d0a55ce248f06c92b4de9014ed9f9a2ebf59ccb8e4d5",
+        "apps/chess/mod/rules.c": "3db0529c00e74f1ace603a1fdd064dd8688af63e3180f0d4e94ffbf0ef6924cf",
+        "apps/chess/mod/rules.h": "bb3d6854c5af06ba3cd8da82e865a0f8bb9481308c143e3b505ac0724d04b506",
         "engine/script/include/atlas/script/atlas_mod.h": "a74fcbf60612ab0c78d9727f966d5a1af2b83f25fff113a1682c9ab93598731b"
       },
       "link_flags": [

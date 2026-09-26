@@ -64,7 +64,10 @@ COMPILE_FLAGS = [
     "-nostdlib",
     "-Wall",
     "-Wextra",
+    "-Wpedantic",
+    "-Wshadow",
     "-Wconversion",
+    "-Wsign-conversion",
     "-Werror",
 ]
 
@@ -74,10 +77,12 @@ MODS = [
         "output": "chess_opponent.wasm",
         "sources": [
             "apps/chess/mod/freestanding.c",
+            "apps/chess/mod/rules.c",
             "apps/chess/mod/opponent.c",
         ],
         "inputs": [
             "engine/script/include/atlas/script/atlas_mod.h",
+            "apps/chess/mod/rules.h",
         ],
         "include_dirs": ["engine/script/include", "apps/chess/mod"],
         # Pages of 64 KiB. The maximum is declared because the loader refuses a module without
