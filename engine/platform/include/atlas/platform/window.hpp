@@ -70,7 +70,11 @@ class Window {
     /// except on a scaled display.
     [[nodiscard]] Extent2D pixel_size() const noexcept;
 
-    /// Ratio of pixel size to logical size, as reported by the display.
+    /// Ratio of pixel size to logical size: what converts a pointer's logical position into the
+    /// pixel a viewport or a readback uses. Despite the name this is the pixel density, not the
+    /// user's interface scaling. The two are equal on a Retina Mac, and differ on a Windows
+    /// display set to 175%, where pixels equal logical units and the scaling is 1.75. Until M28
+    /// this returned the scaling, and a click there landed 1.75 times too far (ADR-0025).
     [[nodiscard]] float display_scale() const noexcept;
 
     /// Queried from the window system rather than tracked from events, so it cannot drift

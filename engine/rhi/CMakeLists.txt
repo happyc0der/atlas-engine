@@ -11,6 +11,7 @@ atlas_define_sdl3_target()
 
 atlas_add_module(rhi
     SOURCES
+        src/backends.cpp
         src/device.cpp
         src/device_loss.cpp
         src/resources.cpp

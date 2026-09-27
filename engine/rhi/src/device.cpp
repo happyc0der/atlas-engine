@@ -7,6 +7,7 @@
 #include <atlas/platform/window.hpp>
 #include <atlas/rhi/device.hpp>
 
+#include "backends.hpp"
 #include "device_impl.hpp"
 #include "sdl_gpu_conv.hpp"
 #include <SDL3/SDL_error.h>
@@ -488,10 +489,14 @@ Result<Device> Device::create(const DeviceDesc& desc, const platform::Window& wi
             Error(ErrorCode::InvalidArgument, "the window has no native handle"));
     }
 
-    // Ask for every format Atlas can supply. SDL picks a backend that accepts one of them,
-    // and the caller then asks which formats the device actually took.
-    const SDL_GPUShaderFormat requested =
-        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_DXIL;
+    // Ask for the formats Atlas ships and no others (ADR-0025 D2). SDL picks a backend that
+    // accepts one of them, so it cannot pick one no Atlas shader loads on; the caller then asks
+    // which formats the device actually took. Until M28 this also named DXIL, which Atlas has
+    // never shipped, and Windows was given Direct3D 12.
+    SDL_GPUShaderFormat requested = 0;
+    for (const ShaderFormat format : detail::requested_shader_formats()) {
+        requested |= detail::to_sdl(format);
+    }
 
     const char* preferred = nullptr;
     switch (desc.preferred_backend) {

@@ -327,7 +327,8 @@ std::span<const Event> Platform::pump() {
 
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED: {
             SDL_Window* window = SDL_GetWindowFromID(sdl_event.window.windowID);
-            const float scale = (window != nullptr) ? SDL_GetWindowDisplayScale(window) : 1.0F;
+            // The same ratio Window::display_scale reports: pixels to logical units.
+            const float scale = (window != nullptr) ? SDL_GetWindowPixelDensity(window) : 1.0F;
             m_events.emplace_back(WindowDisplayScaleChanged{.window = sdl_event.window.windowID,
                                                             .scale = scale > 0.0F ? scale : 1.0F});
             break;

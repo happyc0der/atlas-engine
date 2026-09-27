@@ -4,6 +4,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -66,12 +68,36 @@ TEST_CASE("a device reports a real backend and a swapchain format", "[rhi][devic
     CHECK_FALSE(harness->device.backend_name().empty());
     CHECK(harness->device.swapchain_format() != atlas::rhi::TextureFormat::Unknown);
 
-    // Whatever the backend, it must accept at least one format Atlas can produce, or
-    // nothing could ever be drawn.
-    const bool any_format = harness->device.supports_shader_format(ShaderFormat::SpirV) ||
-                            harness->device.supports_shader_format(ShaderFormat::Msl) ||
-                            harness->device.supports_shader_format(ShaderFormat::Dxil);
+    // Whatever the backend, it must accept at least one format Atlas ships, or nothing could
+    // ever be drawn. Until M28 this also counted DXIL, which Atlas has never shipped, so the
+    // Direct3D 12 device Windows was given passed it while no shader could load (ADR-0025).
+    const bool any_format =
+        std::ranges::any_of(atlas::rhi::kShippedShaderFormats, [&](ShaderFormat format) {
+            return harness->device.supports_shader_format(format);
+        });
     CHECK(any_format);
+}
+
+TEST_CASE("a window's display scale is its ratio of pixels to logical units",
+          "[rhi][device][gpu]") {
+    // Window::display_scale converts every pointer position into the pixel a viewport or a
+    // readback uses, so its contract is this ratio. Until M28 it returned the user's interface
+    // scaling instead: the same number on a Retina Mac, and 1.75 times it on a Windows display
+    // set to 175%, where this case fails under the old code (ADR-0025).
+    auto harness = make_harness();
+    if (!harness) {
+        SKIP("no graphics device available on this machine");
+    }
+    const auto logical = harness->window.size();
+    const auto pixels = harness->window.pixel_size();
+    REQUIRE(logical.width > 0);
+    REQUIRE(logical.height > 0);
+    const float across = static_cast<float>(pixels.width) / static_cast<float>(logical.width);
+    const float down = static_cast<float>(pixels.height) / static_cast<float>(logical.height);
+    INFO("logical " << logical.width << "x" << logical.height << ", pixels " << pixels.width << "x"
+                    << pixels.height << ", display scale " << harness->window.display_scale());
+    CHECK(std::abs(harness->window.display_scale() - across) < 0.01F);
+    CHECK(std::abs(harness->window.display_scale() - down) < 0.01F);
 }
 
 TEST_CASE("a frame can be begun and submitted", "[rhi][device][gpu]") {

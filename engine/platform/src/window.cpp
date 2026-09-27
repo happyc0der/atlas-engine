@@ -78,8 +78,10 @@ float Window::display_scale() const noexcept {
     }
     ATLAS_ASSERT_MAIN_THREAD();
 
-    const float scale = SDL_GetWindowDisplayScale(as_sdl(m_handle));
-    return scale > 0.0F ? scale : 1.0F;
+    // SDL_GetWindowPixelDensity, not SDL_GetWindowDisplayScale: the second is the density times
+    // the user's interface scaling, which is the contract only where the scaling is one.
+    const float density = SDL_GetWindowPixelDensity(as_sdl(m_handle));
+    return density > 0.0F ? density : 1.0F;
 }
 
 bool Window::is_minimized() const noexcept {

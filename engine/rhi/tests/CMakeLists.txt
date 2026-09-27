@@ -26,3 +26,16 @@ atlas_add_test(rhi_headless
     LABELS
         "display"
 )
+
+# Whether this build can draw Atlas's shaders at all, asked without a device (ADR-0025 D3).
+# "unit", so it runs in every lane, hosted Windows included, where no gpu test can.
+atlas_add_test(rhi_backends
+    SOURCES
+        test_backends.cpp
+    DEPENDS
+        atlas::rhi
+    INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    LABELS
+        "unit"
+)

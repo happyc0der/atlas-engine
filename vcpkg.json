@@ -14,12 +14,12 @@
       "features": [
         "vulkan"
       ],
-      "platform": "linux"
+      "platform": "linux | windows"
     },
     {
       "name": "sdl3",
       "default-features": true,
-      "platform": "!linux"
+      "platform": "!linux & !windows"
     },
     {
       "name": "imgui",

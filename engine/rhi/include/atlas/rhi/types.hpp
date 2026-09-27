@@ -8,6 +8,7 @@
 /// engine/rhi/src, so a future native backend changes one file rather than every caller.
 /// See docs/adr/0002-rendering-backend.md.
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -26,14 +27,22 @@ enum class Backend : std::uint8_t {
 
 /// Compiled shader representations.
 ///
-/// Atlas ships SPIR-V and Metal Shading Language. DXIL, and with it the Direct3D 12
-/// backend, waits for a shader compiler that runs on the development machine; see
-/// docs/adr/0006-shader-toolchain.md.
+/// Atlas ships SPIR-V and Metal Shading Language. DXIL, and with it the Direct3D 12 backend,
+/// is its own milestone; see docs/adr/0006-shader-toolchain.md and 0025-windows-vulkan.md.
 enum class ShaderFormat : std::uint8_t {
     SpirV,
     Msl,
     Dxil,
 };
+
+/// The formats Atlas's committed shaders come in, in the order the renderer prefers them: what
+/// `tools/cook_shaders.py` writes and `renderer::load_shader_pair` reads.
+///
+/// **The device asks the system for these and no others** (ADR-0025 D2). Asked for DXIL as
+/// well, which Atlas has never shipped, SDL gave Windows the Direct3D 12 backend, and no shader
+/// could load there. A format joins this list in the same change that ships shaders in it.
+inline constexpr std::array<ShaderFormat, 2> kShippedShaderFormats{ShaderFormat::Msl,
+                                                                   ShaderFormat::SpirV};
 
 [[nodiscard]] std::string_view to_string(ShaderFormat format) noexcept;
 

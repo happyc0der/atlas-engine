@@ -321,6 +321,26 @@
       "configurePreset": "macos-debug"
     },
     {
+      "name": "_test_gpu_vulkan",
+      "hidden": true,
+      "inherits": "_test_gpu",
+      "environment": {
+        "VK_LOADER_LAYERS_DISABLE": "~implicit~"
+      }
+    },
+    {
+      "name": "windows-msvc-debug-gpu",
+      "displayName": "Windows Debug, including GPU tests, on Vulkan with validation",
+      "inherits": "_test_gpu_vulkan",
+      "configurePreset": "windows-msvc-debug"
+    },
+    {
+      "name": "windows-msvc-release-gpu",
+      "displayName": "Windows Release, including GPU tests, on Vulkan",
+      "inherits": "_test_gpu_vulkan",
+      "configurePreset": "windows-msvc-release"
+    },
+    {
       "name": "macos-asan",
       "inherits": "_test_base",
       "configurePreset": "macos-asan"

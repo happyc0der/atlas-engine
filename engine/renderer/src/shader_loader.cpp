@@ -46,31 +46,46 @@ namespace {
     return bytes;
 }
 
+// The loader below reads exactly these two formats. A format joins rhi::kShippedShaderFormats in
+// the same change that teaches this file to read it, and this stops a build that did one alone.
+static_assert(rhi::kShippedShaderFormats.size() == 2 &&
+                  rhi::kShippedShaderFormats[0] == rhi::ShaderFormat::Msl &&
+                  rhi::kShippedShaderFormats[1] == rhi::ShaderFormat::SpirV,
+              "the shader loader reads Metal Shading Language and SPIR-V and nothing else");
+
 /// One compiled shader, chosen for what the device accepts.
 [[nodiscard]] Result<rhi::ShaderHandle> load_one(rhi::Device& device,
                                                  const std::filesystem::path& directory,
                                                  const shaders::ShaderInfo& info,
                                                  rhi::ShaderStage stage) {
-    // Metal Shading Language is shipped as source and compiled by the driver; SPIR-V is
-    // consumed directly. DXIL is absent because no compiler for it runs on the development
-    // machine; see ADR-0006.
+    // The first format Atlas ships that the device accepts, in the order the list prefers:
+    // Metal Shading Language is shipped as source and compiled by the driver, SPIR-V is consumed
+    // directly. The device asked for these formats and no others (ADR-0025 D2), so one of them
+    // is always accepted unless the list and the device disagree.
     rhi::ShaderFormat format{};
     std::string_view file;
     std::string_view entry_point;
-
-    if (device.supports_shader_format(rhi::ShaderFormat::Msl)) {
-        format = rhi::ShaderFormat::Msl;
-        file = info.msl_file;
-        entry_point = info.msl_entry_point;
-    } else if (device.supports_shader_format(rhi::ShaderFormat::SpirV)) {
-        format = rhi::ShaderFormat::SpirV;
-        file = info.spirv_file;
-        entry_point = info.spirv_entry_point;
-    } else {
+    bool found = false;
+    for (const rhi::ShaderFormat candidate : rhi::kShippedShaderFormats) {
+        if (!device.supports_shader_format(candidate)) {
+            continue;
+        }
+        format = candidate;
+        found = true;
+        if (candidate == rhi::ShaderFormat::Msl) {
+            file = info.msl_file;
+            entry_point = info.msl_entry_point;
+        } else {
+            file = info.spirv_file;
+            entry_point = info.spirv_entry_point;
+        }
+        break;
+    }
+    if (!found) {
         return std::unexpected(
             Error(ErrorCode::NotSupported,
-                  std::format("the {} backend accepts neither SPIR-V nor Metal Shading Language, "
-                              "and Atlas ships no other format",
+                  std::format("the {} backend accepts none of the shader formats Atlas ships "
+                              "(SPIR-V and Metal Shading Language)",
                               device.backend_name())));
     }
 

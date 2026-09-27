@@ -58,6 +58,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -1868,7 +1869,13 @@ void load_strings(atlas::text::Catalog& catalog, std::string_view strings_dir,
                 ATLAS_LOG_WARN(kApp, "pick readback failed: {}", pixel.error());
             } else {
                 const auto picked = atlas::lab::CellIdPass::decode(*pixel);
-                const auto analytic = field->cell_at_screen(pick->screen);
+                // The inverse at the centre of the pixel read back, which is where the pass
+                // rasterised the answer. At the pointer's own position it disagreed whenever a
+                // cell edge fell between that point and the pixel's centre, which a Windows
+                // display at 175% showed in M28 and a Mac never had.
+                const auto analytic =
+                    field->cell_at_screen({std::floor(std::max(0.0F, pick->screen.x)) + 0.5F,
+                                           std::floor(std::max(0.0F, pick->screen.y)) + 0.5F});
                 // The readback is deferred: this is how many frames it took to arrive, and
                 // therefore also proof that nothing waited on it.
                 ATLAS_LOG_INFO(kApp,

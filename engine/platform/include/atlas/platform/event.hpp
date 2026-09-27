@@ -59,7 +59,8 @@ struct WindowFocusLost {
 };
 
 /// The display scale changed, because the window moved to another monitor or the user
-/// changed the setting.
+/// changed the setting. `scale` is what `Window::display_scale` now returns: pixels per logical
+/// unit.
 struct WindowDisplayScaleChanged {
     WindowId window = 0;
     float scale = 1.0F;

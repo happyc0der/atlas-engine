@@ -42,11 +42,39 @@ The owner is logged in at the desktop in session 1. It has Visual Studio 2019 Bu
 which cannot build Atlas, and no Vulkan SDK, so no validation layer. Third-party Vulkan layers
 are installed (an overlay and a capture hook) and may print warnings.
 
+### What the laptop found, which the survey could not
+
+*Added during M28, 2026-09-27.*
+- **The inference was right.** Unchanged, the device came up as `direct3d12`, accepting
+  `dxil=true` and neither SPIR-V nor MSL, and every GPU test that loads a shader failed. SDL's own
+  Windows configure log reads `SDL_VULKAN … OFF` and `GPU drivers: d3d12`.
+- **From SSH, the GPU tests skip rather than fail.** Session 0 cannot create a swapchain, and
+  Atlas creates its device together with the window's swapchain, so every case reported "no
+  graphics device" and CTest printed "98% tests passed" for a machine that drew nothing. The
+  Windows GPU run happens in the desktop session, and must fail on a skipped GPU test.
+- **`Window::display_scale()` broke its own contract on Windows.** It promises the ratio of
+  pixels to logical units, which every caller uses to turn a pointer's position into a pixel.
+  But it returned SDL's display scale, which is that ratio times the user's interface scaling.
+  On a Retina Mac the two are equal. On this laptop, set to 175%, pixels equal logical units and
+  it returned 1.75, so a click in the lab picked a cell 1.75 times too far from the pointer. It
+  now returns the pixel density. The name stays, because it is installed API; its comment says
+  what it means. A new GPU case fails under the old code on this laptop, and passes on the Mac
+  and on llvmpipe either way.
+- **The lab's live pick check compared the identifier pass with the analytic inverse at
+  different points**: the pixel's centre against its corner. It now uses the centre, as the GPU
+  test of the same pass always did.
+- **A device test counted DXIL as a format Atlas could produce**, so a device that could draw
+  nothing of Atlas's passed it. It now counts only the shipped formats.
+
 ### The owner's decisions, 2026-09-26
 
 - **Vulkan now, Direct3D 12 its own later milestone.**
 - **Install the correct tools and remove the old one**: Visual Studio 2026 Build Tools, the
   toolset CI's Windows runner compiles with (MSVC 19.51), in place of 2019.
+  *Changed by the owner, 2026-09-27:* **2019 stays.** The laptop's CUDA 12.1 accepts only
+  Visual Studio 2017 to 2022 17.9 as `nvcc`'s host compiler, and 2026 is newer, so removing 2019
+  would have left CUDA with no compiler it accepts. Atlas builds with 2026 from a developer shell
+  that names it; the two do not meet.
 - **A script run over SSH** makes the Windows GPU run repeatable. No self-hosted runner, because
   the repository is public.
 - **The owner's desktop session may be used** for what needs a visible window, if session 0
