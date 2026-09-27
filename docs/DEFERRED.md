@@ -813,6 +813,29 @@ fact about the tree today rather than a consequence of the milestone.
   two players, has nobody to play on with and keeps ending the session. A game deciding what
   happens to a dropped player's side is the game's work. Trigger: a game with more than two sides.
 
+### M28 — Windows on Vulkan
+
+Slice 5 completes this list; these are the entries slice 4's measurements produced.
+
+- **A benchmark of the machine itself.** On the laptop the engine's upload-heavy rows were 9 to 15
+  times the M4 Pro's, and a plain loop streaming the same 64-byte records, with no engine, showed
+  why: 33 ns a record against 1.16 (PERFORMANCE.md, M28). Nothing in `atlas_bench` measures the
+  machine, so a slow machine reads as a slow engine until somebody writes that loop by hand.
+  Trigger: a second machine's numbers recorded as a baseline, or any benchmark row compared
+  across machines again.
+
+- **The laptop's memory, and its power plan.** Why that machine streams 13 MB at 3.9 GB/s was not
+  separated. WMI reports both modules on one channel at 3600 MT/s, and it ran the Balanced plan.
+  Changing either is the owner's, not a script's. Trigger: a benchmark from that machine that is
+  meant to stand for Windows rather than for the laptop.
+
+- **Pinning a benchmark to one kind of core.** On a processor with performance and efficiency
+  cores, where Windows puts the benchmark decided the 10k-quad row by 3.5×. Nothing pins it.
+  Trigger: a benchmark whose result is compared across runs on a hybrid processor.
+
+- **Why Windows makes two allocations a frame where macOS makes eight.** Both are constant in the
+  scene size, which is the rule; the six were not traced. Trigger: the count growing anywhere.
+
 ## Decided by ADR-0010, planned as milestones
 
 Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.

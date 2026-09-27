@@ -1354,6 +1354,60 @@ Nine runs of each group on the laptop, in the logged-in desktop session, through
   by more, the likely cause is Windows moving a windowless background process onto the efficiency
   cores, and that is worth knowing before anybody benchmarks from SSH again.
 
+### The result: the prediction missed badly, and the reason is the laptop's memory, not the engine
+
+Nine runs in the desktop session through `windows_gpu.ps1 -BenchRuns 9`, and three from session 0,
+at `1585351`. The JSON records the build as dirty because CMake configured while the script had an
+uncommitted change; the engine's sources were the commit's, and `git status` on the laptop was
+clean for the session-0 runs.
+
+| Scenario | Predicted | Desktop, best of nine | Session 0, best of three | Against the M4 Pro's best |
+|---|---|---|---|---|
+| quads 100k | 780–1300 µs | **9,745 µs** | 6,801 µs | **15×** |
+| quads 10k | 100–185 µs | **246.6 µs** | 146.1 µs | 2.7× |
+| cells 1,048,576 | 330–550 µs | **2,373 µs** | 2,903 µs | **8.7×** |
+| cells 102,400 | 60–150 µs | **131.0 µs**, held | 96.8 µs | 2.6× |
+| cells 10k | 31–62 µs | **84.2 µs** | 22.6 µs | 2.7× |
+| allocations per frame | 8 | **2** at both sizes | 2 | — |
+
+**One row of five landed in range, and ADR-0025's prediction 7 missed on every timed row.** The
+laptop's own spread was not narrow either: best median to median of nine reached 2.2× on quads 10k
+and 2.6× on cells 102,400. Session 0 was faster than the desktop on four rows of five, the opposite
+of the guess; with three runs against nine and this spread, the two sessions are not
+distinguishable, and the 15% claim was never testable here.
+
+**What the large rows measure.** A temporary probe on the laptop, never committed, timed each part
+of a 100k-quad frame pinned to the performance cores:
+
+- the copy into SDL's mapped transfer buffer: **16 GB/s for 640 KB, about 2 GB/s for 3.2 MB**;
+- each submit: 50 µs at 640 KB, about 300 µs at 3.2 MB;
+- building the instances: **13 ns a quad at 10k, 50 to 80 ns a quad at 100k**, and just as slow
+  for the first 50,000 quads, before any upload that frame, so the upload does not cause it.
+
+Then the same reads and writes with no engine and no graphics device: a plain loop turning a
+64-byte record into another, in the build's own flags. **The laptop took 33 to 36 ns a record at
+100k and 5 ns at 50k; the M4 Pro took 1.16 ns at every size.** MSVC's `/Ob1`, the inlining level
+CMake gives RelWithDebInfo, made no difference against `/Ob2`. So the laptop is thirty times slower
+at streaming about 13 MB than the M4 Pro, in code Atlas did not write, and Atlas's upload-heavy
+rows follow it. WMI reports both memory modules on one channel, configured at 3600 MT/s against a
+rated 4800, and the machine ran the Balanced power plan; which of those, if either, accounts for
+3.9 GB/s was not separated. Changing the power plan is the owner's to do, not a script's.
+
+**What the small rows measure.** At 10k the gap is 2.7×, which the processor, the compiler and
+the scheduler can account for. In the probed build, pinned to the efficiency cores, quads 10k took
+427 to 460 µs; pinned to the performance cores, 132 µs. Nothing pins the benchmark, so where Windows puts it
+decides a row that small.
+
+**The allocation count went down, from 8 to 2**, and stayed 2 at a thousand quads and at fifty
+thousand, so the rule it guards, that the count does not grow with the scene, holds on both. Which
+six allocations the Mac makes and Windows does not was not traced.
+
+**What this says about the prediction.** It priced a slower processor and a third of the memory
+bandwidth. It did not price a machine whose memory streams at a thirtieth of the Mac's, because
+nothing measured the machine before the engine was measured on it. Measuring a new machine should
+start with a loop like that one, before the engine; the loop is not in the tree, and `DEFERRED.md`
+records what would make it worth adding.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.

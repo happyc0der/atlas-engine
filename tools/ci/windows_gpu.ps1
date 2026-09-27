@@ -25,7 +25,8 @@ open and close on that desktop while it runs; the desktop must be unlocked.
   failure this script exists to catch;
 - a device that is not Vulkan, the only backend Atlas ships shaders for on Windows;
 - a Vulkan validation error anywhere in the output;
-- a screenshot that is missing or empty.
+- a screenshot that is missing or empty;
+- with -BenchRuns, a benchmark group that skipped or wrote no results.
 
 .PARAMETER Preset
 The configure preset: windows-msvc-debug or windows-msvc-release. The test preset is its `-gpu`.
@@ -35,6 +36,11 @@ All, from SSH. Desktop is what the scheduled task runs; not for a person.
 
 .PARAMETER Out
 Where the logs, the test report and the screenshots go. Emptied at the start of a run.
+
+.PARAMETER BenchRuns
+Run the benchmark groups that need a graphics device (quads, cell_field, allocations) this many
+times in the desktop session, after the tests, writing bench-<group>-<run>.json. Release presets
+only: a debug build's timings describe the debug build.
 #>
 param(
     [ValidateSet("windows-msvc-debug", "windows-msvc-release")]
@@ -42,13 +48,19 @@ param(
     [ValidateSet("All", "Desktop")]
     [string]$Phase = "All",
     [string]$Out = "C:\src\atlas-gpu-out",
-    [int]$TimeoutMinutes = 30
+    [int]$TimeoutMinutes = 30,
+    [int]$BenchRuns = 0
 )
 
 # Continue, not Stop: Windows PowerShell 5.1 turns a native command's stderr into a terminating
 # error under Stop, which ends the run at CMake's first warning. Exit codes decide instead.
 $ErrorActionPreference = "Continue"
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$BenchGroups = "quads", "cell_field", "allocations"
+if ($BenchRuns -gt 0 -and $Preset -notlike "*-release") {
+    "benchmarks measure a release build; use -Preset windows-msvc-release"
+    exit 2
+}
 
 # The Visual Studio toolset CI compiles with, its own CMake and Ninja first on the path. Another
 # CMake on the path, such as MSYS2's, is not what CI uses and is kept out of the way.
@@ -80,6 +92,17 @@ function Invoke-DesktopPhase {
     "sandbox exit $LASTEXITCODE" | Out-File (Join-Path $Out "desktop.txt") -Append
     & (Join-Path $bin "atlas_lab.exe") --grid 64 --map-mode owner --frames 30 --screenshot (Join-Path $Out "lab-64-cells.ppm") *> (Join-Path $Out "lab.log")
     "lab exit $LASTEXITCODE" | Out-File (Join-Path $Out "desktop.txt") -Append
+
+    # The benchmarks, groups interleaved within each run so that whatever else the machine is
+    # doing falls on all of them alike. The implicit-layer setting is the GPU test presets', so
+    # an overlay's layer is not timed as if it were the engine.
+    $env:VK_LOADER_LAYERS_DISABLE = "~implicit~"
+    foreach ($run in 1..([Math]::Max($BenchRuns, 0))) {
+        if ($BenchRuns -eq 0) { break }
+        foreach ($group in $BenchGroups) {
+            & (Join-Path $bin "atlas_bench.exe") --quiet --filter $group --json (Join-Path $Out "bench-$group-$run.json") *> (Join-Path $Out "bench-$group-$run.txt")
+        }
+    }
     "done" | Out-File (Join-Path $Out "desktop.txt") -Append
 }
 
@@ -93,7 +116,7 @@ function Invoke-InDesktopSession {
     if (-not $user) {
         return "nobody is logged in at the desktop"
     }
-    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Phase Desktop -Preset $Preset -Out `"$Out`""
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Phase Desktop -Preset $Preset -Out `"$Out`" -BenchRuns $BenchRuns"
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
     try {
@@ -135,11 +158,16 @@ Set-Location $Repo
 $commit = (git rev-parse --short=12 HEAD)
 "atlas-engine $commit, preset $Preset, on $env:COMPUTERNAME"
 
-cmake --preset $Preset *> (Join-Path $Out "configure.log")
+# Benchmarks on, as CI configures: the option is off by default and nothing else would build them.
+cmake --preset $Preset -DATLAS_BUILD_BENCHMARKS=ON *> (Join-Path $Out "configure.log")
 if ($LASTEXITCODE -ne 0) { "configure failed; see $Out\configure.log"; exit 1 }
 cmake --build --preset $Preset *> (Join-Path $Out "build.log")
 if ($LASTEXITCODE -ne 0) { "build failed; see $Out\build.log"; exit 1 }
 "built"
+if ($BenchRuns -gt 0 -and -not (Test-Path (Join-Path $Repo "build\$Preset\bin\atlas_bench.exe"))) {
+    "no atlas_bench.exe in build\$Preset\bin; see $Out\configure.log"
+    exit 1
+}
 
 "desktop session: " + (Invoke-InDesktopSession)
 $desktop = Join-Path $Out "desktop.txt"
@@ -186,6 +214,21 @@ foreach ($shot in "sandbox-scene.ppm", "lab-64-cells.ppm") {
         "screenshot: $path ($((Get-Item $path).Length) bytes)"
     }
 }
+
+# Every benchmark group, every run: present, and not skipped for want of a device.
+foreach ($run in 1..([Math]::Max($BenchRuns, 0))) {
+    if ($BenchRuns -eq 0) { break }
+    foreach ($group in $BenchGroups) {
+        $json = Join-Path $Out "bench-$group-$run.json"
+        $text = Join-Path $Out "bench-$group-$run.txt"
+        if (-not (Test-Path $json) -or (Select-String -Path $text -Pattern "skipped" -Quiet)) {
+            $problems.Add("benchmark $group, run ${run}: skipped or no results; see $text")
+        } elseif (@((Get-Content $json -Raw | ConvertFrom-Json).results).Count -eq 0) {
+            $problems.Add("benchmark $group, run ${run}: no results")
+        }
+    }
+}
+if ($BenchRuns -gt 0) { "benchmarks: $BenchRuns run(s) of " + ($BenchGroups -join ", ") }
 
 if ($problems.Count -gt 0) {
     "FAILED:"
