@@ -1286,6 +1286,74 @@ for 27 times the size, not seven and a half. The finding stands — less than li
 smaller multiple. Whether the shared cost is the four imports or the data segment was not
 separated; nothing waits on it, since a load is paid once per mod per run.
 
+## Windows on an RTX 3080 Ti, M28: the first numbers from another machine
+
+Every number above comes from one Apple M4 Pro. M28 makes Atlas render on Windows through Vulkan
+(ADR-0025), and its seventh prediction is about the benchmarks that need a graphics device. They
+measure the processor, not the graphics device: batching, the transfer-buffer copy and recording,
+with acquiring and presenting outside the timed section.
+
+| Field | The laptop, `msi` |
+|---|---|
+| CPU | Intel Core i9-12900HX: 8 performance and 8 efficiency cores, 24 threads |
+| GPU | NVIDIA GeForce RTX 3080 Ti Laptop GPU, driver 616.92, Vulkan 1.4 |
+| Memory | 64 GB |
+| OS | Windows 11 Home, build 26200; on AC power, the Balanced power plan as found |
+| Compiler | MSVC 19.51.36260 (Visual Studio Build Tools 18.10.2), `windows-msvc-release` (RelWithDebInfo) |
+
+### The reference, and how weak it is
+
+The stored baseline cannot be the reference: its quad rows predate M13's 64-byte instance, and
+665 µs is exactly the "before" of that section. So the M4 Pro was measured again at `1585351`,
+`macos-release`, nine runs of each group, on a machine in ordinary use (a browser, a music
+player, two other Claude Code sessions; load average 3.2 to 5.8).
+
+| Scenario | Best median of nine | Median of nine | Worst median of nine |
+|---|---|---|---|
+| `renderer/quad_batch_submit` 10k | 92.4 µs | 241.7 µs | 393.0 µs |
+| `renderer/quad_batch_submit` 100k | 648.5 µs | 1724.4 µs | 2058.5 µs |
+| `lab/cell_field_submit` 10k cells | 31.0 µs | 48.0 µs | 122.6 µs |
+| `lab/cell_field_submit` 102,400 cells | 50.2 µs | 269.5 µs | 320.6 µs |
+| `lab/cell_field_submit` 1,048,576 cells | 273.2 µs | 719.4 µs | 1326.2 µs |
+| `renderer/allocations_per_frame`, both sizes | 8 | 8 | 8 |
+
+**The runs are bimodal, not spread.** Each run is either near the idle figures or two to three
+times slower, and for the two upload-heavy rows the fast mode appeared once in nine. A median of
+nine is therefore a measure of how busy the Mac was. **The best median is the comparison point**,
+as the closest to what the M4 Pro does unloaded. That is a weaker statistic than M13's paired runs,
+and the reason is that two machines cannot be paired.
+
+### The prediction, written before the first run on the laptop
+
+Nine runs of each group on the laptop, in the logged-in desktop session, through
+`tools/ci/windows_gpu.sh --bench 9`, and three more from SSH's session 0.
+
+| Scenario | Predicted best median | Against the M4 Pro's best |
+|---|---|---|
+| quads 100k | **780 to 1300 µs** | 1.2× to 2.0× |
+| quads 10k | **100 to 185 µs** | 1.1× to 2.0× |
+| cells 1,048,576 | **330 to 550 µs** | 1.2× to 2.0× |
+| cells 102,400 | **60 to 150 µs** | 1.2× to 3.0×; the Mac's best here is the least trustworthy |
+| cells 10k | **31 to 62 µs** | 1.0× to 2.0× |
+| allocations per frame | **8 at both sizes** | unchanged |
+
+- **Slower on every timed row, and slowest where the bytes are.** One core of an M4 Pro is faster
+  than one of the 12900HX, MSVC is usually slower than Clang on loops like these, and the laptop
+  has perhaps a third of the memory bandwidth. A hundred thousand quads write 6.4 MB into the
+  batch and copy it again into a transfer buffer, which on a discrete GPU is system memory the
+  driver maps, not memory shared with the graphics device as on the Mac.
+- **So ADR-0025's prediction 7, "within ±50% of the M4 Pro's medians", is at risk on the two
+  upload-heavy rows**, whose upper ranges here are twice the Mac. It is scored as written, against
+  the best medians above.
+- **The laptop's own spread is narrow**: best median to median of nine under 1.3× on every row,
+  because nothing else runs there.
+- **The allocation count is the engine's own `operator new`,** so the driver's allocations are not
+  in it and the count should not move. If it does, the first suspect is the standard library:
+  MSVC keeps 15 characters in a string before allocating, where libc++ keeps 22.
+- **The desktop session and session 0 agree within 15%** on best medians. If session 0 is slower
+  by more, the likely cause is Windows moving a windowless background process onto the efficiency
+  cores, and that is worth knowing before anybody benchmarks from SSH again.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.
