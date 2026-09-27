@@ -36,7 +36,7 @@ Status legend: **done**, *in progress*, planned.
 | M25 | Dropping a peer and playing on | L | **done** |
 | M26 | Chess: a mod as the opponent | L | **done** |
 | M27 | An installable engine, and chess in its own repository | L | **done** |
-| M28 | A real GPU on Windows: Vulkan on an RTX 3080 Ti | M | planned |
+| M28 | A real GPU on Windows: Vulkan on an RTX 3080 Ti | M | **done** |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -106,6 +106,8 @@ background the clear colour. Picking in M7 does not reuse this: it has its own d
 Direct3D 12 is not supported. The shader toolchain produces SPIR-V and Metal Shading
 Language but not DXIL, because the compiler that produces DXIL has no macOS build; Windows
 therefore uses the Vulkan backend. ADR-0006 records the reasoning and what would change it.
+*2026-09-27:* it did not, until M28: the device asked for DXIL and SDL chose Direct3D 12, on which
+no Atlas shader loads. See [ADR-0025](adr/0025-windows-vulkan.md).
 
 Resource binding conventions are untouched, because a triangle built from the vertex index
 binds nothing. M3 is where that has to be settled.
@@ -690,6 +692,8 @@ questions at all:
 - **Direct3D 12 and non-Apple graphics hardware.** The renderer has been verified on one
   graphics processor and one software rasteriser. This is the largest untested surface in the
   project and no amount of continuous integration on the current runners changes it.
+  *2026-09-27:* M28 verified it on an NVIDIA RTX 3080 Ti on Windows through Vulkan. Direct3D 12,
+  AMD and Intel remain unverified.
 
 **What the next milestone would be, if there is one.** The charter's purpose is an engine for a
 map-based grand-strategy game, and the engine now has every capability that charter names. The
@@ -1525,6 +1529,38 @@ a package, and chess moves to its own repository and builds against it.
 | No chess here | **Met.** The test count fell by exactly 92. `script/load` measures the engine's own compiled mod, and the mod check runs it in the lab. |
 | Goldens and predictions | **Met.** The engine's goldens match from a consumer on three platforms and the Opera Game's in atlas-chess on four lanes. Of ADR-0024's nine predictions four held, one missed, and four could not fail as written because the work they forecast was done first; the load-time prediction committed separately missed. The report says which and why. |
 
+## M28 — A real GPU on Windows: Vulkan on an RTX 3080 Ti
+
+Full report: [reports/M28.md](reports/M28.md).
+
+The largest recorded risk was that no non-Apple graphics hardware had ever run this code. The
+owner's Windows laptop, an RTX 3080 Ti reachable over SSH, removed the excuse. Decided by
+[ADR-0025](adr/0025-windows-vulkan.md): Windows renders on Vulkan, the device asks only for the
+shader formats Atlas ships, and a script runs the GPU tests on the laptop.
+
+**Exit criteria**
+- ADR-0025 accepted after its gate.
+- Atlas renders on Vulkan on an NVIDIA GPU under Windows, every `gpu` test passing, with a
+  repeatable script that shows it.
+- A hosted-CI test that fails if a platform's SDL offers no backend Atlas has shaders for.
+- Direct3D 12, AMD and Intel recorded as open, with triggers.
+- Every prediction scored; four workflows green.
+
+| Criterion | Status |
+|---|---|
+| The record | **Met.** Three predictions of eight held. The renderer needed no change and validation found nothing; what broke was around it. |
+| Rendering on the RTX 3080 Ti | **Met.** 63 of 63 GPU tests in Debug and in Release, in the desktop session, under the Khronos validation layer with no error; the sandbox and the lab drew their first frames on non-Apple hardware. `tools/ci/windows_gpu.sh` repeats it from the Mac in about two and a half minutes. |
+| The guard in hosted CI | **Met.** `rhi_backends`, label `unit`, failed on the laptop's old SDL naming the cause and passes on every lane. |
+| What stays open | **Met.** Direct3D 12 as its own milestone; AMD, Intel, Windows on arm64, Windows GPU in CI, device loss on real hardware and GPU time, each with a trigger in `DEFERRED.md`. Visual Studio 2019 stays on the laptop, by the owner's decision, for CUDA. |
+| Predictions and workflows | **Met.** Every prediction scored in the ADR, the benchmark prediction committed before its run. Four workflows green on the fix. |
+
+**What the laptop found that no Mac could.** `Window::display_scale()` returned the user's
+interface scaling, 1.75 on that desktop, where every caller needed pixels per logical unit, so a
+click there picked a cell 1.75 times too far out; on a Retina display the two numbers are equal.
+The lab's live pick check compared a pixel's centre with its corner. And the benchmarks ran 2.6
+to 15 times slower than on the M4 Pro, which a plain loop with no engine traced to the laptop's
+memory rather than to Atlas.
+
 ## First continuous integration
 
 A remote was created on 2026-09-15 and the four workflows ran for the first time. Everything
@@ -1564,20 +1600,22 @@ static analysis.
 **What is still not verified:** Windows has no graphics path coverage, because hosted runners
 have no graphics hardware and the software rasteriser lane is Linux. The Direct3D 12 backend
 is not built at all ([ADR-0006](adr/0006-shader-toolchain.md)). No real non-Apple graphics
-hardware has ever run this code.
+hardware has ever run this code. *2026-09-27:* since M28 one has, outside CI: an RTX 3080 Ti on
+Windows, through `tools/ci/windows_gpu.sh`.
 
 ## Risks and deferred work
 
 Everything consciously not built is listed, with its reason and what would change the
-decision, in [DEFERRED.md](DEFERRED.md). Top risks, as of 2026-09-17:
+decision, in [DEFERRED.md](DEFERRED.md). Top risks, as of 2026-09-27:
 
-- **The renderer is verified on one graphics processor and one software rasteriser.** The
-  llvmpipe check covers Vulkan; Direct3D 12 remains unbuilt and unverified, and no real
-  non-Apple hardware has ever run this code. This is now the largest risk in the project.
-- **No local Windows machine.** Windows is compiled and tested on every push, which is what
-  retired the risk that used to lead this list, but nobody has ever watched the sandbox or the
-  lab draw a frame there. A Windows failure that a test does not express would not be seen.
-  The plan asked for a decision by M3 on hardware or a virtual machine; it is still open.
+- **The renderer is verified on two graphics processors of two vendors, through two of SDL's
+  three backends, and one software rasteriser.** Apple's through Metal, NVIDIA's through Vulkan
+  on Windows since M28, and llvmpipe through Vulkan on Linux. Direct3D 12 remains unbuilt, and
+  AMD and Intel graphics have never run this code.
+- **The Windows GPU run is not in CI.** It runs from the development machine, on the owner's
+  laptop, when somebody runs it; a renderer change pushed without it is verified on Windows only
+  as far as compiling and the unit tests go. Hosted runners have no GPU, and a self-hosted runner
+  on a public repository was refused in ADR-0025.
 - Cross-architecture float divergence between arm64 and x86_64 (M6); mitigated by
   integer-first authoritative state and `-ffp-contract=off` from M0. **Retired as a risk for
   the golden scenario**, which agrees across arm64 and x86_64 and on Windows, and remains open
@@ -1587,6 +1625,9 @@ decision, in [DEFERRED.md](DEFERRED.md). Top risks, as of 2026-09-17:
   macOS multiplier. Going public removed the meter. A future decision to make it private again
   brings the whole risk back, and the fix would be to drop lanes rather than to pay per push.
 
-Retired since the last review: "nothing has ever been verified anywhere but this machine",
+Retired at M28: "no local Windows machine", now the owner's laptop, on which the sandbox and
+the lab have drawn frames; and "no real non-Apple hardware", for NVIDIA through Vulkan.
+
+Retired since the review before: "nothing has ever been verified anywhere but this machine",
 which four workflows over six jobs on three platforms have answered, and snapshot copy cost
 growth, which M8 measured and found not worth pooling.

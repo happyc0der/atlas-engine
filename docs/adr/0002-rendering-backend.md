@@ -4,6 +4,11 @@
 
 Accepted, 2026-09-14.
 
+*2026-09-27:* on Windows the backend is Vulkan rather than Direct3D 12, by
+[ADR-0025](0025-windows-vulkan.md): SDL_GPU chooses the first backend, in its own order, that
+accepts a shader format the device asks for, and the device asks only for the formats Atlas ships.
+The boundary this record draws held unchanged through the move; nothing above `rhi` knew.
+
 ## Context
 
 Atlas must eventually draw a large zoomable world map: many thousands of instanced cells,

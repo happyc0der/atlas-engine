@@ -35,4 +35,4 @@ An ADR is never edited to hide a change of mind. It is superseded by a new recor
 | [0022](0022-dropping-a-peer.md) | A peer may be dropped, at a tick the relay decides | Accepted; amends 0017 D2 and D5 |
 | [0023](0023-mod-authoring.md) | Mods are authored in freestanding C, and a mod may play chess | Accepted; answers 0015's authoring question |
 | [0024](0024-install-and-export.md) | The engine installs as a package, and chess moves to its own repository | Accepted; amends 0018 D1 |
-| [0025](0025-windows-vulkan.md) | Windows renders on Vulkan, and a real GPU says so | Proposed; written at M28's gate |
+| [0025](0025-windows-vulkan.md) | Windows renders on Vulkan, and a real GPU says so | Accepted |

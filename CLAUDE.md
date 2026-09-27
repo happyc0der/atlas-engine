@@ -31,6 +31,8 @@ python3 tools/check_spdx.py           # licence headers
 tools/precheck.sh macos-debug         # everything above, in order
 tools/ci/docker_linux.sh              # Linux build in a container, before pushing
 tools/ci/docker_gpu.sh                # GPU tests on a software rasteriser, in a container
+tools/ci/windows_gpu.sh                # GPU tests on the Windows laptop's RTX, over SSH (pushed HEAD)
+tools/ci/windows_gpu.sh --preset windows-msvc-release --bench 9   # and its GPU benchmarks
 ```
 
 Profiling build: preset `macos-profile` (Tracy on). A default build contains no Tracy
@@ -274,6 +276,16 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   twice: in the shader currency check, which had been passing by luck since M2, and again before
   a sprite sheet was committed.
 - Shaders are authored in HLSL and cooked to SPIR-V and MSL. Commit the cooked outputs.
+- **The device asks only for the shader formats Atlas ships** (`rhi::kShippedShaderFormats`,
+  which the loader reads too). SDL takes the first backend, in its own order, that accepts a
+  format asked for; asking for DXIL once made it choose Direct3D 12 on Windows, where no Atlas
+  shader loads (ADR-0025). A format joins the list in the change that ships its shaders.
+- A change to `rhi`, `renderer`, the lab's view or the platform's window runs
+  `tools/ci/windows_gpu.sh` before it is reported done. CI has no GPU on Windows, and a skipped
+  GPU test is reported as a pass by CTest's summary; the script reads the JUnit report instead.
+- `Window::display_scale()` is pixels per logical unit, the window system's pixel density. It is
+  never the user's interface scaling, which equals it on a Retina display and is 1.75 on the
+  Windows laptop.
 - Shader resource counts come from reflection, never from hand-written numbers.
 - A matrix goes to a uniform through `uniform_elements()`, not `elements()`: shaders read
   column-major and Atlas stores row-major.

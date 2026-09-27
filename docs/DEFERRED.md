@@ -39,7 +39,7 @@ integration ran for the first time. What it found is recorded in
 | macOS and Linux x86_64 | Both build and pass, in Debug and Release. Linux x86_64 is verified for the first time; the local container is arm64. |
 | Windows | Compiles for the first time. It found two genuine portability bugs in code that had never been compiled by MSVC. |
 | Cross-platform determinism | Measured, and since continuous integration began it is re-measured on every push: the golden scenarios run in `ctest` on all six jobs, so their exact hashes are checked on macOS arm64, Linux x86_64 and Windows x64 MSVC, plus Linux arm64 in the local container. MSVC is therefore no longer unmeasured — the row said so for longer than it was true. The scenarios are integer-only, so floating point in authoritative state remains an open question rather than an answered one. |
-| A decision the plan asked for | The plan said the owner would decide by M3 whether to acquire Windows hardware or a virtual machine. M3 passed without the question being put. Continuous integration reduces the urgency; it does not answer the question, because the graphics path on Windows still has nothing verifying it. |
+| A decision the plan asked for | The plan said the owner would decide by M3 whether to acquire Windows hardware or a virtual machine. M3 passed without the question being put. Continuous integration reduces the urgency; it does not answer the question, because the graphics path on Windows still has nothing verifying it. *2026-09-27:* answered in M28 by the owner's laptop, on which every GPU test now passes through `tools/ci/windows_gpu.sh`. |
 
 ## Deferred with a reason, by milestone
 
@@ -47,7 +47,8 @@ integration ran for the first time. What it found is recorded in
 
 - **DXIL, and therefore Direct3D 12.** The compiler that produces DXIL has no macOS build.
   Windows would run the Vulkan backend. Becomes worth revisiting when a Windows machine joins
-  the project. See [ADR-0006](adr/0006-shader-toolchain.md).
+  the project. See [ADR-0006](adr/0006-shader-toolchain.md). *2026-09-27:* the trigger fired and
+  Windows now does run Vulkan; Direct3D 12 is its own milestone, under M28 below.
 - **Graphics-processor timing.** The graphics library exposes no timestamp queries at all, so
   the timing that exists is processor-side around acquire, record and submit. Revisit if the
   library adds them.
@@ -815,7 +816,41 @@ fact about the tree today rather than a consequence of the milestone.
 
 ### M28 — Windows on Vulkan
 
-Slice 5 completes this list; these are the entries slice 4's measurements produced.
+- **Direct3D 12**, its own milestone by the owner's decision (ADR-0025 D6). It needs DXC or
+  shadercross on a Windows machine, DXIL among the committed shader outputs with a currency check
+  that compares only what this repository decides, a third format in the loader and in
+  `rhi::kShippedShaderFormats`, and the GPU tests run on both Windows backends. Trigger: the owner
+  choosing it, or a Windows machine on which Vulkan is unavailable.
+
+- **AMD and Intel graphics, and Windows on arm64.** Nothing has run on either vendor's hardware
+  or on an arm64 Windows machine. Trigger: such a machine joining the project.
+
+- **The Windows GPU run in CI.** Hosted runners have no GPU, and a self-hosted runner on the
+  owner's laptop was refused: on a public repository a pull request from anybody could run code
+  there, and the laptop sleeps on battery. The run is a script somebody runs. Trigger: a runner
+  that runs only what the owner approves, or a hosted runner with a GPU.
+
+- **Device loss on real hardware.** Detection is reliable on Vulkan by the library's own account,
+  and still untested on real hardware, because a loss cannot be caused on purpose. Trigger: a way
+  to cause one, such as a driver reset tool the owner is willing to run.
+
+- **The overlay's size on a scaled desktop.** Since `display_scale` became pixels per logical
+  unit, a window on a Windows desktop set to 175% is drawn one pixel per unit, and nothing scales
+  the overlay's fonts or spacing by the user's interface scaling, so its text is small there. It
+  is legible and it is right about where things are; it is not what the user asked their desktop
+  for. Trigger: a person using the overlay on such a desktop.
+
+- **Two implicit Vulkan layers still load.** The GPU presets set `VK_LOADER_LAYERS_DISABLE` to
+  `~implicit~`, and on the laptop the loader still inserted an overlay's layer and NVIDIA's own
+  presentation layer. Neither produced a message or a failure. Trigger: a failure or a timing that
+  either layer could explain.
+
+- **The desktop session must be logged in and unlocked.** The GPU tests run there, through a
+  scheduled task, because session 0 has no display scaling and would pass the display-scale case
+  under the broken code. A locked desktop fails the run with that reason. Trigger: the run needed
+  unattended.
+
+The next four are what slice 4's measurements produced.
 
 - **A benchmark of the machine itself.** On the laptop the engine's upload-heavy rows were 9 to 15
   times the M4 Pro's, and a plain loop streaming the same 64-byte records, with no engine, showed

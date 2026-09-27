@@ -53,9 +53,9 @@ nothing else ([ADR-0024](docs/adr/0024-install-and-export.md)). Every rule inclu
 perft-verified, with the Opera Game as a golden hash; a board in a window, two people at one
 screen or over a socket, and a mod written in C as the opponent.
 
-**What is not done.** The renderer has been verified on one graphics processor and one software
-rasteriser; Direct3D 12 and non-Apple hardware are unverified, and that is the largest untested
-surface in the project. Networking is **direct address only** — two processes play lockstep
+**What is not done.** The renderer has been verified on an Apple M4 Pro through Metal, an NVIDIA
+RTX 3080 Ti on Windows through Vulkan, and a software rasteriser; Direct3D 12, AMD and Intel
+graphics are unverified, and that is the largest untested surface in the project. Networking is **direct address only** — two processes play lockstep
 over a real socket since M17, and a session can finish rather than only fail since M21, but
 there is no encryption, no NAT traversal and no lobby, each deferred with its trigger. Mods exist but nothing large has been written as one: the demonstration mod is under three
 hundred bytes, so what loading a real one costs is unmeasured, and the lab runs one mod at a
@@ -101,7 +101,7 @@ Later configures reuse the binary cache in `.cache/vcpkg-archives`.
 |---|---|---|
 | macOS 15+ arm64 | Apple clang 21 | Tier one: developed and GPU-verified on real hardware |
 | Linux x86_64 | Clang 19+ | Tier one: verified headless in CI, plus a software-GPU lane |
-| Windows x64 | MSVC 19.4x (VS 2022 17.14+ / VS 2026) | Tier one: verified headless in CI; GPU path not yet verified |
+| Windows x64 | MSVC 19.4x (VS 2022 17.14+ / VS 2026) | Tier one: verified headless in CI; GPU-verified on an RTX 3080 Ti through Vulkan by `tools/ci/windows_gpu.sh`, outside CI |
 
 GCC 14+ works and is not gated in CI. Clang 18 and earlier cannot build Atlas: they
 cannot compile `std::expected` against libstdc++. See docs/DEPENDENCIES.md.

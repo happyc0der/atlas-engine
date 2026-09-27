@@ -3,8 +3,10 @@
 
 ## Status
 
-**Proposed**, 2026-09-26, at M28's gate. Nothing is installed on the laptop and nothing is
-changed in the build under it before it is read.
+**Accepted**, 2026-09-27, at the end of M28. Proposed 2026-09-26 at the milestone's gate, before
+anything was installed on the laptop or changed in the build. What happened differs from what was
+decided in three places, each noted where it is decided below and scored under
+[What M28 found](#what-m28-found).
 
 Makes true what [ADR-0006](0006-shader-toolchain.md) and the roadmap already say — *"Windows uses
 the Vulkan backend"* — which the build does not do. Records ADR-0006's trigger for Direct3D 12 as
@@ -125,8 +127,16 @@ Windows once.
   screenshots back.
 - What needs a window runs in the owner's desktop session, through a scheduled task, **only if**
   the first slice shows session 0 cannot do it. The task is run once, waited on and deleted.
+  *2026-09-27:* on Vulkan session 0 **can** present, and every GPU test passes there. The
+  script runs them in the desktop session anyway, for a reason this record did not foresee:
+  session 0's display has no scaling, so the display-scale case slice 2 added passes there under
+  the broken code too.
 - New presets `windows-msvc-debug-gpu` and `windows-msvc-release-gpu` mirror `macos-debug-gpu`.
 - Each report that touches rendering states the script's result.
+- *2026-09-27:* built as `tools/ci/windows_gpu.sh`, run from the development machine, which
+  checks a pushed commit out on the laptop and runs `tools/ci/windows_gpu.ps1` there. It fails on
+  a skipped test as well as a failed one, reading CTest's JUnit report, because CTest's summary
+  counts a skip as a pass. The pick case is in the `gpu` label, so it is not run separately.
 
 **D5. Vulkan validation is on in the Windows GPU presets.** The Khronos validation layer is
 installed on the laptop, as Metal's validation already runs in the Mac preset. A validation error
@@ -169,10 +179,30 @@ It is the fallback only if session 0 cannot present, and the owner allowed the d
 
 - `vcpkg.json` and `engine/rhi/src/device.cpp` change; the Windows CI cache rebuilds SDL once.
 - A new `unit` test in `engine/rhi/tests`, two new presets, and `tools/ci/windows_gpu.ps1`.
-- On the laptop: Visual Studio 2026 Build Tools and the Vulkan SDK installed, Visual Studio 2019
-  Build Tools removed, and a clone at `C:\src\atlas-engine`.
+- On the laptop: Visual Studio 2026 Build Tools and the Vulkan SDK installed, and a clone at
+  `C:\src\atlas-engine`. *2026-09-27:* Visual Studio 2019 stays, by the owner's decision above.
 - ROADMAP, ARCHITECTURE and DEFERRED stop saying Windows uses Vulkan as a fact and start saying
   how that is known.
+
+## What M28 found
+
+*Added 2026-09-27.* The full account is [reports/M28.md](../reports/M28.md).
+
+| # | Prediction | Outcome |
+|---|---|---|
+| 1 | Unchanged, the laptop passes CI's set and every shader-loading `gpu` test fails | **Held.** 1013 of 1013; in the desktop session the device was `direct3d12` and 15 shader-loading tests failed. |
+| 2 | The backend test fails on Windows before D1 and D2 and passes after | **Held.** It named the cause: "the library was built with: direct3d12". |
+| 3 | After D1 and D2, with no renderer change, every `gpu` test passes | **Missed.** Two fixes outside the renderer were needed: `display_scale` returned the interface scaling, and the lab's live pick check compared a pixel's centre with its corner. |
+| 4 | Zero pick disagreements | **Missed**, once, and it was the display-scale bug seen end to end: 3062 against 3061. None after the fix. |
+| 5 | From session 0 a device works and a swapchain does not | **Missed.** On Vulkan session 0 presents; it was Direct3D 12 that could not. |
+| 6 | Validation reports at least one warning in Atlas's use of SDL_GPU | **Missed.** None, with the layer loaded and its messages reaching the log. |
+| 7 | The GPU benchmarks land within ±50% of the M4 Pro | **Missed** on every row, by 2.6 to 15 times. A plain loop with no engine streams memory thirty times slower on the laptop than on the M4 Pro, and the large rows follow it (PERFORMANCE.md). |
+| 8 | Rebuilding SDL with Vulkan adds under five minutes to a cold Windows CI build | **Held.** 57 s in Release and 1.2 min in Debug. |
+
+**Three held and five missed.** The misses about the renderer were in its favour: it needed no
+change, and validation found nothing. The misses about everything around it were the milestone's
+findings. The two fixes lived in the platform and the lab, where no GPU test on the Mac could
+reach, because on a Retina display a pixel density and a display scale are the same number.
 
 ## Rollback cost
 

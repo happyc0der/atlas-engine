@@ -283,6 +283,13 @@ makes a frame of input reproducible from a struct in a test without a window sys
 **Window state is queried, never tracked.** Minimised, focused, size. Tracked state drifts
 when an event is missed; a query cannot.
 
+**A pointer is in logical units and a picture is in pixels**, and `Window::display_scale()` is
+the ratio between them, which is what every caller multiplies by. It is the window system's pixel
+density, not its display scale: the latter also carries the user's interface scaling, which on a
+Retina display is the same number and on a Windows desktop set to 175% is not. M28 found a click
+there landing 1.75 times too far from the pointer. The name stays because it is installed API;
+the comment says what it means.
+
 ### Text, and why it is not keys
 
 A key is a position on a keyboard; a character is what an input method decided the person
@@ -393,6 +400,24 @@ a frame that is dropped without being submitted releases it. Which release is le
 on whether an image was acquired: SDL refuses to cancel a command buffer holding one, so
 such a frame is submitted instead. A minimised window yields a frame with no image, which is
 not an error, and the caller skips drawing.
+
+### Backends
+
+SDL_GPU has three backends and chooses one itself, in a fixed order — Metal, then Direct3D 12,
+then Vulkan — taking the first that accepts a shader format the device asks for. So **the device
+asks only for the formats Atlas ships**, SPIR-V and MSL, from the one list the shader loader also
+reads (`rhi::kShippedShaderFormats`), and a backend Atlas has no shaders for cannot be chosen:
+Metal on macOS, and Vulkan on Linux and on Windows, where asking for DXIL once made SDL choose
+Direct3D 12 and every shader fail to load (ADR-0025). A format joins the request in the change
+that ships its shaders. `rhi_backends`, a unit test that needs no GPU, fails in every lane if
+the build's SDL has no backend that takes a shipped format.
+
+| Backend | Where it has run | How |
+|---|---|---|
+| Metal | Apple M4 Pro | `ctest --preset macos-debug-gpu` |
+| Vulkan | Mesa's llvmpipe, Linux | `tools/ci/docker_gpu.sh` and the `gpu-smoke` workflow |
+| Vulkan | NVIDIA RTX 3080 Ti Laptop GPU, Windows 11 | `tools/ci/windows_gpu.sh`, from the development machine, under validation |
+| Direct3D 12 | nowhere; no DXIL is produced | ADR-0006 and ADR-0025 D6 |
 
 GPU-side timing is not available: SDL_GPU exposes fences but no timestamp queries. Profiling
 zones therefore measure acquire, record and submit on the processor side, and anything

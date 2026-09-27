@@ -10,6 +10,10 @@ gate, defers Direct3D 12 to its own milestone by the owner's decision, and makes
 record's consequence that "Windows uses the Vulkan backend". The build did not do that: the
 device asked SDL for DXIL, which Atlas never shipped, and SDL on Windows was built without Vulkan.
 
+*2026-09-27:* ADR-0025 is Accepted. Windows now uses the Vulkan backend, verified on an NVIDIA
+RTX 3080 Ti with every GPU test passing under validation. The device asks only for the formats
+this record's toolchain produces, so a backend Atlas has no shaders for cannot be chosen.
+
 ## Context
 
 SDL_GPU accepts compiled shaders, and which format depends on the backend: SPIR-V for
