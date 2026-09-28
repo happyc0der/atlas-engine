@@ -37,6 +37,7 @@ Status legend: **done**, *in progress*, planned.
 | M26 | Chess: a mod as the opponent | L | **done** |
 | M27 | An installable engine, and chess in its own repository | L | **done** |
 | M28 | A real GPU on Windows: Vulkan on an RTX 3080 Ti | M | **done** |
+| M29 | The machine, measured: a benchmark of the hardware under the engine | S | planned |
 
 ## M0 — Architecture and reproducible skeleton
 

@@ -1408,6 +1408,65 @@ nothing measured the machine before the engine was measured on it. Measuring a n
 start with a loop like that one, before the engine; the loop is not in the tree, and `DEFERRED.md`
 records what would make it worth adding.
 
+## The machine, M29: a benchmark of the hardware under the engine
+
+M28 compared the engine on two machines and read a slow machine as a slow engine until a loop
+written by hand, with no engine in it, showed that the laptop streams memory thirty times slower
+than the M4 Pro. `atlas_bench` measured everything except the machine. M29 gives it a group that
+does, so that the next comparison across machines carries its own explanation.
+
+### What is built
+
+**A `machine` group**, which needs no graphics device and so runs in every lane:
+
+| Scenario | What it does | Parameters | Unit |
+|---|---|---|---|
+| `machine/stream` | reads a 64-byte record and writes one, as a batch builds its instances | bytes touched per pass, reads and writes together: 32 KiB, 1 MiB, 8 MiB, 64 MiB | records |
+| `machine/chase` | follows a random cycle through 64-byte nodes, one dependent load at a time | 32 KiB, 1 MiB, 64 MiB | loads |
+| `machine/chain` | a dependent 64-bit multiply and add, which neither memory nor a second core can help | 4M steps | steps |
+
+Stream says how fast memory moves at each size; chase, how long one miss takes; chain, how fast
+one core is. Every iteration does about a million units, repeating a small pass, so no row is a
+handful of timer ticks. **Each checks its own answer** — the records it wrote, that the cycle
+visits every node once, the chain's end against a closed form — and stops the run if it is wrong,
+because a machine benchmark the compiler has deleted would report a magnificent machine.
+
+**The machine is identified everywhere.** Today only macOS names its machine and processor; the
+laptop's results said `unknown`. Linux reads the processor and the board from `/proc` and `/sys`,
+Windows from the registry, and all three record the memory size. Strings are escaped in the JSON.
+
+**`bench_baseline.py` uses the machine rows.** `compare` says so when the machine itself measured
+slower than when the baseline was recorded, because then the rows below it may be the machine's;
+and a new action, `across`, sets two result files from two machines side by side, machine rows
+first.
+
+The group runs in every CI lane's benchmark self-check, and `windows_gpu.ps1` runs it with the
+others. Recorded here as tooling, with no ADR: nothing in it is installed or reaches a consumer.
+
+### The prediction, written before the first run
+
+On the M4 Pro, `macos-release`, best median of three runs:
+
+| Scenario | Predicted | Reasoning |
+|---|---|---|
+| stream 32 KiB | 0.4 to 1.0 ns a record | in the 128 KiB first-level cache; eight vector moves a record |
+| stream 1 MiB | 0.8 to 1.5 ns | the second-level cache; M28's hand loop gave 1.13 to 1.16 ns from 1.3 to 12.8 MB |
+| stream 8 MiB | 0.9 to 1.6 ns | still inside the 16 MiB second-level cache |
+| stream 64 MiB | 1.2 to 3.0 ns | memory; a write that misses also reads the line first |
+| chase 32 KiB | 0.6 to 1.2 ns a load | first-level latency, three or four cycles |
+| chase 1 MiB | 2.5 to 6 ns | second-level latency |
+| chase 64 MiB | 90 to 150 ns | memory latency, with some translation misses |
+| chain | 0.6 to 1.0 ns a step | three or four cycles of multiply-add latency |
+
+- **The spread is narrow**: best median to median of three under 1.3× on every row. The machine
+  rows touch no graphics device, which was where M28's bimodal runs came from.
+- **On GitHub's x86_64 runners**, shared virtual machines: chain 1.0 to 1.6 ns a step, chase
+  64 MiB 100 to 200 ns, stream 64 MiB 2 to 8 ns a record. The Windows runner within 1.5× of the
+  Linux one on every row, because they are the same kind of machine.
+- **On the laptop, when it is next available**: stream 64 MiB at least ten times the M4 Pro's, and
+  chain within 1.5× of it — M28's finding restated as something the group can falsify. It is
+  scored when that run happens, not before.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.
