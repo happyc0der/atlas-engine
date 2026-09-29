@@ -37,7 +37,7 @@ Status legend: **done**, *in progress*, planned.
 | M26 | Chess: a mod as the opponent | L | **done** |
 | M27 | An installable engine, and chess in its own repository | L | **done** |
 | M28 | A real GPU on Windows: Vulkan on an RTX 3080 Ti | M | **done** |
-| M29 | The machine, measured: a benchmark of the hardware under the engine | S | planned |
+| M29 | The machine, measured: a benchmark of the hardware under the engine | S | **done** |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1561,6 +1561,28 @@ click there picked a cell 1.75 times too far out; on a Retina display the two nu
 The lab's live pick check compared a pixel's centre with its corner. And the benchmarks ran 2.6
 to 15 times slower than on the M4 Pro, which a plain loop with no engine traced to the laptop's
 memory rather than to Atlas.
+
+## M29 — The machine, measured
+
+Full report: [reports/M29.md](reports/M29.md).
+
+M28 compared the engine on two machines and read a slow machine as a slow engine until a loop
+with no engine in it said otherwise. The owner chose, on 2026-09-28, the candidates that needed no
+Windows machine; this is the first. Tooling, recorded in `PERFORMANCE.md` rather than an ADR.
+
+**Exit criteria**
+- A benchmark group that measures the machine, checks its own answers, and runs in every lane.
+- Every result names its machine on macOS, Linux and Windows.
+- A comparison across machines that shows the machine's rows first, and a comparison on one
+  machine that says when the machine itself moved.
+- Predictions committed before the first run, and scored.
+
+| Criterion | Status |
+|---|---|
+| The group | **Met.** `machine/stream`, `chase` and `chain`; each checks its answer and stops the run if it is wrong, and four mutations, one each, were caught. It runs in every CI lane's benchmark self-check. |
+| The machine named | **Met.** The M4 Pro, the arm64 Linux container, and GitHub's Linux, macOS and Windows runners each name their processor, board and memory. |
+| The comparisons | **Met.** `bench_baseline.py across` reads two machines, machine rows first; `compare` marks a moved machine row `MACHINE`, never a regression, and says the engine rows may be the machine's. |
+| Predictions | **Met.** Seven of eight M4 Pro rows in range, the spread held, and the runners' predictions held. The first implementation measured its own instructions and was changed before anything was recorded; the report says so. The laptop's prediction waits for its next run. |
 
 ## First continuous integration
 

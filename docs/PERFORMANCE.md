@@ -1467,6 +1467,58 @@ On the M4 Pro, `macos-release`, best median of three runs:
   chain within 1.5× of it — M28's finding restated as something the group can falsify. It is
   scored when that run happens, not before.
 
+### The first implementation measured itself, and was changed before anything was recorded
+
+**Said first, because the code changed after its first run.** The stream first copied each
+record field by field and compiled to sixteen scalar stores a record; at two stores a cycle that
+is eight cycles, and it read 2.2 to 2.5 ns a record at every size from 32 KiB to 64 MiB — the
+benchmark's instructions, not the machine's memory. The chase first followed indices, paying an
+address calculation before each load: 1.34 ns at 32 KiB. Both now do what the record above says
+they do: the stream copies whole records, "eight vector moves a record", and the chase follows
+pointers, "one dependent load at a time". Nothing else changed, and the predictions were not.
+
+### The result
+
+Three runs on the M4 Pro at `4d79aa2`, `macos-release`, load average 3 to 5; nanoseconds a unit:
+
+| Scenario | Predicted | Best median | Median of three |
+|---|---|---|---|
+| stream 32 KiB | 0.4–1.0 | **0.86** | 0.90 |
+| stream 1 MiB | 0.8–1.5 | **1.34** | 1.37 |
+| stream 8 MiB | 0.9–1.6 | **1.36** | 1.40 |
+| stream 64 MiB | 1.2–3.0 | **1.35** | 1.39 |
+| chase 32 KiB | 0.6–1.2 | **0.69** | 0.72 |
+| chase 1 MiB | 2.5–6 | **6.07**, missed | 6.08 |
+| chase 64 MiB | 90–150 | **93.6** | 93.8 |
+| chain | 0.6–1.0 | **0.89** | 0.90 |
+
+**Seven rows of eight in range**, and the spread held: best median to median of three at most
+1.05×. The miss is second-level latency, which is about 27 cycles on this machine rather than the
+eighteen or so assumed. **One core streams at about 95 GB/s from 1 MiB to 64 MiB alike**: past the
+first-level cache the limit is the core's own bandwidth, not where the bytes are, which is why the
+three larger stream rows read the same. The chain's 0.89 ns is four cycles of multiply and add, so
+nothing folded the steps together.
+
+**GitHub's runners, from the benchmark self-check in each lane's log**, which now opens with the
+machine's name. CI run 36502547258 at `214d0e8`:
+
+| Lane | Machine | chain | chase 64 MiB | stream 64 MiB |
+|---|---|---|---|---|
+| Linux x86_64 Release | Virtual Machine, AMD EPYC 7763, 4 threads, 16 GB | 1.24 ns | 102 ns | 4.13 ns |
+| Windows x64 Release | Microsoft Corporation Virtual Machine, AMD EPYC 7763, 4 threads, 16 GB | 1.25 ns | 106 ns | 4.62 ns |
+| macOS arm64 Release | VirtualMac2,1, Apple M1 (Virtual), 3 threads, 7 GB | 1.22 ns | 144 ns | 5.14 ns |
+
+The Linux prediction held on all three rows, here and in the first run (1.25, 113, 4.44). **The
+Windows runner came within 0.85× to 1.27× of the Linux one on all eight rows**, so that held too,
+and it says something the laptop could not: on the same processor, MSVC and Windows cost nothing
+on the chain and the chase and up to a quarter on the stream. Neither the compiler nor the system
+is the laptop's thirtyfold.
+
+The Debug lanes ran on other processors — an EPYC 9V74 under Linux and a Xeon Platinum 8573C under
+Windows, in one run — which nobody could have read from a log before this group printed it.
+
+The laptop's prediction waits for its next `windows_gpu.sh --bench`.
+
 ## Optimisation candidates
 
 Recorded as hypotheses, not commitments. Each requires a trace before it is attempted.

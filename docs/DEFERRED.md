@@ -852,7 +852,11 @@ fact about the tree today rather than a consequence of the milestone.
 
 The next four are what slice 4's measurements produced.
 
-- **A benchmark of the machine itself.** On the laptop the engine's upload-heavy rows were 9 to 15
+- ~~**A benchmark of the machine itself.**~~ **Built in M29**, by the owner's choice rather than its
+  trigger: `atlas_bench --filter machine` streams, chases and chains on every lane, and
+  `tools/bench_baseline.py across` reads two machines with their machine rows first. The laptop
+  has not run it yet; the next `windows_gpu.sh --bench` does. The original text follows.
+  On the laptop the engine's upload-heavy rows were 9 to 15
   times the M4 Pro's, and a plain loop streaming the same 64-byte records, with no engine, showed
   why: 33 ns a record against 1.16 (PERFORMANCE.md, M28). Nothing in `atlas_bench` measures the
   machine, so a slow machine reads as a slow engine until somebody writes that loop by hand.

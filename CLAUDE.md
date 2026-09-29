@@ -290,6 +290,10 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 - A matrix goes to a uniform through `uniform_elements()`, not `elements()`: shaders read
   column-major and Atlas stores row-major.
 - Benchmarks must exclude presentation, or they measure the display rather than the engine.
+- **A benchmark compared across machines carries the machine's own rows.** Run
+  `atlas_bench --filter machine` on both and read `tools/bench_baseline.py across a.json b.json`
+  before blaming the engine for a difference: M28 read a laptop whose memory streams thirty times
+  slower as a slow engine. A `MACHINE` line from `compare` means the machine moved, not the code.
 - Asset paths are validated by `VirtualPath`, never assembled by hand. Upward traversal,
   absolute paths, backslashes and null bytes are refused, and a resolved path is checked to
   lie inside its mounted root.
