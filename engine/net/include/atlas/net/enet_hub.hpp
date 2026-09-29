@@ -14,10 +14,12 @@
 /// `docs/ARCHITECTURE.md` gains no row for this, and ARCHITECTURE's "No new thread" sentence
 /// survives the milestone unedited.
 ///
-/// **A peer that goes quiet ends the session** (ADR-0017 D5). Dropping it and continuing is
-/// simulation-visible: every remaining peer would have to apply the drop at the identical tick
-/// or diverge, which needs an agreement protocol of its own. The deadline lives here rather
-/// than in the turn gate, so `sim::TurnGate` still reads no clock.
+/// **A peer that goes quiet ends the session**, by default (ADR-0017 D5); under
+/// `PeerLoss::Drop` the relay drops it instead, and every remaining peer agrees on how many of
+/// its turns to apply (ADR-0022). **Quiet means the transport has stopped answering, not that
+/// the peer has stopped sending** (M31): under lockstep every survivor stops sending when one
+/// peer dies, and a peer that is alive keeps answering while it waits. The deadline lives here
+/// rather than in the turn gate, so `sim::TurnGate` still reads no clock.
 ///
 /// Thread affinity: **main thread**, except `EnetHub::connect`, which says why at its own
 /// declaration.
@@ -70,7 +72,15 @@ class EnetRuntime {
 
 /// How a hub is set up, and what it treats as a peer having gone.
 struct EnetConfig {
-    /// How long a peer may say nothing before the session ends.
+    /// How long a peer may go unheard before it counts as gone: no message from it, **and** no
+    /// acknowledgement from its transport of anything sent to it. Then the session ends, or under
+    /// `PeerLoss::Drop` the listener drops the connector.
+    ///
+    /// **A peer that sends nothing is not unheard while it is alive** (M31). Waiting at the gate
+    /// it keeps polling, and polling answers the pings the hub asks the transport to send, a
+    /// quarter of this apart and never more than half a second. So a peer that has died, or hung
+    /// without polling, is caught; one that is alive and simply never sends again is not, and
+    /// holds its partners for as long as it runs (`docs/DEFERRED.md`, M31).
     ///
     /// **This is the only deadline in the whole design, and it lives here rather than in the
     /// turn gate.** ADR-0014's invariant is that readiness depends on who has reported and
@@ -86,7 +96,8 @@ struct EnetConfig {
     /// an oversized packet is refused at the socket rather than deeper in.
     std::size_t max_message_bytes = kMaxMessageBytes;
 
-    /// What the listener does when a connector disconnects or goes quiet (ADR-0022 D4).
+    /// What the listener does when a connector disconnects or goes unheard for `peer_timeout`
+    /// (ADR-0022 D4).
     ///
     /// `End`, the default, ends the hub, exactly as before M25. `Drop` marks the connector lost
     /// — nothing further from it is filed or forwarded, it is disconnected, and `lost` reports
@@ -100,7 +111,9 @@ struct EnetConfig {
 struct EnetStatus {
     /// A peer that has gone, by index. Empty in the ordinary case.
     std::vector<std::size_t> closed;
-    /// Set once a peer has gone quiet or disconnected, after which this hub delivers nothing.
+    /// Set once the hub has ended — a peer gone while the policy is `PeerLoss::End`, the
+    /// listener gone, or a peer that broke the protocol — after which it delivers nothing. A
+    /// connector dropped under `PeerLoss::Drop` is reported in `closed` and ends nothing.
     bool ended = false;
     /// Why, for a person reading a log. Empty while running.
     std::string reason;

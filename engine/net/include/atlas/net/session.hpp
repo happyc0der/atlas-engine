@@ -195,9 +195,12 @@ class Session final : public sim::CommandSource {
     /// The session becomes `Finished` in a later `poll`, decided by this peer alone from what has
     /// arrived: every partner has finished at the same tick, this peer has run that tick — which
     /// the gate allows only once every partner's turns up to it have arrived — and the last
-    /// hash check at or before it has been compared with every partner. No clock is involved: a
-    /// partner that never finishes is a silent peer, and the transport's deadline ends the
-    /// session exactly as it would have while running.
+    /// hash check at or before it has been compared with every partner. No clock is involved. A
+    /// partner that never finishes because it has gone is caught by the transport's deadline,
+    /// exactly as it would have been while running; **one that is alive and simply never
+    /// finishes is caught by nothing here**, because a live peer keeps answering its transport
+    /// (M31). Only the application knows how long the run was meant to be: it compares
+    /// `declared_finish()` with its own bound, as the lab does.
     [[nodiscard]] Status finish(Tick last_tick);
 
     /// True once the run is over and agreed. See `finish`.
