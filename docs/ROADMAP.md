@@ -40,6 +40,7 @@ Status legend: **done**, *in progress*, planned.
 | M29 | The machine, measured: a benchmark of the hardware under the engine | S | **done** |
 | M30 | The overlay in the window's units: pointer and size on a high-density display | S | **done** |
 | M31 | Catching up: what M29 and M30 got wrong, before they merge | S | **done** |
+| M32 | Chess on today's engine, and a check that keeps it there | M | planned |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1693,6 +1694,79 @@ Full report: [reports/M31.md](reports/M31.md).
 | The overlay | **Met.** The default layout ends by y=700, and drags move per point, not per pixel. |
 | The lessons | **Met.** CLAUDE.md gains what quiet means under lockstep and the Windows build rules. |
 | Ready to merge | **Met.** Precheck clean at 1017, the Linux container and both llvmpipe passes green, and all four workflows green on the code. |
+
+## M32 — Chess on today's engine, and a check that keeps it there
+
+*The record, written 2026-09-29, before anything was built.*
+
+atlas-chess pins the engine by commit and builds only against an install of it (ADR-0024). Its
+pin, `d676577`, is from M27, and M28 to M31 have landed since. None of them changed an installed
+signature or a hash, but four changed what something chess uses *means* or *does*, and nothing on
+either side can see it:
+
+- **Windows cannot draw chess at its pin.** That SDK's SDL has no Vulkan and its device asks for
+  DXIL, so it gets Direct3D 12, for which Atlas has no shader (M28).
+- **A click lands 1.75 times too far out on a 175% Windows desktop**, because chess converts a
+  pointer by `display_scale()`, which returned the interface scaling until M28.
+- **Chess's overlay has M30's bugs on the Mac**: half its size, and a pointer at half its position.
+- **The socket hub's rule for a quiet peer changed in M31.** Chess plays two peers and ends on a
+  loss, so it should not notice; nothing shows that.
+
+No chess test creates a graphics device — its two display cases run with `--no-render` — and chess
+CI has no GPU. The engine does not build chess at all; DEFERRED's entry for doing so waited for
+"such a change found late", and this is one.
+
+Two faults in the engine turned up on the way. **The version never moved.** ADR-0024 D1 makes the
+minor "the milestone that last changed what is installed", but M28 added an installed constant and
+changed what `display_scale()` returns, M30 changed what the overlay does, and both left 0.27,
+because CLAUDE.md's wording spoke only of renaming. And **M31 left the installed `enet_hub.hpp` and
+`session.hpp` describing a quiet peer as one that says nothing**, which is no longer what they
+measure.
+
+**The owner's decisions, 2026-09-29**
+- This milestone moves chess onto today's engine, chosen over Direct3D 12, finishing Windows at
+  175%, and declaring v1.0.
+- **The engine becomes 0.32.0**, reading D1 literally: a change in an installed name or an
+  installed meaning moves the minor. CLAUDE.md is made to say the same, and a lint records a digest
+  of what is installed beside the version, so the next such change cannot pass without a decision
+  about the version. Chess asks for 0.32 as it moves, which is the moment it accepts the new
+  meanings.
+- **Chess gains cases that need a real device**, excluded from the hosted lanes: a frame drawn and
+  sampled, and a click at a logical point that must land on the square computed independently from
+  the window's true pixel ratio. They run in a chess CI job on llvmpipe at 1× and at 175%, on the
+  Mac, and on the laptop's RTX through a chess copy of `windows_gpu`.
+- **The engine checks chess daily and on demand**: chess at its head against engine main on macOS,
+  Linux and Windows Debug, with chess's `gpu` cases on llvmpipe at both scales.
+- **clang-tidy runs on chess now.** Its deferral waited for the first change there larger than a
+  pin move, and this is one.
+
+**Predictions**
+1. At chess's current pin the click case fails at 175% and passes at 1×; at the new pin it passes
+   at both. At the old pin the 175% pass's `interface=` check fails as well, after the tests,
+   because that engine prints none. On the Mac both cases pass at either pin: there the pixel
+   density and the display scale are both two.
+2. On the laptop at the current pin, chess fails on rendering first: the device is `direct3d12`,
+   no shader loads, and both `gpu` cases fail. At the new pin the device is `vulkan`, both pass,
+   and validation reports nothing.
+3. Beyond asking for 0.32, chess needs no change to move: its 92 tests and the Opera Game's three
+   hashes pass unchanged on all four of its lanes.
+4. Chess's SDK, rebuilt cold for the new pin, takes 5 to 11 minutes a lane, Windows the longest: it
+   builds SDL with Vulkan and Dear ImGui from source, having no archives of either.
+5. vcpkg accepts the manifest without `name` and `version-string`, so no version bump changes a
+   cache key again; and the guard's package case passes in all six CI lanes on its first run.
+6. clang-tidy 23's findings in chess are mostly in its headers, which nothing has ever analysed;
+   fewer than ten are in its `.cpp` files, which were clean under the engine's configuration when
+   they left.
+7. *M29's last prediction, scored here:* on the laptop, `machine/stream` at 64 MiB takes at least
+   ten times the M4 Pro's 1.35 ns a record, and `machine/chain` is within 1.5 times its 0.89 ns.
+8. The daily check's first run, while chess asks for 0.27, fails at the version step with its
+   message. Pointed at chess's moved branch, and at chess's main once that merges, it is green on
+   every lane and the GPU job, in five to eight minutes a lane on main's warm archives.
+
+One check is not a prediction. Replayed from chess's pin to main, the guard must list exactly the
+five installed files `git diff` already shows changed — `event.hpp`, `window.hpp`, `rhi/types.hpp`,
+`debug_ui.hpp` and `build_mods.py`, from M27's last slice, M28 and M30. That is known beforehand,
+so it tests the guard, not the history.
 
 ## First continuous integration
 
