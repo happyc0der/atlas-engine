@@ -58,6 +58,13 @@ constexpr std::size_t kNameBufferSize = 128;
     return {x * scale, y * scale};
 }
 
+/// A drag's speed per unit of the layout, as the library wants it: per pixel. At two pixels a
+/// unit the same speed per pixel moved a value twice as far for the same movement of the hand
+/// (M31). The scale is the one `Impl::draw_at` gave the font, which is the one it drew at.
+[[nodiscard]] float per_point(float speed) {
+    return speed / ImGui::GetStyle().FontScaleDpi;
+}
+
 /// Substitute into a looked-up pattern, for the strings that carry numbers.
 template <typename... Args>
 [[nodiscard]] std::string trf(const text::Catalog* catalog, std::string_view key,
@@ -498,7 +505,7 @@ void draw_position_editor(const text::Catalog* catalog, edit::History& history, 
                           const scene::LocalTransform& local) {
     std::array<float, 2> position{local.position.x, local.position.y};
     if (ImGui::DragFloat2(std::string{tr(catalog, keys::kEditorLocalPosition)}.c_str(),
-                          position.data(), 0.25F)) {
+                          position.data(), per_point(0.25F))) {
         const math::Vec2 edited{.x = position[0], .y = position[1]};
         if (edited != local.position) {
             scene::LocalTransform after = local;
@@ -564,8 +571,8 @@ void draw_animator_editor(const text::Catalog* catalog, edit::History& history, 
     //
     // An unchanged value emits nothing, for the reason written at the position editor: a drag
     // field reports itself edited on every frame the pointer rests on it.
-    if (ImGui::DragFloat(std::string{tr(catalog, keys::kEditorSpeed)}.c_str(), &speed, 0.01F, 0.0F,
-                         scene::kMaxAnimatorSpeed, "%.2f") &&
+    if (ImGui::DragFloat(std::string{tr(catalog, keys::kEditorSpeed)}.c_str(), &speed,
+                         per_point(0.01F), 0.0F, scene::kMaxAnimatorSpeed, "%.2f") &&
         speed != animator.speed) {
         scene::Animator edited = animator;
         edited.speed = std::clamp(speed, 0.0F, scene::kMaxAnimatorSpeed);
@@ -576,8 +583,8 @@ void draw_animator_editor(const text::Catalog* catalog, edit::History& history, 
     }
 
     auto start = static_cast<int>(animator.start_ms);
-    if (ImGui::DragInt(std::string{tr(catalog, keys::kEditorStart)}.c_str(), &start, 10.0F, 0,
-                       static_cast<int>(scene::kMaxAnimatorStartMs))) {
+    if (ImGui::DragInt(std::string{tr(catalog, keys::kEditorStart)}.c_str(), &start,
+                       per_point(10.0F), 0, static_cast<int>(scene::kMaxAnimatorStartMs))) {
         const auto clamped = static_cast<std::uint32_t>(
             std::clamp(start, 0, static_cast<int>(scene::kMaxAnimatorStartMs)));
         if (clamped != animator.start_ms) {
@@ -846,16 +853,18 @@ ScenePanelReport DebugUi::scene_panel(std::string_view title, edit::History& his
     }
 
     // Placed once, then left to the user. Without this the panel opens exactly where the
-    // statistics panel does and hides it, which makes the overlay look broken.
+    // statistics panel does and hides it, which makes the overlay look broken. Every panel's
+    // first place ends by y=700, inside the applications' 1280×720 windows; until M31 this one
+    // ran to 840, and its Undo row opened below the edge.
     ImGui::SetNextWindowPos(scaled(m_impl->drawn_scale, 20.0F, 320.0F), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(scaled(m_impl->drawn_scale, 360.0F, 520.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(scaled(m_impl->drawn_scale, 360.0F, 380.0F), ImGuiCond_FirstUseEver);
 
     const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {
         ImGui::TextUnformatted(trf(m_impl->catalog, keys::kSceneEntityCount, scene.size()).c_str());
         ImGui::Separator();
 
-        if (ImGui::BeginChild("tree", scaled(m_impl->drawn_scale, 0.0F, 180.0F),
+        if (ImGui::BeginChild("tree", scaled(m_impl->drawn_scale, 0.0F, 150.0F),
                               ImGuiChildFlags_Borders)) {
             for (const scene::StableId root : scene.roots()) {
                 draw_tree_node(m_impl->catalog, scene, root, selected);
@@ -908,8 +917,8 @@ LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::L
 
     // Below the asset panel rather than on top of it. Every panel here places itself once and
     // is then left alone, so the first-open layout is the only chance to not look broken.
-    ImGui::SetNextWindowPos(scaled(m_impl->drawn_scale, 400.0F, 510.0F), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(scaled(m_impl->drawn_scale, 620.0F, 280.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(scaled(m_impl->drawn_scale, 400.0F, 500.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(scaled(m_impl->drawn_scale, 620.0F, 200.0F), ImGuiCond_FirstUseEver);
 
     const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {

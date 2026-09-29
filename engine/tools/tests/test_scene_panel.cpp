@@ -216,7 +216,7 @@ TEST_CASE("typing into the name field renames through the history", "[tools][gpu
     // a caller can reach a widget it did not position.
     const auto draw_once = [&](float dt) {
         // Large enough to contain the panel where it places itself: the scene panel
-        // defaults to y=320 and is 520 tall, so a short display clips the inspector
+        // defaults to y=320 and is 380 tall, so a shorter display clips the inspector
         // away and no field is drawn at all.
         begin_frame_at(*overlay, harness->window, dt, 1280.0F, 900.0F);
         auto report = overlay->scene_panel("Scene", history);
@@ -358,7 +358,7 @@ TEST_CASE("typing into the log filter changes what the console shows", "[tools][
     buffer.push(record("beta", "three"));
 
     const auto draw_once = [&] {
-        // The log console defaults to y=510 and is 280 tall; see the note above.
+        // The log console defaults to y=500 and is 200 tall; see the note above.
         begin_frame_at(*overlay, harness->window, 1.0F / 60.0F, 1280.0F, 900.0F);
         auto report = overlay->log_console_panel("Log", buffer);
         auto gpu_frame = harness->device.begin_frame();
