@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -118,8 +119,12 @@ static_assert(sizeof(Record) == 64);
 /// One node a cache line, so that no two loads share a line and a prefetcher that fetches the
 /// next line along gains nothing. The link is a pointer, not an index: an index costs an
 /// address calculation before every load, which is arithmetic, not latency.
+///
+/// The padding is written out rather than left to the alignment, because MSVC warns about
+/// padding an alignment specifier adds (C4324) and the build treats that as an error.
 struct alignas(64) Node {
     const Node* next = nullptr;
+    std::array<std::byte, 64 - sizeof(const Node*)> padding{};
 };
 
 static_assert(sizeof(Node) == 64);
