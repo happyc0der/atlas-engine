@@ -39,6 +39,7 @@ Status legend: **done**, *in progress*, planned.
 | M28 | A real GPU on Windows: Vulkan on an RTX 3080 Ti | M | **done** |
 | M29 | The machine, measured: a benchmark of the hardware under the engine | S | **done** |
 | M30 | The overlay in the window's units: pointer and size on a high-density display | S | **done** |
+| M31 | Catching up: what M29 and M30 got wrong, before they merge | S | planned |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1641,6 +1642,39 @@ density of one, which is exactly where M28's display-scale bug lived.
 | The overlay at the display's density | **Met.** Style, font and default geometry; the text is rasterised at the density, not magnified. |
 | M28's bug under CI | **Met.** The Linux GPU lane runs twice, the second at SDL's X11 scaling of 1.75, and checks from the window system itself that it is. |
 | The interface-scaling half | **Deferred, with a finding.** On Windows the window does not grow with it, so the overlay cannot either without every application's window changing; that wants the laptop. |
+
+## M31 — Catching up: what M29 and M30 got wrong, before they merge
+
+*The record, written 2026-09-29, after the race was reproduced and fixed in a test and before the
+stress run's results were seen.*
+
+On 2026-09-29 the owner asked for everything that had gone wrong in M29 and M30 to be put right
+before either merges. Most of it was fixed as it happened and is in those reports. Three things
+were not:
+
+- **M25's drop race**, found by CI during M30 and until now only flagged. Under lockstep, when one
+  peer dies every survivor stops sending, so counted by messages the survivors fell silent a tick
+  after the dead peer, and a live peer was dropped with it — or gave up on the listener — on about
+  one tick's margin. **The owner decided: a peer has gone when its transport stops answering**,
+  not when it stops sending turns. ENet acknowledges and pings on its own while a peer polls, a
+  stalled peer still polls, and a dead or hung one does not.
+- **The overlay's default layout no longer fits a 1280×720 window on the Mac.** M30 drew it at its
+  designed size, and the design was taller than the window: the scene panel's Undo row ended up
+  below the edge. On the Mac that is a regression M30 made, not only one it revealed.
+- **Dragging a value in the inspector became twice as fast per point on the Mac**, because the
+  library's drag speeds are per pixel and M30 made the overlay work in pixels.
+
+Smaller: the Windows-only build rules M29 tripped over are written down nowhere.
+
+**Predictions**
+1. Under full load on all fourteen cores, the unfixed hub fails M25's three-peer drop test at least
+   once in ten runs, and the fixed hub fails none of twenty. If the unfixed one never fails, the
+   load does not reproduce the race and the evidence rests on the unit test.
+2. After the layout fits 720 points, the sandbox's frame shows the scene panel's Undo row and the
+   log's last lines inside the window.
+3. No test's outcome changes because of the layout or the drag speeds, since no test drags and the
+   tests aim at the rectangles the overlay reports.
+4. No golden hash changes: nothing here reaches the simulation.
 
 ## First continuous integration
 
