@@ -3,6 +3,7 @@
 #include <atlas/core/log.hpp>
 #include <atlas/core/profile.hpp>
 #include <atlas/edit/command.hpp>
+#include <atlas/platform/internal/sdl_access.hpp>
 #include <atlas/rhi/internal/sdl_gpu_access.hpp>
 #include <atlas/text/catalog.hpp>
 #include <atlas/text/substitute.hpp>
@@ -12,6 +13,7 @@
 
 #include "imgui_keymap.hpp"
 #include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_video.h>
 
 #include <array>
 #include <format>
@@ -41,6 +43,19 @@ constexpr std::size_t kNameBufferSize = 128;
 /// unfinished, and every existing test keeps working without a registry wired into it.
 [[nodiscard]] std::string_view tr(const text::Catalog* catalog, std::string_view key) {
     return catalog != nullptr ? catalog->lookup(key) : key;
+}
+
+/// Pixels per logical unit: what `platform::Window::display_scale()` reports since M28, asked of
+/// the window system directly because the overlay holds the native window, not the Window. A
+/// window system that does not say reads as one.
+[[nodiscard]] float pixel_density(SDL_Window* window) {
+    const float density = window != nullptr ? SDL_GetWindowPixelDensity(window) : 0.0F;
+    return density > 0.0F ? density : 1.0F;
+}
+
+/// A length the overlay's layout was written in — one pixel a unit — in the pixels it now draws.
+[[nodiscard]] ImVec2 scaled(float scale, float x, float y) {
+    return {x * scale, y * scale};
 }
 
 /// Substitute into a looked-up pattern, for the strings that carry numbers.
@@ -129,6 +144,29 @@ struct DebugUi::Impl {
     std::uint64_t log_seen_pushes = 0;
     bool log_cache_valid = false;
 
+    /// The window the overlay draws into, asked for its pixel density whenever that matters and
+    /// never copied: a density remembered from an event goes stale when an event is missed.
+    /// Borrowed; the window outlives the device, which outlives the overlay.
+    SDL_Window* window = nullptr;
+    /// The style as the library builds it at one pixel a unit, and the scale the live style was
+    /// last built for, so a change of density rebuilds the style rather than compounding it.
+    ImGuiStyle base_style{};
+    float drawn_scale = 0.0F;
+
+    /// Draw at `scale` pixels a unit: spacing, padding and rounding by the library's own
+    /// scaling, and the font by its density factor, which rasterises it at that size rather than
+    /// magnifying a small one.
+    void draw_at(float scale) {
+        if (scale == drawn_scale) {
+            return;
+        }
+        ImGuiStyle& style = ImGui::GetStyle();
+        style = base_style;
+        style.ScaleAllSizes(scale);
+        style.FontScaleDpi = scale;
+        drawn_scale = scale;
+    }
+
     Impl() = default;
     Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
@@ -178,6 +216,13 @@ Result<DebugUi> DebugUi::create(rhi::Device& device, const platform::Window& win
 
     ImGui::StyleColorsDark();
 
+    // Drawn at the window's pixel density, from the style the library builds at one pixel a
+    // unit. Without this a display of two pixels a point showed thirteen-pixel text at half the
+    // size the layout was written for.
+    impl->window = platform::internal::native_handle(window);
+    impl->base_style = ImGui::GetStyle();
+    impl->draw_at(pixel_density(impl->window));
+
     // Where an input method should put its candidate list. The library calls this only when
     // the answer changes, so what it stores is the current desire rather than a per-frame
     // event. The application reads it after end_frame and tells the window.
@@ -222,7 +267,11 @@ bool DebugUi::handle_event(const platform::Event& event) {
     ImGuiIO& io = ImGui::GetIO();
 
     if (const auto* moved = std::get_if<platform::MouseMoved>(&event)) {
-        io.AddMousePosEvent(moved->position.x, moved->position.y);
+        // The platform delivers a pointer in the window's logical units and the overlay draws in
+        // its pixels. Handed over unconverted, a pointer on a display of two pixels a unit reached
+        // the overlay at half its position, and nothing on the Mac could be clicked (M30).
+        const float density = pixel_density(m_impl->window);
+        io.AddMousePosEvent(moved->position.x * density, moved->position.y * density);
         return io.WantCaptureMouse;
     }
     if (const auto* pressed = std::get_if<platform::MouseButtonPressed>(&event)) {
@@ -319,6 +368,9 @@ void DebugUi::begin_frame(float delta_seconds, std::uint32_t pixel_width,
     // A zero or negative delta makes the library's animations misbehave, and a frame that
     // took no measurable time is perfectly possible.
     io.DeltaTime = delta_seconds > 0.0F ? delta_seconds : 1.0F / 60.0F;
+    // Asked every frame rather than remembered: a window moved to a display of another density
+    // redraws at the new one from its next frame.
+    m_impl->draw_at(pixel_density(m_impl->window));
 
     ImGui_ImplSDLGPU3_NewFrame();
     ImGui::NewFrame();
@@ -330,6 +382,11 @@ void DebugUi::stats_panel(std::string_view title, std::span<const Stat> stats) {
         return;
     }
     ImGui::SetCurrentContext(m_impl->context);
+
+    // Where the library would put it anyway, (60, 60), but in the layout's units: the library's
+    // own default is pixels, and at two pixels a unit it would sit at half the distance the other
+    // panels' positions assume.
+    ImGui::SetNextWindowPos(scaled(m_impl->drawn_scale, 60.0F, 60.0F), ImGuiCond_FirstUseEver);
 
     const std::string window_title = title_for(m_impl->catalog, title);
     // Deliberately nested rather than merged. The library's pairing rules are asymmetric:
@@ -790,15 +847,16 @@ ScenePanelReport DebugUi::scene_panel(std::string_view title, edit::History& his
 
     // Placed once, then left to the user. Without this the panel opens exactly where the
     // statistics panel does and hides it, which makes the overlay look broken.
-    ImGui::SetNextWindowPos(ImVec2(20.0F, 320.0F), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(360.0F, 520.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(scaled(m_impl->drawn_scale, 20.0F, 320.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(scaled(m_impl->drawn_scale, 360.0F, 520.0F), ImGuiCond_FirstUseEver);
 
     const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {
         ImGui::TextUnformatted(trf(m_impl->catalog, keys::kSceneEntityCount, scene.size()).c_str());
         ImGui::Separator();
 
-        if (ImGui::BeginChild("tree", ImVec2(0.0F, 180.0F), ImGuiChildFlags_Borders)) {
+        if (ImGui::BeginChild("tree", scaled(m_impl->drawn_scale, 0.0F, 180.0F),
+                              ImGuiChildFlags_Borders)) {
             for (const scene::StableId root : scene.roots()) {
                 draw_tree_node(m_impl->catalog, scene, root, selected);
             }
@@ -809,7 +867,8 @@ ScenePanelReport DebugUi::scene_panel(std::string_view title, edit::History& his
 
         // The controls sit below a scrolling region rather than inside it, so undo is always
         // reachable however long the component list is.
-        const float controls_height = ImGui::GetFrameHeightWithSpacing() + 8.0F;
+        const float controls_height =
+            ImGui::GetFrameHeightWithSpacing() + (8.0F * m_impl->drawn_scale);
         if (ImGui::BeginChild("inspector", ImVec2(0.0F, -controls_height))) {
             if (selected.has_value()) {
                 draw_inspector(m_impl->catalog, history, *selected, m_impl->name_input,
@@ -849,8 +908,8 @@ LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::L
 
     // Below the asset panel rather than on top of it. Every panel here places itself once and
     // is then left alone, so the first-open layout is the only chance to not look broken.
-    ImGui::SetNextWindowPos(ImVec2(400.0F, 510.0F), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(620.0F, 280.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(scaled(m_impl->drawn_scale, 400.0F, 510.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(scaled(m_impl->drawn_scale, 620.0F, 280.0F), ImGuiCond_FirstUseEver);
 
     const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {
@@ -869,14 +928,14 @@ LogConsoleReport DebugUi::log_console_panel(std::string_view title, const log::L
             severity_items[i] = severity_text[i].c_str();
         }
         int severity = static_cast<int>(m_impl->log_filter.min_severity);
-        ImGui::SetNextItemWidth(120.0F);
+        ImGui::SetNextItemWidth(120.0F * m_impl->drawn_scale);
         if (ImGui::Combo(std::string{tr(m_impl->catalog, keys::kLogSeverity)}.c_str(), &severity,
                          severity_items.data(), static_cast<int>(severity_items.size()))) {
             m_impl->log_filter.min_severity = static_cast<log::Severity>(severity);
         }
 
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(160.0F);
+        ImGui::SetNextItemWidth(160.0F * m_impl->drawn_scale);
         if (ImGui::InputText(std::string{tr(m_impl->catalog, keys::kLogCategory)}.c_str(),
                              m_impl->log_category_input.data(),
                              m_impl->log_category_input.size())) {
@@ -932,10 +991,10 @@ SimulationControlsRequest DebugUi::simulation_controls_panel(std::string_view ti
     }
     ImGui::SetCurrentContext(m_impl->context);
 
-    ImGui::SetNextWindowPos(ImVec2(400.0F, 20.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(scaled(m_impl->drawn_scale, 400.0F, 20.0F), ImGuiCond_FirstUseEver);
     // Wide enough for the mode buttons on one line. Sized from the longest name a caller has
     // rather than guessed: at 360 the lab's fourth mode ran off the edge of the panel.
-    ImGui::SetNextWindowSize(ImVec2(600.0F, 210.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(scaled(m_impl->drawn_scale, 600.0F, 210.0F), ImGuiCond_FirstUseEver);
 
     const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {
@@ -1031,8 +1090,8 @@ void DebugUi::asset_panel(std::string_view title, const assets::Registry& regist
     }
     ImGui::SetCurrentContext(m_impl->context);
 
-    ImGui::SetNextWindowPos(ImVec2(400.0F, 250.0F), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(620.0F, 240.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(scaled(m_impl->drawn_scale, 400.0F, 250.0F), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(scaled(m_impl->drawn_scale, 620.0F, 240.0F), ImGuiCond_FirstUseEver);
 
     const std::string window_title = title_for(m_impl->catalog, title);
     if (ImGui::Begin(window_title.c_str())) {

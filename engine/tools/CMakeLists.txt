@@ -29,6 +29,7 @@ atlas_add_module(tools
         scene
         text
     INTERNAL_DEPS
+        platform_internal
         rhi_internal
     PRIVATE_DEPS
         imgui::imgui

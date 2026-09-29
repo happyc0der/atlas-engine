@@ -248,9 +248,18 @@ Result<Window> Platform::create_window(const WindowDesc& desc) {
     window.m_id = static_cast<WindowId>(SDL_GetWindowID(handle));
     window.m_title = title;
 
-    ATLAS_LOG_INFO(kPlatform, "window '{}' created: id={} logical={}x{} pixels={}x{} scale={}",
-                   title, window.id(), window.size().width, window.size().height,
-                   window.pixel_size().width, window.pixel_size().height, window.display_scale());
+    // `scale` is what Window::display_scale() answers, pixels a unit since M28. `interface` is the
+    // user's own scaling on top of the density, 1.75 on a Windows desktop set to 175% and 1 on a
+    // Mac, where the density carries it; asked of the window system alone, not through
+    // display_scale(), so that a run says which kind of display it had even when display_scale()
+    // is the thing that is wrong.
+    const float density = SDL_GetWindowPixelDensity(handle);
+    const float display = SDL_GetWindowDisplayScale(handle);
+    const float interface_scale = density > 0.0F && display > 0.0F ? display / density : 1.0F;
+    ATLAS_LOG_INFO(
+        kPlatform, "window '{}' created: id={} logical={}x{} pixels={}x{} scale={} interface={}",
+        title, window.id(), window.size().width, window.size().height, window.pixel_size().width,
+        window.pixel_size().height, window.display_scale(), interface_scale);
 
     return window;
 }

@@ -93,3 +93,21 @@ if [[ ! -s /tmp/atlas-lavapipe.ppm ]]; then
     exit 1
 fi
 echo "screenshot: $(wc -c < /tmp/atlas-lavapipe.ppm) bytes"
+
+echo ""
+echo "=== the same tests on a desktop scaled to 175% ==="
+# SDL's X11 scaling factor gives the display an interface scaling of 1.75 while every window keeps
+# one pixel a unit: the owner's Windows laptop, where M28 found Window::display_scale() returning
+# the interface scaling and a click in the lab landing 1.75 times too far out. Nothing else in CI
+# has such a display, so the case that guards that bug had teeth on the laptop alone (M30).
+export SDL_VIDEO_X11_SCALING_FACTOR=1.75
+"${BUILD_DIR}/bin/atlas_sandbox" --frames 5 --grid 20 > /tmp/atlas-scaled.log 2>&1
+# `interface=` comes from the window system alone, so this checks the display, not the code.
+if ! grep -q "interface=1.75" /tmp/atlas-scaled.log; then
+    echo "error: SDL reports no interface scaling of 1.75; this run would not be the display it claims" >&2
+    grep "created:" /tmp/atlas-scaled.log >&2 || true
+    exit 1
+fi
+grep -o "window .* created: .*" /tmp/atlas-scaled.log | head -1
+ctest --test-dir "${BUILD_DIR}" -L gpu --output-on-failure --no-tests=error
+unset SDL_VIDEO_X11_SCALING_FACTOR

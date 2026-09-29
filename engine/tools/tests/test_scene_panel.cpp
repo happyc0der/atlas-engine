@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <source_location>
@@ -34,6 +35,32 @@ struct Harness {
     Window window;
     Device device;
 };
+
+/// Move the pointer to a point the overlay reported, sent the way the platform sends one.
+///
+/// The overlay reports its rectangles in its own pixels; the platform delivers a pointer in the
+/// window's logical units. These tests used to send the rectangle's point as it was, which is
+/// right on a display of one pixel a unit and wrong on every other, and so passed on the Mac while
+/// a real pointer there landed at half its position.
+/// Begin a frame on a display `width` by `height` in the window's logical units.
+///
+/// The overlay lays itself out at the window's pixel density, so a display named in pixels
+/// gives a denser display less room for the same layout: 1280 by 900 pixels at two pixels a unit
+/// put the log console below the bottom of the screen.
+void begin_frame_at(DebugUi& overlay, const Window& window, float delta_seconds, float width,
+                    float height) {
+    const float scale = window.display_scale();
+    overlay.begin_frame(delta_seconds, static_cast<std::uint32_t>(width * scale),
+                        static_cast<std::uint32_t>(height * scale));
+}
+
+void point_at(DebugUi& overlay, const Window& window, float pixel_x, float pixel_y) {
+    const float scale = window.display_scale();
+    (void)overlay.handle_event(
+        atlas::platform::MouseMoved{.position = {.x = pixel_x / scale, .y = pixel_y / scale},
+                                    .delta_x = 0.0F,
+                                    .delta_y = 0.0F});
+}
 
 [[nodiscard]] std::optional<Harness> make_harness() {
     auto platform = Platform::create({.video = true});
@@ -191,7 +218,7 @@ TEST_CASE("typing into the name field renames through the history", "[tools][gpu
         // Large enough to contain the panel where it places itself: the scene panel
         // defaults to y=320 and is 520 tall, so a short display clips the inspector
         // away and no field is drawn at all.
-        overlay->begin_frame(dt, 1280, 900);
+        begin_frame_at(*overlay, harness->window, dt, 1280.0F, 900.0F);
         auto report = overlay->scene_panel("Scene", history);
         auto gpu_frame = harness->device.begin_frame();
         REQUIRE(gpu_frame.has_value());
@@ -206,8 +233,7 @@ TEST_CASE("typing into the name field renames through the history", "[tools][gpu
 
     // Click into it. The overlay trickles a press and release that arrive together across
     // frames, so the click needs more than one frame to take effect.
-    (void)overlay->handle_event(atlas::platform::MouseMoved{
-        .position = {.x = centre.x, .y = centre.y}, .delta_x = 0.0F, .delta_y = 0.0F});
+    point_at(*overlay, harness->window, centre.x, centre.y);
     (void)overlay->handle_event(
         atlas::platform::MouseButtonPressed{.button = atlas::platform::MouseButton::Left});
     draw_once(1.0F / 60.0F);
@@ -273,6 +299,39 @@ TEST_CASE("typing into the name field renames through the history", "[tools][gpu
     REQUIRE(harness->device.wait_idle().has_value());
 }
 
+TEST_CASE("the overlay draws at the window's pixel density", "[tools][gpu]") {
+    // Before M30 the overlay drew thirteen-pixel text whatever the display, so on the Mac, at
+    // two pixels a point, everything was half the size its layout was written for. A text field
+    // is its text plus a padding above and below: about nineteen units tall at any density, and
+    // twice as many pixels where there are two pixels a unit. On a display of one pixel a unit
+    // this passes either way; it is the Mac that gives it teeth.
+    auto harness = make_harness();
+    if (!harness) {
+        SKIP("no graphics device available");
+    }
+    auto overlay = DebugUi::create(harness->device, harness->window);
+    if (!overlay) {
+        SKIP("the overlay could not be created on this device");
+    }
+
+    const atlas::log::LogBuffer buffer{8};
+    begin_frame_at(*overlay, harness->window, 1.0F / 60.0F, 1280.0F, 900.0F);
+    const auto report = overlay->log_console_panel("Log", buffer);
+    auto gpu_frame = harness->device.begin_frame();
+    REQUIRE(gpu_frame.has_value());
+    (void)overlay->end_frame(*gpu_frame);
+    REQUIRE(harness->device.end_frame(std::move(*gpu_frame)).has_value());
+
+    REQUIRE(report.filter_field.has_value());
+    const float units_tall = report.filter_field->height / harness->window.display_scale();
+    INFO("filter field " << report.filter_field->height << " pixels at "
+                         << harness->window.display_scale() << " pixels a unit");
+    CHECK(units_tall >= 17.0F);
+    CHECK(units_tall <= 21.0F);
+
+    REQUIRE(harness->device.wait_idle().has_value());
+}
+
 TEST_CASE("typing into the log filter changes what the console shows", "[tools][gpu]") {
     // The same path against the field that has existed since M9 and has never been able to
     // receive a character. If this passes, the log console's filter works for the first time.
@@ -300,7 +359,7 @@ TEST_CASE("typing into the log filter changes what the console shows", "[tools][
 
     const auto draw_once = [&] {
         // The log console defaults to y=510 and is 280 tall; see the note above.
-        overlay->begin_frame(1.0F / 60.0F, 1280, 900);
+        begin_frame_at(*overlay, harness->window, 1.0F / 60.0F, 1280.0F, 900.0F);
         auto report = overlay->log_console_panel("Log", buffer);
         auto gpu_frame = harness->device.begin_frame();
         REQUIRE(gpu_frame.has_value());
@@ -315,8 +374,7 @@ TEST_CASE("typing into the log filter changes what the console shows", "[tools][
     REQUIRE(unfiltered.filter_field.has_value());
     const auto centre = unfiltered.filter_field->centre();
 
-    (void)overlay->handle_event(atlas::platform::MouseMoved{
-        .position = {.x = centre.x, .y = centre.y}, .delta_x = 0.0F, .delta_y = 0.0F});
+    point_at(*overlay, harness->window, centre.x, centre.y);
     (void)overlay->handle_event(
         atlas::platform::MouseButtonPressed{.button = atlas::platform::MouseButton::Left});
     draw_once();
@@ -357,7 +415,7 @@ TEST_CASE("the overlay reports where an input method should put its candidate li
     overlay->select_entity(fixture.child);
 
     const auto draw_once = [&] {
-        overlay->begin_frame(1.0F / 60.0F, 1280, 900);
+        begin_frame_at(*overlay, harness->window, 1.0F / 60.0F, 1280.0F, 900.0F);
         auto report = overlay->scene_panel("Scene", history);
         auto gpu_frame = harness->device.begin_frame();
         REQUIRE(gpu_frame.has_value());
@@ -372,8 +430,7 @@ TEST_CASE("the overlay reports where an input method should put its candidate li
     CHECK_FALSE(overlay->ime_request().visible);
 
     const auto centre = first.name_field->centre();
-    (void)overlay->handle_event(atlas::platform::MouseMoved{
-        .position = {.x = centre.x, .y = centre.y}, .delta_x = 0.0F, .delta_y = 0.0F});
+    point_at(*overlay, harness->window, centre.x, centre.y);
     (void)overlay->handle_event(
         atlas::platform::MouseButtonPressed{.button = atlas::platform::MouseButton::Left});
     draw_once();
@@ -392,8 +449,7 @@ TEST_CASE("the overlay reports where an input method should put its candidate li
 
     // Clicking away withdraws the request, which is what stops a candidate list lingering
     // over a panel nobody is typing into.
-    (void)overlay->handle_event(atlas::platform::MouseMoved{
-        .position = {.x = 5.0F, .y = 5.0F}, .delta_x = 0.0F, .delta_y = 0.0F});
+    point_at(*overlay, harness->window, 5.0F, 5.0F);
     (void)overlay->handle_event(
         atlas::platform::MouseButtonPressed{.button = atlas::platform::MouseButton::Left});
     draw_once();

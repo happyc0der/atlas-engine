@@ -38,6 +38,13 @@ struct Stat {
 
 class DebugUi {
   public:
+    /// An overlay drawing into `window` through `device`.
+    ///
+    /// Both must outlive the overlay. It keeps the window's native handle, not the Window, so
+    /// moving the Window is fine; it asks that handle for the pixel density whenever it needs it
+    /// and draws at that density — style, font and default panel geometry — so its layout, written
+    /// at one pixel a unit, keeps its size on a display of two (M30). Its public coordinates, the
+    /// panels' rectangles and the input method's request, stay in its own pixels.
     [[nodiscard]] static Result<DebugUi> create(rhi::Device& device,
                                                 const platform::Window& window);
 
@@ -66,6 +73,10 @@ class DebugUi {
     ///
     /// Returns true when the overlay consumed it, in which case the application should not
     /// also act on it: a click on a panel must not also pan the camera behind it.
+    ///
+    /// A pointer's position is taken as the platform delivers it, in the window's logical
+    /// units, and converted to the overlay's pixels here. A caller aiming at a rectangle the
+    /// overlay reported divides that rectangle's point by `Window::display_scale()` first.
     [[nodiscard]] bool handle_event(const platform::Event& event);
 
     /// Whether the overlay currently wants the mouse or the keyboard.

@@ -79,6 +79,10 @@ struct KeyReleased {
     KeyModifiers modifiers;
 };
 
+/// Where the pointer is, in the window's **logical units** — the units `WindowResized::size` and
+/// window positions use, not pixels. Multiply by `Window::display_scale()` for a pixel, as the
+/// overlay does for itself; on a display of two pixels a unit, a position taken for a pixel is half
+/// the distance it should be (M30).
 struct MouseMoved {
     Point2D position;
     /// Movement since the previous event, which is not the same as the difference between
@@ -87,6 +91,7 @@ struct MouseMoved {
     float delta_y = 0.0F;
 };
 
+/// A button, at a position in the window's logical units, like `MouseMoved`'s.
 struct MouseButtonPressed {
     MouseButton button = MouseButton::Left;
     Point2D position;
