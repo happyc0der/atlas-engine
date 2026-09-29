@@ -38,6 +38,7 @@ Status legend: **done**, *in progress*, planned.
 | M27 | An installable engine, and chess in its own repository | L | **done** |
 | M28 | A real GPU on Windows: Vulkan on an RTX 3080 Ti | M | **done** |
 | M29 | The machine, measured: a benchmark of the hardware under the engine | S | **done** |
+| M30 | The overlay in the window's units: pointer and size on a high-density display | S | planned |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1583,6 +1584,43 @@ Windows machine; this is the first. Tooling, recorded in `PERFORMANCE.md` rather
 | The machine named | **Met.** The M4 Pro, the arm64 Linux container, and GitHub's Linux, macOS and Windows runners each name their processor, board and memory. |
 | The comparisons | **Met.** `bench_baseline.py across` reads two machines, machine rows first; `compare` marks a moved machine row `MACHINE`, never a regression, and says the engine rows may be the machine's. |
 | Predictions | **Met.** Seven of eight M4 Pro rows in range, the spread held, and the runners' predictions held. The first implementation measured its own instructions and was changed before anything was recorded; the report says so. The laptop's prediction waits for its next run. |
+
+## M30 — The overlay in the window's units
+
+*The record, written 2026-09-28 before any test or fix.*
+
+The platform delivers a pointer in the window's logical units, and the overlay draws in the
+swapchain's pixels. On the Mac, where the lab's window is 1280×720 logical and 2560×1440 pixels,
+nothing converts between them: `DebugUi::handle_event` hands the logical position to Dear ImGui
+as if it were pixels, so a pointer over a widget arrives at half its position. The overlay's GPU
+tests pass anyway, because they send each widget's rectangle in overlay pixels — what the overlay
+reports, not what the platform delivers. And nothing scales the overlay to the display, so on the
+Mac its text is 13 pixels tall on a screen of two pixels a point.
+
+The owner chose on 2026-09-28 to do everything that needs no Windows machine; this is the second
+of the two candidates. M28 recorded the overlay as small on the laptop's 175% desktop; that half,
+the user's interface scaling, needs the window itself to grow with it and a laptop to judge, and
+stays deferred. This milestone takes the half the Mac can prove.
+
+**What is decided.** The overlay keeps speaking pixels in its public API — panel rectangles and the
+input method's request are unchanged. It converts a pointer from logical units to pixels itself,
+and draws at the window's pixel density: its style, its font and its default panel geometry. It
+reads the density from the window each time, through `platform_internal`, which the module graph
+already lists for `tools`. Tests send pointers as the platform does. The Linux GPU lane runs a
+second time under SDL's X11 scaling factor of 1.75, the laptop's display scale with a pixel
+density of one, which is exactly where M28's display-scale bug lived.
+
+**Predictions**
+1. Pointer tests that send what the platform sends fail on the Mac against today's overlay — the
+   widget is missed — and pass on llvmpipe either way, where the density is one.
+2. After the fix, the log filter field is twice as many pixels tall on the Mac as on llvmpipe.
+3. Under the 1.75 scaling factor all 63 GPU tests pass unchanged: the pixel density is one there,
+   so the overlay does not scale, and SDL's display scale is 1.75.
+4. M28's bug, `display_scale()` returning SDL's display scale again, fails the display-scale case
+   in the 1.75 run and nothing else in it.
+5. No test outside `tools` and `rhi` changes.
+6. On the Mac, the sandbox's and the lab's screenshots show the overlay covering the share of the
+   window its layout was designed for, with its text twice as many pixels tall.
 
 ## First continuous integration
 
