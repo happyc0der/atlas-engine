@@ -311,15 +311,29 @@ def check_pick_returns_expected_cell(binary: str) -> None:
                           "--pick", f"{logical[0]:.0f},{logical[1]:.0f}"])
     expect_exit(result, 0, "pick run")
     text = output_of(result)
-    window = re.search(r"pixels=(\d+)x(\d+) scale=(\d+(?:\.\d+)?)", text)
+    window = re.search(r"logical=(\d+)x(\d+) pixels=(\d+)x(\d+) scale=(\d+(?:\.\d+)?)", text)
     if not window:
         raise CheckFailed(f"no window size in the log\n{text}")
-    width_px, height_px, scale = int(window.group(1)), int(window.group(2)), float(window.group(3))
+    logical_w, logical_h, width_px, height_px = (int(window.group(i)) for i in range(1, 5))
+    scale = float(window.group(5))
+    # The true ratio, from the window system's two sizes, and never `scale=`: that is
+    # Window::display_scale() itself, which the lab converts the pick by, so arithmetic built on
+    # it moves the expected point exactly as far as a wrong scale moves the real one (M32).
+    ratio = (width_px / logical_w, height_px / logical_h)
+    if abs(ratio[0] - ratio[1]) > 1e-3 or abs(scale - ratio[0]) > 1e-3:
+        raise CheckFailed(f"display_scale() says {scale:g}, and the window is "
+                          f"{width_px}x{height_px} pixels for {logical_w}x{logical_h} units: "
+                          f"{ratio[0]:g} and {ratio[1]:g} a unit")
     # The field's fit: the grid centred, zoomed to 95% of what fits.
     grid_world = grid * cell_size
     zoom = min(width_px / grid_world, height_px / grid_world) * 0.95
     centre = (grid_world / 2, grid_world / 2)
-    px = (logical[0] * scale, logical[1] * scale)
+    # At the centre of the pixel the point lands in, where the identifier pass rasterises its
+    # answer and the lab computes its own. At the corner, a cell edge within half a pixel gives
+    # the neighbouring cell. With M28's bug put back, the arithmetic this replaced failed only
+    # because (875, 525) happens to lie that close to an edge; at most points it agreed with the
+    # bug exactly, since it converted by the same wrong scale the lab did.
+    px = (math.floor(logical[0] * ratio[0]) + 0.5, math.floor(logical[1] * ratio[1]) + 0.5)
     world = (centre[0] + (px[0] - width_px / 2) / zoom, centre[1] + (px[1] - height_px / 2) / zoom)
     cx, cy = math.floor(world[0] / cell_size), math.floor(world[1] / cell_size)
     if not (0 <= cx < grid and 0 <= cy < grid):
