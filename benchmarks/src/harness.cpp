@@ -4,10 +4,16 @@
 #include <atlas/core/build_info.hpp>
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <format>
 #include <fstream>
+#include <string>
+#include <string_view>
+#include <system_error>
 #include <thread>
 
 #ifdef __APPLE__
@@ -15,8 +21,94 @@
 #include <sys/types.h>
 #endif
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 namespace atlas::bench {
 namespace {
+
+/// Without leading or trailing space. Intel pads its processor name to a fixed width, and a
+/// device-tree string ends in a null.
+[[nodiscard]] std::string trimmed(std::string_view text) {
+    constexpr std::string_view kSpace = " \t\r\n";
+    const auto first = text.find_first_not_of(kSpace);
+    if (first == std::string_view::npos) {
+        return {};
+    }
+    const auto last = text.find_last_not_of(kSpace);
+    std::string result{text.substr(first, last - first + 1)};
+    std::erase(result, '\0');
+    return result;
+}
+
+[[nodiscard]] std::string gibibytes(std::uint64_t bytes) {
+    if (bytes == 0) {
+        return "unknown";
+    }
+    constexpr std::uint64_t kGibibyte = std::uint64_t{1} << 30U;
+    return std::format("{} GB", (bytes + (kGibibyte / 2)) / kGibibyte);
+}
+
+#ifdef __linux__
+/// The first line of a file, or nothing.
+[[nodiscard]] std::string first_line(const char* path) {
+    std::ifstream file{path};
+    std::string line;
+    std::getline(file, line);
+    return trimmed(line);
+}
+
+/// A `key : value` line's value, from a file like /proc/cpuinfo or /proc/meminfo.
+[[nodiscard]] std::string field_of(const char* path, std::string_view key) {
+    std::ifstream file{path};
+    std::string line;
+    while (std::getline(file, line)) {
+        const auto colon = line.find(':');
+        if (colon != std::string::npos && trimmed(line.substr(0, colon)) == key) {
+            return trimmed(std::string_view{line}.substr(colon + 1));
+        }
+    }
+    return {};
+}
+#endif
+
+#ifdef _WIN32
+/// A string from the registry's local-machine hive, or nothing.
+[[nodiscard]] std::string registry_string(const char* key, const char* value) {
+    std::array<char, 256> buffer{};
+    auto size = static_cast<DWORD>(buffer.size());
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, key, value, RRF_RT_REG_SZ, nullptr, buffer.data(),
+                     &size) != ERROR_SUCCESS) {
+        return {};
+    }
+    return trimmed(buffer.data());
+}
+#endif
+
+/// A string as a JSON string literal. The machine's name comes from the system, and a quote or a
+/// backslash in it would otherwise end the string early and leave a file nothing can read.
+[[nodiscard]] std::string json_string(std::string_view text) {
+    std::string out = "\"";
+    for (const char c : text) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20U) {
+                out += std::format("\\u{:04x}", static_cast<unsigned>(c));
+            } else {
+                out += c;
+            }
+        }
+    }
+    out += '"';
+    return out;
+}
 
 #ifdef __APPLE__
 [[nodiscard]] std::string sysctl_string(const char* name) {
@@ -63,14 +155,57 @@ Environment describe_environment() {
     Environment environment;
 
 #ifdef __APPLE__
-    environment.cpu = sysctl_string("machdep.cpu.brand_string");
-    environment.machine = sysctl_string("hw.model");
+    environment.cpu = trimmed(sysctl_string("machdep.cpu.brand_string"));
+    environment.machine = trimmed(sysctl_string("hw.model"));
+    std::uint64_t memory = 0;
+    std::size_t memory_size = sizeof(memory);
+    if (sysctlbyname("hw.memsize", &memory, &memory_size, nullptr, 0) == 0) {
+        environment.memory = gibibytes(memory);
+    }
+#endif
+#ifdef __linux__
+    // x86 names its processor; arm64 names only an implementer and a part number.
+    environment.cpu = field_of("/proc/cpuinfo", "model name");
+    if (environment.cpu.empty()) {
+        const auto implementer = field_of("/proc/cpuinfo", "CPU implementer");
+        const auto part = field_of("/proc/cpuinfo", "CPU part");
+        if (!implementer.empty()) {
+            environment.cpu = std::format("arm64, implementer {}, part {}", implementer, part);
+        }
+    }
+    // A PC or a virtual machine has a board name; an arm64 board may have a device tree instead.
+    environment.machine = first_line("/sys/class/dmi/id/product_name");
+    if (environment.machine.empty()) {
+        environment.machine = first_line("/sys/firmware/devicetree/base/model");
+    }
+    // "MemTotal:  24571096 kB": the number, and nothing thrown if it is not one.
+    const auto total = field_of("/proc/meminfo", "MemTotal");
+    std::uint64_t kibibytes = 0;
+    if (std::from_chars(total.data(), total.data() + total.size(), kibibytes).ec == std::errc{}) {
+        environment.memory = gibibytes(kibibytes * 1024U);
+    }
+#endif
+#ifdef _WIN32
+    environment.cpu =
+        registry_string(R"(HARDWARE\DESCRIPTION\System\CentralProcessor\0)", "ProcessorNameString");
+    const auto maker = registry_string(R"(HARDWARE\DESCRIPTION\System\BIOS)", "SystemManufacturer");
+    const auto product =
+        registry_string(R"(HARDWARE\DESCRIPTION\System\BIOS)", "SystemProductName");
+    environment.machine = trimmed(maker + " " + product);
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (GlobalMemoryStatusEx(&status) != 0) {
+        environment.memory = gibibytes(status.ullTotalPhys);
+    }
 #endif
     if (environment.cpu.empty()) {
         environment.cpu = "unknown";
     }
     if (environment.machine.empty()) {
         environment.machine = "unknown";
+    }
+    if (environment.memory.empty()) {
+        environment.memory = "unknown";
     }
 
     // Hardware concurrency rather than a core count: it is what a thread pool would use, and
@@ -170,15 +305,16 @@ void write_json(const Environment& environment, const std::vector<Result>& resul
         return;
     }
 
-    // Written by hand rather than with a library: Atlas has no JSON dependency, and the
+    // Written by hand rather than with a library: the benchmarks link no JSON library, and the
     // shape here is fixed and small. tools/bench_baseline.py reads it.
-    const auto quote = [](const std::string& text) { return std::format("\"{}\"", text); };
+    const auto quote = [](const std::string& text) { return json_string(text); };
 
     stream << "{\n";
     stream << "  \"environment\": {\n";
     stream << "    \"machine\": " << quote(environment.machine) << ",\n";
     stream << "    \"cpu\": " << quote(environment.cpu) << ",\n";
     stream << "    \"cores\": " << quote(environment.cores) << ",\n";
+    stream << "    \"memory\": " << quote(environment.memory) << ",\n";
     stream << "    \"os\": " << quote(environment.os) << ",\n";
     stream << "    \"compiler\": " << quote(environment.compiler) << ",\n";
     stream << "    \"build_type\": " << quote(environment.build_type) << ",\n";
@@ -214,8 +350,8 @@ void write_json(const Environment& environment, const std::vector<Result>& resul
 
 void write_table(const Environment& environment, const std::vector<Result>& results) {
     std::printf("\n");
-    std::printf("machine   : %s (%s, %s)\n", environment.machine.c_str(), environment.cpu.c_str(),
-                environment.cores.c_str());
+    std::printf("machine   : %s (%s, %s, %s)\n", environment.machine.c_str(),
+                environment.cpu.c_str(), environment.cores.c_str(), environment.memory.c_str());
     std::printf("build     : %s %s, %s%s\n", environment.compiler.c_str(),
                 environment.build_type.c_str(), environment.commit.c_str(),
                 environment.dirty ? " (dirty)" : "");

@@ -38,9 +38,9 @@ All, from SSH. Desktop is what the scheduled task runs; not for a person.
 Where the logs, the test report and the screenshots go. Emptied at the start of a run.
 
 .PARAMETER BenchRuns
-Run the benchmark groups that need a graphics device (quads, cell_field, allocations) this many
-times in the desktop session, after the tests, writing bench-<group>-<run>.json. Release presets
-only: a debug build's timings describe the debug build.
+Run the machine's own rows and the benchmark groups that need a graphics device (machine, quads,
+cell_field, allocations) this many times in the desktop session, after the tests, writing
+bench-<group>-<run>.json. Release presets only: a debug build's timings describe the debug build.
 #>
 param(
     [ValidateSet("windows-msvc-debug", "windows-msvc-release")]
@@ -56,7 +56,8 @@ param(
 # error under Stop, which ends the run at CMake's first warning. Exit codes decide instead.
 $ErrorActionPreference = "Continue"
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$BenchGroups = "quads", "cell_field", "allocations"
+# The machine first: without it a slow laptop reads as a slow engine, which is what M28 did.
+$BenchGroups = "machine", "quads", "cell_field", "allocations"
 if ($BenchRuns -gt 0 -and $Preset -notlike "*-release") {
     "benchmarks measure a release build; use -Preset windows-msvc-release"
     exit 2

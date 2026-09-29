@@ -18,6 +18,7 @@ add_executable(atlas_bench
     src/bench_assets.cpp
     src/bench_audio.cpp
     src/bench_hash.cpp
+    src/bench_machine.cpp
     src/bench_tasks.cpp
 )
 

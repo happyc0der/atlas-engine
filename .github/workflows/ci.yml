@@ -145,6 +145,9 @@ jobs:
           BENCH="build/${{ matrix.preset }}/bin/atlas_bench"
           [ -x "${BENCH}" ] || BENCH="${BENCH}.exe"
           "./${BENCH}" --filter hash
+          # The machine rows check their own answers, and name the runner: which machine a lane
+          # ran on is otherwise nowhere in its log (docs/PERFORMANCE.md, M29).
+          "./${BENCH}" --filter machine
 
       - name: Upload logs on failure
         if: failure()

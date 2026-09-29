@@ -56,10 +56,16 @@ struct Result {
 };
 
 /// Machine and build identity. A result without this cannot be compared to anything.
+///
+/// Named on macOS from `sysctl`, on Linux from `/proc` and `/sys`, and on Windows from the
+/// registry; "unknown" wherever the system does not say. Until M29 only macOS said anything, and
+/// the laptop's M28 results were recorded as coming from an unknown machine.
 struct Environment {
     std::string machine;
     std::string cpu;
     std::string cores;
+    /// Physical memory, rounded to whole gibibytes.
+    std::string memory;
     std::string os;
     std::string compiler;
     std::string build_type;

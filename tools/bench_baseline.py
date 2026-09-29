@@ -9,6 +9,7 @@ rather than quietly reporting a difference that is really a change of hardware.
     tools/bench_baseline.py record results.json              store as this machine's baseline
     tools/bench_baseline.py record results.json --only audio  update only those, keep the rest
     tools/bench_baseline.py compare results.json             compare against it
+    tools/bench_baseline.py across a.json b.json             two machines, side by side
 
 A regression flags a review. It is never a reason to edit the benchmark; see
 docs/PERFORMANCE.md.
@@ -41,6 +42,19 @@ IMPROVEMENT_FACTOR = 0.80
 # a ratio of rounding. They are still reported, so a scenario that grows from nothing into
 # something is visible, but they cannot fail a comparison.
 MINIMUM_COMPARABLE_NS = 10_000
+
+# Rows that measure the machine rather than the engine (benchmarks/src/bench_machine.cpp). They
+# are never an engine regression. When they move, the machine moved — it was busy, throttled, or
+# a different machine — and every other row moved with it for the same reason.
+MACHINE_PREFIX = "machine/"
+
+
+def per_unit_ns(result: dict) -> float | None:
+    """Nanoseconds per unit of work, where a result says what its unit is."""
+    units = result.get("units_per_iteration") or 0
+    if result.get("metric") == "count" or units <= 0:
+        return None
+    return result["median_ns"] / units
 
 
 def machine_id(environment: dict) -> str:
@@ -219,6 +233,7 @@ def compare(results_path: Path) -> int:
           f"current {data['environment'].get('commit')}\n")
 
     regressions = 0
+    slower_machine = []
     for result in data["results"]:
         key = (result["name"], result["parameters"])
         if key not in previous:
@@ -232,17 +247,30 @@ def compare(results_path: Path) -> int:
             continue
 
         ratio = after / before
+        machine_row = result["name"].startswith(MACHINE_PREFIX)
         label = "same"
         if before < MINIMUM_COMPARABLE_NS or after < MINIMUM_COMPARABLE_NS:
             label = "too small"
         elif ratio >= REGRESSION_FACTOR:
-            label = "SLOWER"
-            regressions += 1
+            if machine_row:
+                label = "MACHINE"
+                slower_machine.append(f"{result['name']} [{result['parameters']}] {ratio:.2f}x")
+            else:
+                label = "SLOWER"
+                regressions += 1
         elif ratio <= IMPROVEMENT_FACTOR:
             label = "faster"
 
         print(f"  {label:<10} {result['name']} [{result['parameters']}]: "
               f"{before / 1e6:.3f}ms -> {after / 1e6:.3f}ms ({ratio:.2f}x)")
+
+    if slower_machine:
+        # Said before the regressions, because it changes how they read.
+        print("\nthe machine itself measured slower than when the baseline was recorded:")
+        for line in slower_machine:
+            print(f"  {line}")
+        print("so the rows marked SLOWER may be the machine's, not the engine's. Measure again on "
+              "a quiet machine before believing them.")
 
     if regressions:
         print(f"\n{regressions} benchmark(s) regressed by more than "
@@ -254,11 +282,74 @@ def compare(results_path: Path) -> int:
     return 0
 
 
+def describe(label: str, environment: dict) -> None:
+    print(f"{label}: {environment.get('machine')} ({environment.get('cpu')}, "
+          f"{environment.get('cores')}, memory {environment.get('memory', 'not recorded')})")
+    print(f"   {environment.get('os')}, {environment.get('compiler')} "
+          f"{environment.get('build_type')}, commit {environment.get('commit')}"
+          f"{' (dirty)' if environment.get('dirty') else ''}")
+
+
+def across(first_path: Path, second_path: Path) -> int:
+    """Two result files, usually from two machines, side by side: the machine rows first.
+
+    `compare` refuses to cross machines, because a ratio between two machines is not a regression
+    and must never fail anything. This prints one and fails nothing, and it prints the machine's
+    own rows first, because M28 read a slow machine as a slow engine until a loop with no engine
+    in it said otherwise: an engine row is read against the machine rows beside it.
+    """
+    first, second = load(first_path), load(second_path)
+    for path, data in ((first_path, first), (second_path, second)):
+        environment = data["environment"]
+        if environment.get("build_type") not in ("Release", "RelWithDebInfo"):
+            sys.exit(f"error: {path} is a {environment.get('build_type')} build; an unoptimised "
+                     f"build says nothing about a machine")
+        if environment.get("sanitizer"):
+            sys.exit(f"error: {path} was built with a sanitizer, so it measures the sanitizer")
+
+    describe("A", first["environment"])
+    describe("B", second["environment"])
+
+    rows_a = {(r["name"], r["parameters"]): r for r in first["results"]}
+    rows_b = {(r["name"], r["parameters"]): r for r in second["results"]}
+    shared = sorted(set(rows_a) & set(rows_b))
+    machine = [key for key in shared if key[0].startswith(MACHINE_PREFIX)]
+    engine = [key for key in shared if not key[0].startswith(MACHINE_PREFIX)]
+
+    def show(keys: list) -> None:
+        for key in keys:
+            a, b = rows_a[key], rows_b[key]
+            if a.get("metric") == "count":
+                print(f"  {key[0]} [{key[1]}]: {a['median_ns']} -> {b['median_ns']}")
+                continue
+            ratio = b["median_ns"] / a["median_ns"] if a["median_ns"] else float("inf")
+            unit_a, unit_b = per_unit_ns(a), per_unit_ns(b)
+            per_unit = (f", {unit_a:.2f} -> {unit_b:.2f} ns a {a.get('unit_name', 'unit')[:-1]}"
+                        if unit_a is not None and unit_b is not None else "")
+            print(f"  {ratio:6.2f}x  {key[0]} [{key[1]}]: {a['median_ns'] / 1e6:.3f}ms -> "
+                  f"{b['median_ns'] / 1e6:.3f}ms{per_unit}")
+
+    print("\nThe machines (B against A):")
+    if machine:
+        show(machine)
+    else:
+        print("  neither file has both sets of machine rows. Without them this comparison cannot "
+              "tell a slow machine from a slow engine; run atlas_bench --filter machine on both.")
+    print("\nThe engine (B against A):")
+    show(engine)
+    only = (len(rows_a) - len(shared), len(rows_b) - len(shared))
+    if any(only):
+        print(f"\n{only[0]} row(s) only in A and {only[1]} only in B, not shown.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("action", choices=["record", "compare"])
+    parser.add_argument("action", choices=["record", "compare", "across"])
     parser.add_argument("results", type=Path, help="JSON written by atlas_bench --json")
+    parser.add_argument("other", type=Path, nargs="?",
+                        help="for across: the second machine's JSON")
     parser.add_argument("--only", nargs="+", metavar="PREFIX",
                         help="record only results whose name starts with one of these, leaving "
                              "every other stored result untouched")
@@ -267,8 +358,12 @@ def main() -> int:
                              "scenarios than it holds")
     args = parser.parse_args()
 
-    if args.action == "compare" and (args.only or args.replace):
-        sys.exit("error: --only and --replace apply to record, not to compare")
+    if args.action != "record" and (args.only or args.replace):
+        sys.exit("error: --only and --replace apply to record")
+    if (args.action == "across") != (args.other is not None):
+        sys.exit("error: across takes two result files, and only across does")
+    if args.action == "across":
+        return across(args.results, args.other)
     return (record(args.results, args.only, args.replace) if args.action == "record"
             else compare(args.results))
 
