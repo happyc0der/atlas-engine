@@ -23,15 +23,16 @@ drawing at the display's density; before that it was drawn at half this size on 
 
 ## Current status
 
-**Thirty-one milestones are done, M0 through M30.** Engine v0.1 was declared at M7 against the
+**Thirty-two milestones are done, M0 through M31.** Engine v0.1 was declared at M7 against the
 charter item by item. M10 amended the charter to plan seven subsystems it had excluded; M11
 through M16 built all seven. M17 gave lockstep a socket transport, M18 through M22 built chess
 as the first game on the engine, M23 through M25 closed the three items M17 left open, M26 made
 a mod written in C the chess opponent, and M27 made the engine installable as a package and
 moved chess to its own repository, built against the install and nothing else. M28 made Windows
 render on Vulkan, verified on an NVIDIA GPU; M29 made the benchmarks measure the machine under
-the engine, so that a comparison across machines carries its own explanation; and M30 made the
-overlay take a pointer in the window's units and draw at the display's density.
+the engine, so that a comparison across machines carries its own explanation; M30 made the overlay
+take a pointer in the window's units and draw at the display's density; and M31 caught up what
+those two got wrong, including a race in dropping a peer that CI had found.
 
 What exists: a windowing and input layer; a renderer over SDL_GPU with offscreen targets,
 integer-identifier picking and non-stalling streaming uploads; an asset pipeline with virtual

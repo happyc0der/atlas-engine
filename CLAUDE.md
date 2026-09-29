@@ -123,6 +123,10 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   peer.
 - A late turn is a protocol violation and ends the session, never a warning. A command stamped
   for a tick that has already run cannot be applied by anybody.
+- **A peer has gone when its transport stops answering, never merely when it stops sending
+  turns** (M31). Under lockstep every survivor stops sending the moment one peer dies, because
+  none can run a tick without that peer's turn; timing survivors by their messages dropped a live
+  one on about a tick's margin. A live peer keeps polling, and the transport's pings see it.
 - A divergence is detected, attributed to a system, and stops. Atlas does not resync, exactly as
   it does not recover from device loss.
 - **A run that is over finishes; it does not hang up** (ADR-0020). Every peer finishes at the
@@ -318,6 +322,11 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
   return an `Error` with context.
 - Every public API documents ownership, lifetime, thread affinity, and failure behaviour.
 - Warnings are errors for first-party code.
+- **On Windows the build already defines `WIN32_LEAN_AND_MEAN`, `NOMINMAX` and `UNICODE`**
+  (`cmake/CompilerWarnings.cmake`); a source that defines them again is a redefinition, which
+  `/WX` makes an error. And MSVC warns (C4324) when an alignment specifier pads a structure:
+  write the padding out as a member. Both reached CI in M29 because nothing here compiles MSVC;
+  a change to Windows-only code is not done until a Windows lane has built it.
 - Naming: types `PascalCase`, functions and variables `snake_case`, members `m_`,
   constants `k`, macros `ATLAS_UPPER_SNAKE`.
 - Every first-party file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`.

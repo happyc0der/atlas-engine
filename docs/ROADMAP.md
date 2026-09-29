@@ -39,7 +39,7 @@ Status legend: **done**, *in progress*, planned.
 | M28 | A real GPU on Windows: Vulkan on an RTX 3080 Ti | M | **done** |
 | M29 | The machine, measured: a benchmark of the hardware under the engine | S | **done** |
 | M30 | The overlay in the window's units: pointer and size on a high-density display | S | **done** |
-| M31 | Catching up: what M29 and M30 got wrong, before they merge | S | planned |
+| M31 | Catching up: what M29 and M30 got wrong, before they merge | S | **done** |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1675,6 +1675,24 @@ Smaller: the Windows-only build rules M29 tripped over are written down nowhere.
 3. No test's outcome changes because of the layout or the drag speeds, since no test drags and the
    tests aim at the rectangles the overlay reports.
 4. No golden hash changes: nothing here reaches the simulation.
+
+Full report: [reports/M31.md](reports/M31.md).
+
+**Scored.** Three held and one half missed.
+
+| # | Outcome |
+|---|---|
+| 1 | **Half missed.** The fixed hub passed twenty of twenty under load, and so did the unfixed one, ten of ten: load on fourteen cores does not reproduce the race here. The evidence is a hub case that reproduces it every time, written before the fix. |
+| 2 | **Held.** Both panels end at y=700 in the sandbox's frame. |
+| 3 | **Held.** 64 of 64 GPU cases on the Mac. |
+| 4 | **Held.** The golden cases are among the 1017 that pass. |
+
+| Criterion | Status |
+|---|---|
+| The drop race | **Met.** A peer is quiet when the transport stops answering, by the owner's decision; a hub case reproduced both halves of the race before the fix and passes after, and two mutations fail it. |
+| The overlay | **Met.** The default layout ends by y=700, and drags move per point, not per pixel. |
+| The lessons | **Met.** CLAUDE.md gains what quiet means under lockstep and the Windows build rules. |
+| Ready to merge | **Met.** Precheck clean at 1017, the Linux container and both llvmpipe passes green, and all four workflows green on the code. |
 
 ## First continuous integration
 

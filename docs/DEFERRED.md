@@ -882,7 +882,9 @@ The next four are what slice 4's measurements produced.
 
 ### M30 — the overlay in the window's units
 
-- **The default layout does not fit a 720-point window.** The panels' first positions and sizes
+- ~~**The default layout does not fit a 720-point window.**~~ **Built in M31**, because on the Mac
+  it was a regression M30 made rather than a choice to defer: every panel's first place now ends
+  by y=700. The original text follows. The panels' first positions and sizes
   were written for a window about 900 tall: the scene panel reaches 840 and the log console 790, so
   in the applications' 1280×720 windows the scene's undo row and the log's last lines open below the
   edge. It was always so on Windows and Linux; on the Mac the half-size overlay hid it until M30.
