@@ -144,7 +144,7 @@ handle's include path reached twelve directories that had no business with it.
 
 ## The installed package
 
-`cmake --install` writes a prefix another project can build against with `find_package(Atlas 0.27
+`cmake --install` writes a prefix another project can build against with `find_package(Atlas 0.32
 REQUIRED COMPONENTS app)`, decided by [ADR-0024](adr/0024-install-and-export.md):
 
 | Path | What |

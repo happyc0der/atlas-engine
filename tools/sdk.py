@@ -91,6 +91,10 @@ def main() -> int:
                                       recorded(config, "Atlas_BUILT_WITH_COMPILER_VERSION")]))
     build_type = recorded(config, "Atlas_BUILD_TYPE")
     deployment = recorded(config, "Atlas_OSX_DEPLOYMENT_TARGET")
+    # The request a consumer makes, from the build rather than written here: a number repeated
+    # in a second place is a number that goes stale there (M32).
+    version = ".".join(cache.get(f"CMAKE_PROJECT_VERSION_{part}", "?")
+                       for part in ("MAJOR", "MINOR"))
 
     print(f"ATLAS_PREFIX={prefix}")
     print(f"ATLAS_DEPS={deps}")
@@ -104,7 +108,7 @@ def main() -> int:
         "Build against it with:",
         f'  -DCMAKE_PREFIX_PATH="{prefix};{deps}"',
         "and, in CMakeLists.txt:",
-        "  find_package(Atlas 0.27 REQUIRED COMPONENTS app)",
+        f"  find_package(Atlas {version} REQUIRED COMPONENTS app)",
         "",
         "A consumer must use:",
         f"  - the same compiler and major version: {compiler}",

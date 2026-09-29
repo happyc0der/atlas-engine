@@ -61,6 +61,11 @@ jobs:
       - name: vcpkg pin
         run: python3 tools/check_vcpkg_pin.py
 
+      # What is installed and the version it is installed under move together (ADR-0024 D1):
+      # a changed installed file under the same version fails until the minor moves (M32).
+      - name: Installed API
+        run: python3 tools/check_installed_api.py
+
       - name: Formatting
         env:
           CLANG_FORMAT: /usr/local/bin/clang-format

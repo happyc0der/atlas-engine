@@ -27,6 +27,7 @@ tools/format.sh --check               # clang-format, --fix to apply
 pwsh tools/format.ps1 -Check          # the same, on Windows
 tools/tidy.sh macos-debug             # clang-tidy over first-party targets
 python3 tools/check_module_deps.py    # module boundary + cycle + exception check
+python3 tools/check_installed_api.py  # what is installed vs the version; --record after a bump
 python3 tools/check_spdx.py           # licence headers
 tools/precheck.sh macos-debug         # everything above, in order
 tools/ci/docker_linux.sh              # Linux build in a container, before pushing
@@ -57,11 +58,19 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 - Module dependencies are declared in `cmake/ModuleGraph.cmake` and enforced at configure
   time. Adding an edge means editing that table, with a reason.
 - **The engine installs as a package, and what it installs is a promise** (ADR-0024).
-  `find_package(Atlas 0.27 COMPONENTS app)` finds every module, the app kit and `share/atlas`.
+  `find_package(Atlas 0.32 COMPONENTS app)` finds every module, the app kit and `share/atlas`.
   Every public header compiles on its own and is installed by directory; `tests/package` builds
   a project that is not Atlas against the install and checks both, and no include path of its
-  may point into this tree. Renaming an installed header, target or variable breaks someone
-  else's build: the minor version is the milestone that last did so.
+  may point into this tree.
+- **A change in an installed name or an installed meaning moves the minor version to the
+  milestone making it** (ADR-0024 D1). A renamed header breaks somebody's build; a function that
+  now returns something else, as `display_scale()` did in M28, breaks their program, which is
+  worse because nothing fails. `tools/check_installed_api.py` records a digest of every installed
+  file beside the version and fails when one changes under the same version — comments included,
+  because M30 reached the installed tree only as comments. Move the minor and `--record`, or
+  `--record --same-version "<reason>"` for a change that leaves every meaning alone. It cannot see
+  a meaning that changes in a `.cpp` alone, as M31's did, nor the libraries the SDK carries
+  beside the install (`vcpkg.json`): those remain a decision made by hand.
 - An `*_internal` target is named under `INTERNAL_DEPS`, never `DEPENDS`, and is never installed.
   `DEPENDS` links PUBLIC, which is how the window handle's include path once reached twelve
   directories.

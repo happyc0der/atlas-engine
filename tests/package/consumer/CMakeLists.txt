@@ -25,9 +25,9 @@ set(ATLAS_CONSUMER_MUTATION "" CACHE STRING
 set(ATLAS_CONSUMER_SOURCE_INCLUDE "" CACHE PATH
     "For source_include: an include directory in the Atlas source tree")
 
-set(_atlas_version 0.27)
+set(_atlas_version 0.32)
 if(ATLAS_CONSUMER_MUTATION STREQUAL "old_version")
-    set(_atlas_version 0.26)
+    set(_atlas_version 0.31)
 endif()
 find_package(Atlas ${_atlas_version} REQUIRED COMPONENTS app)
 message(STATUS "AtlasConsumer: Atlas ${Atlas_VERSION} from ${Atlas_DIR}")

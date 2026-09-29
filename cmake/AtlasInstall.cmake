@@ -112,7 +112,8 @@ plain debug or release build; see docs/adr/0024-install-and-export.md, D7.\")")
         INSTALL_DESTINATION "${config_dir}"
         PATH_VARS ATLAS_INSTALL_DATADIR)
     # SameMinorVersion: while the major version is zero, every minor release may break the
-    # installed API, and the minor number is the milestone that last did (D1).
+    # installed API, and the minor number is the milestone that last changed what is installed,
+    # in name or in meaning (D1). tools/check_installed_api.py holds the two together.
     write_basic_package_version_file(
         "${PROJECT_BINARY_DIR}/package/AtlasConfigVersion.cmake"
         VERSION "${PROJECT_VERSION}"

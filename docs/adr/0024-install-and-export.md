@@ -5,6 +5,9 @@
 
 **Accepted**, 2026-09-26, implemented in M27.
 
+*2026-09-29:* D1 was not applied in M28 or M30. M32 applies it literally, at 0.32.0, and adds
+a guard; see the note under D1.
+
 Proposed the same day at M27's gate. **The decisions held. Building them made five precise and
 added one by the owner's word**, each marked at its own heading rather than edited in:
 - D5 requires every dependency from one tree, which the plan did not have.
@@ -105,6 +108,18 @@ Each is scored in M27's report, as ADR-0018's were.
   break the installed API, and a request for 0.27 accepts only 0.27.x.
 - This record does not declare v1.0. Whether the charter's test is met is for M27's report to
   say and for the owner to decide.
+
+*Read literally, 2026-09-29 (M32).* **"What is installed" includes what it means.** M28 added an
+installed constant and changed what `Window::display_scale()` returns, and M30 changed what the
+overlay does with a pointer; both left the version at 0.27, because CLAUDE.md's wording spoke only
+of renaming, and atlas-chess, pinned at M27, could not tell that anything it used had changed. The
+owner decided to read D1 as written: a change in an installed name or an installed meaning moves
+the minor to the milestone making it. M32 is at 0.32.0 because it changes installed bytes itself.
+`tools/check_installed_api.py` records a digest of every installed header and data file and the
+exported target names beside the version, and fails when they change under the same version;
+`--record --same-version "<reason>"` is the way to say a change leaves every meaning alone, and
+the reason is kept. What it cannot see — a meaning changed in a `.cpp` alone, and the libraries
+beside the install — stays a decision made by hand.
 
 **D2. Every engine module is installed, as the static library it already is.**
 - The exceptions are `runtime`, which has no directory, and the two `*_internal` targets.

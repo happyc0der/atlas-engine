@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # find_package(Atlas) — generated from cmake/AtlasConfig.cmake.in (ADR-0024).
 #
-#   find_package(Atlas 0.27 REQUIRED)                  # atlas::core, atlas::simulation, ...
-#   find_package(Atlas 0.27 REQUIRED COMPONENTS app)   # and atlas::app_common, app_lockstep,
-#                                                      # app_mods
+#   find_package(Atlas @PROJECT_VERSION_MAJOR@.@PROJECT_VERSION_MINOR@ REQUIRED)
+#       atlas::core, atlas::simulation, ...
+#   find_package(Atlas @PROJECT_VERSION_MAJOR@.@PROJECT_VERSION_MINOR@ REQUIRED COMPONENTS app)
+#       and atlas::app_common, app_lockstep, app_mods
 #
 # Put two directories on CMAKE_PREFIX_PATH: this install prefix, and the vcpkg tree Atlas was
 # built with (vcpkg_installed/<triplet>). The third-party libraries are found there, never

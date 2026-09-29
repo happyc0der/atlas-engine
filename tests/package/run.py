@@ -39,6 +39,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# Which headers are public is decided once, by the tool that also records their bytes, so the
+# list the consumer compiles and the list the version guard watches cannot differ.
+sys.path.insert(0, str(ROOT / "tools"))
+from check_installed_api import public_headers  # noqa: E402
 CONSUMER = ROOT / "tests" / "package" / "consumer"
 STAGES = ("configure", "build", "guard", "run")
 
@@ -112,17 +116,6 @@ def linked_copy(source: Path, destination: Path) -> None:
     if destination.exists():
         shutil.rmtree(destination)
     shutil.copytree(source, destination, copy_function=os.link)
-
-
-def public_headers() -> list[str]:
-    """Every header the source tree says is public: what the install should contain."""
-    roots = sorted(ROOT.glob("engine/*/include")) + [ROOT / "apps" / "common" / "include"]
-    headers = []
-    for root in roots:
-        for path in sorted(root.rglob("*")):
-            if path.suffix in (".hpp", ".h"):
-                headers.append(path.relative_to(root).as_posix())
-    return headers
 
 
 INCLUDE_FLAG = re.compile(r"^(?:-I|-isystem|-iquote|/I|-external:I|/external:I)(.*)$")

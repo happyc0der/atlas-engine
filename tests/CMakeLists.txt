@@ -256,4 +256,13 @@ if(NOT ATLAS_PROFILE AND ATLAS_SANITIZE STREQUAL "none")
     atlas_add_package_case(misses_a_dependency_left_out
         --drop-dependency iwasm --target atlas_consumer
         --expect configure --expect-message "iwasm::vmlib")
+    # The version guard's list of installed files and targets, against a real install: the
+    # prefix holds exactly what the guard computes, byte for byte, so the guard cannot watch one
+    # set of files while cmake/AtlasInstall.cmake installs another.
+    add_test(NAME package_installed_api
+             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check_installed_api.py"
+                     --against-prefix "${CMAKE_BINARY_DIR}/package/prefix"
+             WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(package_installed_api PROPERTIES
+        LABELS package FIXTURES_REQUIRED atlas_package TIMEOUT 120)
 endif()

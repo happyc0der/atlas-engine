@@ -11,7 +11,7 @@ endif()
 # The toolchain file is supplied by CMakePresets.json. Configuring without a preset will
 # not find dependencies; see README.md for the quick start.
 project(Atlas
-    VERSION 0.27.0
+    VERSION 0.32.0
     DESCRIPTION "A C++23 engine platform for a large deterministic world simulation"
     HOMEPAGE_URL "https://github.com/happyc0der/atlas"
     LANGUAGES CXX)
@@ -98,6 +98,14 @@ if(ATLAS_BUILD_TESTS)
                  COMMAND "${Python3_EXECUTABLE}"
                          "${PROJECT_SOURCE_DIR}/tools/check_vcpkg_pin.py")
         set_tests_properties(vcpkg_pin PROPERTIES LABELS "lint")
+
+        # What is installed and the version it is installed under move together (ADR-0024 D1,
+        # M32): a change to an installed header, data file, the config template or a target name
+        # fails here until the minor moves or a --same-version reason is recorded.
+        add_test(NAME installed_api
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${PROJECT_SOURCE_DIR}/tools/check_installed_api.py")
+        set_tests_properties(installed_api PROPERTIES LABELS "lint")
 
         # Skips itself, rather than failing, on a machine without the shader toolchain: a
         # machine that cannot compile shaders is a machine that cannot have changed them.
