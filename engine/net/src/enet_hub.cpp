@@ -11,11 +11,13 @@
 #include <atlas/net/enet_hub.hpp>
 
 #include <enet/enet.h>
+#include <enet/time.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <format>
 #include <string>
@@ -135,10 +137,46 @@ struct EnetHub::Impl {
 
     EnetStatus status;
 
-    /// When each peer was last heard from, by index. Per peer since M25: with a relay the
+    /// When each peer last sent a message, by index. Per peer since M25: with a relay the
     /// listener hears from several connectors, and one that went quiet must not be hidden by
     /// another that is still talking. A connector has one entry that matters, the listener's.
+    ///
+    /// Not the whole of "heard from" since M31: see `quiet_for`.
     std::vector<std::chrono::steady_clock::time_point> last_heard;
+
+    /// How long `peer` has been silent: since its last message or since the transport last
+    /// heard it acknowledge anything, whichever is more recent.
+    ///
+    /// **Messages alone are not enough under lockstep.** When one peer dies, every survivor
+    /// stops sending, because none can run a tick without the dead peer's turn. Counted by
+    /// messages, the survivors fell silent a tick after the dead one, and whichever timer ran
+    /// out first decided whether a live peer was dropped with it or gave up on the listener: a
+    /// margin of about one tick, which a loaded machine sometimes missed (M31). A peer that is
+    /// alive keeps polling while it waits, and so keeps acknowledging the pings the transport
+    /// sends; a peer that has gone, or hung, acknowledges nothing. That is the difference the
+    /// deadline exists to see.
+    [[nodiscard]] std::chrono::milliseconds
+    quiet_for(std::size_t peer, std::chrono::steady_clock::time_point now) const {
+        const auto since_message =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heard[peer]);
+        const ENetPeer* connection = peers[peer];
+        // Zero until the first acknowledgement, which the handshake itself provides.
+        if (connection == nullptr || connection->lastReceiveTime == 0) {
+            return since_message;
+        }
+        const std::chrono::milliseconds since_acknowledged{
+            ENET_TIME_DIFFERENCE(enet_time_get(), connection->lastReceiveTime)};
+        return std::min(since_message, since_acknowledged);
+    }
+
+    /// Ask the transport to ping `peer` often enough that a live one answers several times
+    /// within any deadline. ENet pings a peer that has acknowledged nothing for its ping
+    /// interval, 500 ms by default: fine against ten seconds, too slow against a test's 300 ms.
+    void watch(ENetPeer* peer) const {
+        const auto quarter = config.peer_timeout.count() / 4;
+        const auto interval = std::clamp<std::int64_t>(quarter, 1, ENET_PEER_PING_INTERVAL);
+        enet_peer_ping_interval(peer, static_cast<enet_uint32>(interval));
+    }
 
     [[nodiscard]] std::size_t index_of(const ENetPeer* peer) const {
         for (std::size_t i = 0; i < peers.size(); ++i) {
@@ -450,11 +488,10 @@ void EnetHub::pump(std::size_t peer) {
         if (m_impl->status.ended || m_impl->peers[peer_index] == nullptr) {
             continue;
         }
-        const auto quiet = now - m_impl->last_heard[peer_index];
+        const auto quiet = m_impl->quiet_for(peer_index, now);
         if (quiet > m_impl->config.peer_timeout) {
             const auto why =
-                std::format("peer {} has not been heard from for {}ms", peer_index,
-                            std::chrono::duration_cast<std::chrono::milliseconds>(quiet).count());
+                std::format("peer {} has not been heard from for {}ms", peer_index, quiet.count());
             if (m_impl->keeps_going_without(peer_index)) {
                 m_impl->lose(peer_index, why);
             } else {
@@ -657,6 +694,7 @@ Status EnetHub::accept(std::chrono::milliseconds timeout) {
                 Error(ErrorCode::Unavailable, "could not tell a peer which index it is"));
         }
         m_impl->peers[index] = arrived[i];
+        m_impl->watch(arrived[i]);
     }
     enet_host_flush(m_impl->host);
 
@@ -733,6 +771,7 @@ Result<std::unique_ptr<EnetHub>> EnetHub::connect(const EnetRuntime& runtime, st
         hub->m_impl->local = index->index;
         hub->m_impl->make_inboxes(index->count);
         hub->m_impl->peers[0] = listener;
+        hub->m_impl->watch(listener);
         hub->m_impl->bound_port = hub->m_impl->host->address.port;
         ATLAS_LOG_INFO(kNet, "connected to {}:{} as peer {} of {}", host_text, port, index->index,
                        index->count);

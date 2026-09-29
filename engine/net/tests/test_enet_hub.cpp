@@ -446,6 +446,40 @@ TEST_CASE("under the drop policy a quiet connector is lost, not the end", "[net]
     CHECK_FALSE(trio.listener->lost(1));
 }
 
+TEST_CASE("a connector stalled on a lost one is not lost with it", "[net][enet]") {
+    // M25's race, found by CI during M30. Under lockstep, when one peer dies every survivor stops
+    // sending: none can run a tick without the dead peer's turn. Counted by messages alone, the
+    // survivors fell silent a tick after the dead one, so the listener dropped them too, or a
+    // survivor gave up on the listener, whichever timer ran out first. Here peer 2 is gone —
+    // never pumped again, as a killed process is never scheduled again — and the listener and
+    // peer 1 are alive and pumping with nothing to say, as survivors stalled at the gate are.
+    // Only peer 2 may be lost, and nobody may end.
+    //
+    // 600 ms, not the 200 ms the other cases use: all three hubs are pumped by this one thread, so
+    // a stall of the thread itself longer than the deadline less a ping interval would look like a
+    // survivor gone quiet. A sanitizer lane is where that would happen first.
+    auto trio = connected_trio({.peer_timeout = 600ms, .on_peer_lost = atlas::net::PeerLoss::Drop});
+
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (std::chrono::steady_clock::now() < deadline && !trio.listener->lost(2)) {
+        trio.listener->pump(0);
+        trio.first->pump(1);
+        std::this_thread::sleep_for(5ms);
+    }
+    REQUIRE(trio.listener->lost(2));
+
+    // Three deadlines more, and still nobody alive says a word.
+    const auto until = std::chrono::steady_clock::now() + 1800ms;
+    while (std::chrono::steady_clock::now() < until) {
+        trio.listener->pump(0);
+        trio.first->pump(1);
+        std::this_thread::sleep_for(5ms);
+    }
+    CHECK_FALSE(trio.listener->lost(1));
+    CHECK_FALSE(trio.listener->status().ended);
+    CHECK_FALSE(trio.first->status().ended);
+}
+
 TEST_CASE("a connector that loses the listener ends even under the drop policy", "[net][enet]") {
     // The listener is the relay. Without it nobody reaches anybody, so there is nothing to go
     // on with.

@@ -8,6 +8,15 @@
 *2026-09-23:* decision 5's list of the ways a session ends gains one that is not a failure — a
 session can finish, by [ADR-0020](0020-session-finish.md). Nothing in this record is superseded.
 
+*2026-09-29:* decision 5's "quiet" is measured by the transport, by the owner's decision in M31.
+A peer is quiet when the socket hub has had neither a message from it nor an acknowledgement of
+anything it sent for the deadline. Under lockstep, when one peer dies every survivor stops sending,
+because none can run a tick without the dead peer's turn; counted by messages alone, a survivor
+fell silent a tick after the dead one, and on a loaded machine it was dropped with it. A peer that
+is alive keeps polling while it waits, and the transport's pings are answered by polling. So a
+peer that is alive and deliberately sends nothing — one paused, say — no longer ends anything;
+everyone waits for it. `DEFERRED.md` records that.
+
 *2026-09-25:* amended in two places by [ADR-0022](0022-dropping-a-peer.md). Decision 2's socket
 hub gains a relay: a connector held a connection to the listener and nobody else, so a session
 of three failed before its first tick, and nothing had ever run three. Decision 5's rule that a

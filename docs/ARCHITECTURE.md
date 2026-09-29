@@ -605,6 +605,11 @@ arrived. No ENet type appears in any header, so replacing the transport would to
 **Direct address only**: connect by host and port. No encryption, no traversal, no lobby, each
 deferred with a trigger. And **a peer that goes quiet ends the session** by default, because
 dropping it is simulation-visible: every remaining peer must stop expecting it at the same point.
+**Quiet means the transport stopped answering** (M31): no message and no acknowledgement for the
+deadline. Under lockstep a survivor stops sending the moment another peer dies — it cannot run a
+tick without that peer's turn — so counting messages alone made the survivors look dead a tick
+after the peer that was, and dropped them with it. They keep polling while they wait, and so keep
+answering the transport's pings; the socket hub pings a quarter of the deadline apart.
 
 **The socket hub is a star, and the listener relays** ([ADR-0022](adr/0022-dropping-a-peer.md)).
 A connector holds one connection, to the listener, and broadcasts once, marked for everyone. The

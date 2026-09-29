@@ -5,6 +5,15 @@
 
 **Accepted**, 2026-09-25, implemented in M25.
 
+*2026-09-29:* **D2's "silent past the deadline" had a race, fixed in M31.** When the lost peer
+died, every survivor stalled at its gate and stopped sending, so the listener saw a survivor fall
+silent about a tick after the lost peer and, if the survivor's first turn after the drop had not
+arrived by the time its own deadline came round, dropped it too; a survivor could likewise give up
+on the listener, which had stalled as well. CI caught it once in about forty runs. Silence is now
+measured by the transport's acknowledgements as well as by messages (ADR-0017, decision 5, dated
+the same day), which a stalled survivor keeps answering. Nothing about what a drop agrees on
+changed.
+
 Proposed the same day at M25's gate. **Implementing it changed what a drop is agreed on**, from a
 tick to a count, and that is the one change that matters. The rest are smaller, and each is
 marked at its own heading with what changed and why, rather than edited to read as if it had

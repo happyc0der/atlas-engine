@@ -889,6 +889,17 @@ The next four are what slice 4's measurements produced.
   Panels move and resize, and where they go is a design choice nobody has made. Trigger: the owner
   choosing a layout, or a default window size that changes.
 
+### M31 — catching up
+
+- **A peer that is alive but sends nothing holds everyone.** Since M31 a peer has gone when its
+  transport stops answering, not when it stops sending turns, because under lockstep every
+  survivor stops sending the moment another peer dies. The price is that a peer alive and
+  deliberately silent — paused, or stuck in its own loop while still polling its socket — now
+  stalls the session for as long as it likes, where before it was dropped or ended the session
+  after ten seconds. Nothing tested either behaviour, and a pause in a socket session has no
+  meaning anyone has chosen. Trigger: a consumer whose players can pause, or a session that
+  should not wait on one player's whim — which is when pausing a socket session needs a meaning.
+
 ## Decided by ADR-0010, planned as milestones
 
 Networking. Sandboxed mods. Animation. Audio. Gamepad input. Input method editors.
