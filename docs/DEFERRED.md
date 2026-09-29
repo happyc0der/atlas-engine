@@ -834,11 +834,16 @@ fact about the tree today rather than a consequence of the milestone.
   and still untested on real hardware, because a loss cannot be caused on purpose. Trigger: a way
   to cause one, such as a driver reset tool the owner is willing to run.
 
-- **The overlay's size on a scaled desktop.** Since `display_scale` became pixels per logical
-  unit, a window on a Windows desktop set to 175% is drawn one pixel per unit, and nothing scales
-  the overlay's fonts or spacing by the user's interface scaling, so its text is small there. It
-  is legible and it is right about where things are; it is not what the user asked their desktop
-  for. Trigger: a person using the overlay on such a desktop.
+- **The overlay's size on a scaled desktop.** *Half built in M30:* the overlay now draws at the
+  window's pixel density, so on the Mac, where the density carries the scaling, it is the size its
+  layout was written for, and a pointer reaches it where it is. What stays open is the user's
+  interface scaling on top of the density — 1.75 on the Windows laptop, where the density is one —
+  and M30 found why it is not a one-line change: the window there is 1280×720 pixels however the
+  desktop is scaled, so an overlay scaled by 1.75 inside it would not fit its own layout. Doing it
+  properly means the window growing with the interface scaling too, which is a decision about every
+  application's window and wants the laptop to judge. The platform now logs the interface scaling
+  (`interface=` on the window's line), and CI runs the GPU tests at 1.75. Trigger: a person using
+  the overlay on such a desktop, with the laptop to look at it.
 
 - **Two implicit Vulkan layers still load.** The GPU presets set `VK_LOADER_LAYERS_DISABLE` to
   `~implicit~`, and on the laptop the loader still inserted an overlay's layer and NVIDIA's own
@@ -874,6 +879,15 @@ The next four are what slice 4's measurements produced.
 
 - **Why Windows makes two allocations a frame where macOS makes eight.** Both are constant in the
   scene size, which is the rule; the six were not traced. Trigger: the count growing anywhere.
+
+### M30 — the overlay in the window's units
+
+- **The default layout does not fit a 720-point window.** The panels' first positions and sizes
+  were written for a window about 900 tall: the scene panel reaches 840 and the log console 790, so
+  in the applications' 1280×720 windows the scene's undo row and the log's last lines open below the
+  edge. It was always so on Windows and Linux; on the Mac the half-size overlay hid it until M30.
+  Panels move and resize, and where they go is a design choice nobody has made. Trigger: the owner
+  choosing a layout, or a default window size that changes.
 
 ## Decided by ADR-0010, planned as milestones
 

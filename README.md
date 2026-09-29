@@ -10,7 +10,9 @@ configure, build, test run, and a runnable demonstration before the next one sta
 ## Screenshots
 
 Each frame below was written by the application itself with `--screenshot`, which captures
-the last frame before exit.
+the last frame before exit: on the M4 Pro at 2560×1440, two pixels a point, then scaled to
+1600×900 (the million-cell frame to 1280×720) with `sips`. Remade in M30, when the overlay began
+drawing at the display's density; before that it was drawn at half this size on the Mac.
 
 | | |
 |---|---|

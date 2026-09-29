@@ -38,7 +38,7 @@ Status legend: **done**, *in progress*, planned.
 | M27 | An installable engine, and chess in its own repository | L | **done** |
 | M28 | A real GPU on Windows: Vulkan on an RTX 3080 Ti | M | **done** |
 | M29 | The machine, measured: a benchmark of the hardware under the engine | S | **done** |
-| M30 | The overlay in the window's units: pointer and size on a high-density display | S | planned |
+| M30 | The overlay in the window's units: pointer and size on a high-density display | S | **done** |
 
 ## M0 — Architecture and reproducible skeleton
 
@@ -1587,7 +1587,9 @@ Windows machine; this is the first. Tooling, recorded in `PERFORMANCE.md` rather
 
 ## M30 — The overlay in the window's units
 
-*The record, written 2026-09-28 before any test or fix.*
+Full report: [reports/M30.md](reports/M30.md).
+
+*The record, written 2026-09-28 before any test or fix, and kept as written.*
 
 The platform delivers a pointer in the window's logical units, and the overlay draws in the
 swapchain's pixels. On the Mac, where the lab's window is 1280×720 logical and 2560×1440 pixels,
@@ -1621,6 +1623,24 @@ density of one, which is exactly where M28's display-scale bug lived.
 5. No test outside `tools` and `rhi` changes.
 6. On the Mac, the sandbox's and the lab's screenshots show the overlay covering the share of the
    window its layout was designed for, with its text twice as many pixels tall.
+
+**Scored.** Five held and one missed, the right way round.
+
+| # | Outcome |
+|---|---|
+| 1 | **Held.** Sent as the platform sends them, the three pointer tests failed on the Mac against the old overlay — no focus, no filtering, no input method — and passed on llvmpipe with the conversion removed. |
+| 2 | **Held.** The filter field is 38 pixels tall on the Mac, 19 units at two pixels a unit; on llvmpipe the new GPU case passes, which bounds it to 17–21 pixels. With the scaling removed the case fails on the Mac. |
+| 3 | **Held.** 64 of 64 at 1.75, the window reporting one pixel a unit and an interface scaling of 1.75. |
+| 4 | **Missed.** M28's bug put back fails six cases at 1.75, not one: the display-scale case, the lab's pick end to end — the laptop's original finding — and four overlay cases whose own conversions go through `display_scale()`. |
+| 5 | **Held.** Only `tools` and `rhi` tests changed, and `rhi`'s not at all. |
+| 6 | **Held.** The README's three frames are the Mac's again, with the overlay at the size its layout was written for. |
+
+| Criterion | Status |
+|---|---|
+| A pointer lands where it is on the Mac | **Met.** Converted by the pixel density, asked of the window per event; three tests send what the platform sends and fail without it. |
+| The overlay at the display's density | **Met.** Style, font and default geometry; the text is rasterised at the density, not magnified. |
+| M28's bug under CI | **Met.** The Linux GPU lane runs twice, the second at SDL's X11 scaling of 1.75, and checks from the window system itself that it is. |
+| The interface-scaling half | **Deferred, with a finding.** On Windows the window does not grow with it, so the overlay cannot either without every application's window changing; that wants the laptop. |
 
 ## First continuous integration
 

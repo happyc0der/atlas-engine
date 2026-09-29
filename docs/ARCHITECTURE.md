@@ -290,6 +290,15 @@ Retina display is the same number and on a Windows desktop set to 175% is not. M
 there landing 1.75 times too far from the pointer. The name stays because it is installed API;
 the comment says what it means.
 
+**The overlay converts, and draws at the density** (M30). It speaks pixels in its public API —
+panel rectangles, the input method's request — and takes a pointer as the platform delivers it,
+in logical units, converting it itself. On the Mac nothing did, and a pointer reached the overlay
+at half its position; the tests missed it because they sent the overlay's own rectangles back to
+it. It draws its style, its font and its default panel geometry at the window's pixel density,
+asked of the window whenever a frame begins or a pointer arrives, so its layout keeps the size it
+was written for. The user's interface scaling on top of the density is not applied: on Windows it
+would need the window itself to grow with it (`DEFERRED.md`, M28).
+
 ### Text, and why it is not keys
 
 A key is a position on a keyboard; a character is what an input method decided the person

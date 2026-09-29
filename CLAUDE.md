@@ -286,6 +286,10 @@ Never combine ASan and TSan. TSan runs only `unit` and `determinism` labelled te
 - `Window::display_scale()` is pixels per logical unit, the window system's pixel density. It is
   never the user's interface scaling, which equals it on a Retina display and is 1.75 on the
   Windows laptop.
+- **A pointer from the platform is in logical units**, and whatever draws in pixels converts it by
+  `display_scale()` itself; the overlay does. A test sends a pointer as the platform does, never a
+  rectangle the code under test reported: the overlay's tests sent its own pixels back to it and
+  passed on the Mac while a real pointer landed at half its position (M30).
 - Shader resource counts come from reflection, never from hand-written numbers.
 - A matrix goes to a uniform through `uniform_elements()`, not `elements()`: shaders read
   column-major and Atlas stores row-major.
