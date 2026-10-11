@@ -1,0 +1,207 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: consumers
+
+# atlas-chess at its head, built against this engine as it stands (M32). Chess pins the engine by
+# commit and builds only against an install of it (ADR-0024), so a change here that alters what an
+# installed name means reaches chess only when chess next moves its pin, and M28 to M31 sat unseen
+# for that reason. This builds the SDK from this commit and chess against it, on the three
+# platforms' Debug presets, with chess's GPU cases on llvmpipe at 1x and at 175%.
+#
+# A red at the version step means chess still asks for an older minor and must move its pin; a red
+# anywhere after it means this engine broke chess. With ADR-0024 D1 read literally, every milestone
+# that changes an installed byte turns this red until chess moves, which is the point of it.
+#
+# Runs on demand, against chess's main or a chess ref given to the dispatch, and on a push that
+# changes this file, so a change to the check is tried on its own branch.
+on:
+  workflow_dispatch:
+    inputs:
+      chess_ref:
+        description: "atlas-chess branch, tag or commit to build"
+        required: false
+        default: main
+  push:
+    paths:
+      - .github/workflows/consumers.yml
+
+# Its own group: under ci-... on main it would cancel, or be cancelled by, main's own CI.
+concurrency:
+  group: consumers-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Passed to checkout's `ref` only, never into a shell line.
+  CHESS_REF: ${{ inputs.chess_ref || 'main' }}
+
+jobs:
+  version:
+    name: Chess asks for this engine's version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: happyc0der/atlas-chess
+          ref: ${{ env.CHESS_REF }}
+          path: chess
+
+      - name: What is being built
+        run: |
+          echo "engine: $(git rev-parse HEAD)"
+          echo "chess:  $(git -C chess rev-parse HEAD) ($CHESS_REF)"
+          echo "chess pins the engine at $(tr -d '[:space:]' < chess/atlas.ref)"
+
+      # SameMinorVersion: chess's find_package request must name this engine's minor, or the
+      # configure below fails with a message about compatibility rather than about what to do.
+      - name: Compare the versions
+        run: |
+          python3 - <<'EOF'
+          import re, sys
+          from pathlib import Path
+          engine = re.search(r"project\(Atlas\s+VERSION (\d+)\.(\d+)\.\d+",
+                             Path("CMakeLists.txt").read_text()).groups()
+          wanted = re.search(r"find_package\(Atlas (\d+)\.(\d+)",
+                             Path("chess/CMakeLists.txt").read_text()).groups()
+          engine, wanted = ".".join(engine), ".".join(wanted)
+          if engine != wanted:
+              print(f"::error::atlas-chess asks for Atlas {wanted} and this engine is {engine}: "
+                    f"chess must move its pin (atlas.ref and find_package) to take what changed")
+              sys.exit(1)
+          print(f"atlas-chess asks for Atlas {wanted}, and this engine is {engine}")
+          EOF
+
+  chess:
+    name: ${{ matrix.name }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Chess on macOS arm64 Debug
+            os: macos-26
+            preset: macos-debug
+            triplet: arm64-osx
+          - name: Chess on Linux x86_64 Clang Debug, and on llvmpipe
+            os: ubuntu-24.04
+            preset: linux-clang-debug
+            triplet: x64-linux
+          - name: Chess on Windows x64 MSVC Debug
+            os: windows-2025
+            preset: windows-msvc-debug
+            triplet: x64-windows
+
+    steps:
+      # The engine at the workspace root, exactly as ci.yml checks it out, so the vcpkg archives
+      # below are found under the same path and key and main's are reused.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          repository: happyc0der/atlas-chess
+          ref: ${{ env.CHESS_REF }}
+          path: chess
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          bash tools/ci/linux_deps.sh
+          bash tools/ci/linux_gpu_deps.sh
+
+      # Chess's opponent is a mod in C; its check rebuilds it on Linux, as chess CI does.
+      - name: Install the mod toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] \
+            http://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm23.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-23 lld-23
+
+      - name: Install macOS prerequisites
+        if: runner.os == 'macOS'
+        run: brew install ninja pkgconf
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress --yes
+
+      # ci.yml's path and key, restored and never saved: this reuses main's archives and adds no
+      # entries of its own to the repository's cache.
+      - name: Restore vcpkg binaries
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/vcpkg-archives
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', '.gitmodules', 'external/vcpkg-overlays/**') }}
+          restore-keys: vcpkg-${{ matrix.triplet }}-
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        run: ./external/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: .\external\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Build and install the SDK
+        run: |
+          cmake --preset ${{ matrix.preset }} -DATLAS_BUILD_TESTS=OFF
+          cmake --build --preset ${{ matrix.preset }}
+          python tools/sdk.py ${{ matrix.preset }}
+
+      # Forward slashes, which CMake reads on every system.
+      - name: Point at the SDK
+        shell: bash
+        run: |
+          python - <<'EOF' >> "$GITHUB_ENV"
+          import os, pathlib
+          build = pathlib.Path(os.environ["GITHUB_WORKSPACE"], "build", "${{ matrix.preset }}")
+          print(f"ATLAS_PREFIX={(build / 'install').as_posix()}")
+          print(f"ATLAS_DEPS={(build / 'vcpkg_installed' / '${{ matrix.triplet }}').as_posix()}")
+          EOF
+
+      - name: Build chess
+        working-directory: chess
+        run: |
+          cmake --preset ${{ matrix.preset }}
+          cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test chess
+        working-directory: chess
+        run: ctest --preset ${{ matrix.preset }}
+
+      # The binary names the engine commit it was compiled against, which must be this one.
+      - name: Built against this engine
+        working-directory: chess
+        shell: bash
+        run: |
+          version="$(./build/${{ matrix.preset }}/bin/atlas_chess --version)"
+          echo "$version"
+          [[ "$version" == *"(${GITHUB_SHA:0:12})"* ]] \
+            || { echo "expected atlas-engine ${GITHUB_SHA:0:12}"; exit 1; }
+
+      - name: Chess's GPU cases on llvmpipe, at 1x and 175%
+        if: runner.os == 'Linux'
+        working-directory: chess
+        run: bash tools/ci/linux_gpu.sh ${{ matrix.preset }}
